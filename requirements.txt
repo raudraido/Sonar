@@ -1,0 +1,23 @@
+# Core UI framework
+PyQt6>=6.4.0
+
+# Audio metadata (tags, duration, bitrate)
+mutagen>=1.46.0
+
+# Album art decoding and blurring
+Pillow>=9.0.0
+
+# HTTP requests (streaming, cover art downloads)
+requests>=2.28.0
+
+# Memory / RAM monitoring
+psutil>=5.9.0
+
+# OS keyring (secure credential storage)
+keyring>=23.0.0
+
+# Media key support on Windows (Linux uses evdev)
+pynput>=1.7.6
+
+# Optional: evdev for Linux media key support
+# Install manually on Linux: pip install evdev
