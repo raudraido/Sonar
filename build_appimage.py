@@ -161,7 +161,7 @@ def build():
         print(f"\n  SUCCESS: {output}")
         print(f"  Copy this one file anywhere and run:")
         print(f"    chmod +x {APP_NAME}")
-        print(f"    QT_QPA_PLATFORM=wayland;xcb ./{APP_NAME}")
+        print(f"    QT_QPA_PLATFORM=xcb ./{APP_NAME}")
     else:
         print("\n  Build failed — check PyInstaller output above.")
 
