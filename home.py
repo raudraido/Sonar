@@ -97,6 +97,7 @@ class HomeView(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setObjectName("HomeScroll")
         self.scroll.setWidgetResizable(True)
+        self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.omni_scroller = MiddleClickScroller(self.scroll)
@@ -119,6 +120,8 @@ class HomeView(QWidget):
         self.recent_qml        = self._make_qml_row(
             self.recent_model, self.recent_bridge, self.recent_provider)
         self.recent_section.layout().addWidget(self.recent_qml)
+        self.recent_bridge.indexChanged.connect(self._on_recent_index_changed)
+        self.recent_bridge.requestFocusNext.connect(lambda: QTimer.singleShot(0, self._focus_random))
         self.content_layout.addWidget(self.recent_section)
 
         # ── Random Mix section ────────────────────────────────────────────
@@ -133,7 +136,10 @@ class HomeView(QWidget):
         self.random_qml      = self._make_qml_row(
             self.random_model, self.random_bridge, self.random_provider)
         self.random_section.layout().addWidget(self.random_qml)
+        self.random_bridge.indexChanged.connect(self._on_random_index_changed)
+        self.random_bridge.requestFocusPrev.connect(lambda: QTimer.singleShot(0, self._focus_recent))
         self.content_layout.addWidget(self.random_section)
+
 
         self.content_layout.addStretch()
 
@@ -226,6 +232,70 @@ class HomeView(QWidget):
         qml.setSource(QUrl.fromLocalFile(resource_path("home_row.qml")))
         return qml
   
+    def focus_first_grid(self):
+        """Give keyboard focus to the recent row when home tab is activated."""
+        self._focus_recent()
+
+    def _focus_recent(self):
+        self.recent_qml.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.recent_bridge.takeFocus.emit()
+        
+        # 🟢 FIX: Manually force the scroll. If the index didn't change, 
+        # the QML signal won't fire, so we must scroll explicitly.
+        current_idx = getattr(self, '_recent_idx', 0)
+        self._scroll_to_item(self.recent_qml, current_idx)
+
+    def _focus_random(self):
+        self.random_qml.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.random_bridge.takeFocus.emit()
+        
+        # 🟢 FIX: Explicitly scroll to the active item in the bottom grid.
+        current_idx = getattr(self, '_random_idx', 0)
+        self._scroll_to_item(self.random_qml, current_idx)
+
+    def _on_recent_index_changed(self, idx):
+        self._recent_idx = idx
+        self._scroll_to_item(self.recent_qml, idx)
+
+    def _on_random_index_changed(self, idx):
+        self._random_idx = idx
+        self._scroll_to_item(self.random_qml, idx)
+
+    def _scroll_to_item(self, qml_widget, idx):
+        """Scroll the Python QScrollArea so the selected grid item is visible."""
+        if not hasattr(self, 'scroll') or idx < 0:
+            return
+        try:
+            from PyQt6.QtCore import QPoint # Ensure QPoint is imported
+            
+            available_width = self.scroll.viewport().width()
+            if available_width < 100:
+                return
+            left_margin, right_margin, item_gap, base_item_size = 20, 20, 10, 180
+            qml_width = available_width - left_margin - right_margin
+            items_per_row = max(1, int(qml_width // (base_item_size + item_gap * 2)))
+            width_per_item = qml_width / items_per_row
+            cell_height = width_per_item + 70
+            top_margin = 20
+
+            row = idx // items_per_row
+            item_y_in_grid = top_margin + row * cell_height
+            
+            # 🟢 THE FIX: Map the widget's local position to the global Scroll Content!
+            mapped_pos = qml_widget.mapTo(self.content_widget, QPoint(0, 0))
+            item_y_global = mapped_pos.y() + item_y_in_grid
+
+            sb = self.scroll.verticalScrollBar()
+            viewport_top = sb.value()
+            viewport_bottom = viewport_top + self.scroll.viewport().height()
+
+            if item_y_global < viewport_top:
+                sb.setValue(int(item_y_global))
+            elif item_y_global + cell_height > viewport_bottom:
+                sb.setValue(int(item_y_global + cell_height - self.scroll.viewport().height()))
+        except Exception as e:
+            print(f"Scroll Error: {e}")
+
     def resizeEvent(self, event):
         """Recalculate heights when the user resizes the app window."""
         super().resizeEvent(event)
@@ -288,7 +358,9 @@ class HomeView(QWidget):
     def populate_ui(self, recent, random_mix):
         self._populate_row(self.recent_model,  self.recent_provider,  recent)
         self._populate_row(self.random_model,  self.random_provider,  random_mix)
-        self.adjust_grid_heights()  # <--- ADD THIS to recalculate heights based on new data
+        self.adjust_grid_heights()
+        if self.isVisible():
+            QTimer.singleShot(100, self.focus_first_grid)
 
     def _populate_row(self, model, provider, albums):
         model.clear()
