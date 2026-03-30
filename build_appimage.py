@@ -99,6 +99,40 @@ def collect_assets():
     return added
 
 
+def _write_desktop_file(binary_path):
+    """Write a .desktop file next to the binary and install the icon so the OS taskbar shows it."""
+    import shutil
+    binary_abs = os.path.abspath(binary_path)
+    dist_dir   = os.path.dirname(binary_abs)
+
+    # Copy icon into dist/ so it travels with the binary
+    src_icon = os.path.join("img", "icon.png")
+    dst_icon = os.path.join(dist_dir, "sonar.png")
+    if os.path.exists(src_icon):
+        shutil.copy2(src_icon, dst_icon)
+        print(f"  Icon copied: {dst_icon}")
+
+    desktop_content = f"""[Desktop Entry]
+Name=Sonar
+Comment=Sonar Music Player
+Exec=env QT_QPA_PLATFORM=xcb {binary_abs}
+Icon={dst_icon}
+Type=Application
+Categories=Audio;Music;Player;
+Terminal=false
+StartupWMClass=Sonar
+"""
+    desktop_path = os.path.join(dist_dir, "Sonar.desktop")
+    with open(desktop_path, "w") as f:
+        f.write(desktop_content)
+    os.chmod(desktop_path, 0o755)
+    print(f"  Desktop file: {desktop_path}")
+    print(f"  To install system-wide so the taskbar shows your icon:")
+    print(f"    cp {dst_icon} ~/.local/share/icons/sonar.png")
+    print(f"    cp {desktop_path} ~/.local/share/applications/")
+    print(f"    update-desktop-database ~/.local/share/applications/")
+
+
 def build():
     if platform.system() != "Linux":
         print("This script is for Linux builds only.")
@@ -118,19 +152,12 @@ def build():
         "--windowed",
     ] + added_data
 
-    # Attach app icon (prefer .png on Linux, fall back to .svg)
-    icon_candidates = ['img/icon.png', 'img/icon.svg']
-    for candidate in icon_candidates:
-        if os.path.exists(candidate):
-            args.append(f'--icon={candidate}')
-            print(f"  Using app icon: {candidate}")
-            break
-
     import PyInstaller.__main__
     PyInstaller.__main__.run(args)
 
     output = os.path.join("dist", APP_NAME)
     if os.path.exists(output):
+        _write_desktop_file(output)
         print(f"\n  SUCCESS: {output}")
         print(f"  Copy this one file anywhere and run:")
         print(f"    chmod +x {APP_NAME}")

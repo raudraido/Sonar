@@ -72,7 +72,9 @@ if __name__ == '__main__':
     # REQUIRED: Tells QSettings exactly where to save your data in the OS
     app.setApplicationName("Sonar")
     app.setOrganizationName("Sonar")
-    app.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.abspath(__file__)), "img", "icon.png")))
+    _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    app.setWindowIcon(QIcon(os.path.join(_base, "img", "icon.png")))
+    app.setDesktopFileName("Sonar")
     
     settings = QSettings()
     
