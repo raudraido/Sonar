@@ -19,7 +19,7 @@ def find_curl_flags():
             ).strip()
             print(f"  curl flags via pkg-config: {cflags} {libs}")
             return cflags, libs
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             pass
 
     current_os = platform.system()
@@ -27,6 +27,7 @@ def find_curl_flags():
     if current_os == "Windows":
         # Common install locations on Windows
         candidates = [
+            r"C:\msys64\mingw64",
             r"C:\curl",
             r"C:\Program Files\curl",
             r"C:\vcpkg\installed\x64-windows",
