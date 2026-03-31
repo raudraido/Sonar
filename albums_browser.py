@@ -48,6 +48,10 @@ class GridBridge(QObject):
     bgAlphaChanged = pyqtSignal(float)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
+    indexChanged = pyqtSignal(int)
+    requestFocusNext = pyqtSignal()
+    requestFocusPrev = pyqtSignal()
+    takeFocus = pyqtSignal()
     
     def __init__(self, album_model):
         super().__init__()
@@ -84,6 +88,18 @@ class GridBridge(QObject):
     @pyqtSlot(str)
     def emitArtistNameClicked(self, name):
         self.artistNameClicked.emit(name)
+
+    @pyqtSlot(int)
+    def emitIndexChanged(self, idx):
+        self.indexChanged.emit(idx)
+
+    @pyqtSlot()
+    def emitRequestFocusNext(self):
+        self.requestFocusNext.emit()
+
+    @pyqtSlot()
+    def emitRequestFocusPrev(self):
+        self.requestFocusPrev.emit()
 
 class CoverImageProvider(QQuickImageProvider):
     def __init__(self):
@@ -1566,7 +1582,7 @@ class LibraryGridBrowser(QWidget):
         self.status_label.setText(f"{display_count:,} albums")
         self.populate_grid(albums)
         
-        if hasattr(self, 'qml_view'):
+        if hasattr(self, 'qml_view') and self.isVisible():
             search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
             if search_input is None or not search_input.hasFocus():
                 self.qml_view.setFocus()

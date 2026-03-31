@@ -195,6 +195,27 @@ class PersistenceMixin:
         except: pass
         self.home_tab.album_clicked.connect(self.navigate_to_album)
         self._initialized_tabs.add('home')
+        # Preload all other tabs in the background after home is ready
+        QTimer.singleShot(1500, self._background_preload_tabs)
+
+    def _background_preload_tabs(self):
+        client = getattr(self, '_pending_client', None)
+        if not client:
+            return
+        if 'albums' not in self._initialized_tabs:
+            self._init_tab_albums(client)
+        if 'artists' not in self._initialized_tabs:
+            self._init_tab_artists(client)
+        if 'tracks' not in self._initialized_tabs:
+            self._init_tab_tracks(client)
+        if 'playlists' not in self._initialized_tabs:
+            self._init_tab_playlists(client)
+        # Restore home focus after all background loading fires
+        QTimer.singleShot(2000, self._restore_home_focus_if_active)
+
+    def _restore_home_focus_if_active(self):
+        if hasattr(self, 'home_tab') and self.tabs.currentWidget() is self.home_tab:
+            self.home_tab.focus_first_grid()
 
     def _init_tab_albums(self, client):
         self.album_browser.set_client(client)

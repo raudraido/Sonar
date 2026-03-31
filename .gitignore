@@ -7,7 +7,16 @@ __pycache__/
 *.pyc
 *.pyo
 
+# App data / local cache
+player/mixins/app_data/
+
 # Build output
 build/
 dist/
 *.spec
+
+# Covers
+covers_cache/
+
+# app_data
+app_data/   

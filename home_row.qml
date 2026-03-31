@@ -6,15 +6,25 @@ Rectangle {
     color: "transparent"
     property real bgAlpha: 0.3
     property string accentColor: "#1db954"
+    property int currentIndex: grid.currentIndex
+    property int gridCount: grid.count
+    property int gridItemsPerRow: grid.itemsPerRow
 
     Connections {
         target: bridge
         function onAccentColorChanged(color) { root.accentColor = color }
         function onBgAlphaChanged(alpha)     { root.bgAlpha = alpha }
+        function onTakeFocus() {
+            console.log("[QML] onTakeFocus count=" + grid.count + " currentIndex=" + grid.currentIndex + " activeFocus=" + grid.activeFocus)
+            if (grid.currentIndex < 0 && grid.count > 0) grid.currentIndex = 0
+            grid.forceActiveFocus()
+            console.log("[QML] onTakeFocus after force: activeFocus=" + grid.activeFocus)
+        }
     }
 
     onActiveFocusChanged: {
         if (activeFocus) {
+            if (grid.currentIndex < 0 && grid.count > 0) grid.currentIndex = 0
             grid.forceActiveFocus()
         }
     }
@@ -58,6 +68,10 @@ Rectangle {
         }
 
         
+        onCurrentIndexChanged: {
+            if (bridge) bridge.emitIndexChanged(grid.currentIndex)
+        }
+
         Keys.onPressed: (event) => {
             if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (grid.currentIndex >= 0) {
@@ -80,10 +94,20 @@ Rectangle {
                 grid.currentIndex = Math.max(grid.currentIndex - 1, 0)
                 event.accepted = true
             } else if (event.key === Qt.Key_Down) {
-                grid.currentIndex = Math.min(grid.currentIndex + grid.itemsPerRow, grid.count - 1)
+                var nextDown = grid.currentIndex + grid.itemsPerRow
+                if (nextDown < grid.count) {
+                    grid.currentIndex = nextDown
+                } else {
+                    bridge.emitRequestFocusNext()
+                }
                 event.accepted = true
             } else if (event.key === Qt.Key_Up) {
-                grid.currentIndex = Math.max(grid.currentIndex - grid.itemsPerRow, 0)
+                var nextUp = grid.currentIndex - grid.itemsPerRow
+                if (nextUp >= 0) {
+                    grid.currentIndex = nextUp
+                } else {
+                    bridge.emitRequestFocusPrev()
+                }
                 event.accepted = true
             }
         }

@@ -68,11 +68,11 @@ Item {
         Timer { interval: 200; running: true; repeat: false; onTriggered: grid.forceLayout() }
 
         onContentHeightChanged: {
-            sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
+            if (sectionBridge) sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
         }
 
         onHeightChanged: {
-            sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
+            if (sectionBridge) sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
         }
 
         delegate: Item {

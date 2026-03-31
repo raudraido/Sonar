@@ -2690,7 +2690,7 @@ class ArtistGridBrowser(QWidget):
         search_has_focus = (hasattr(self, 'search_container') and
                             hasattr(self.search_container, 'search_input') and
                             self.search_container.search_input.hasFocus())
-        if not search_has_focus and hasattr(self, 'qml_view'):
+        if not search_has_focus and hasattr(self, 'qml_view') and self.isVisible():
             self.qml_view.setFocus()
 
     def _on_chunk_loaded(self, artists, chunk_index):

@@ -981,7 +981,7 @@ class PlaylistsBrowser(QWidget):
         search_has_focus = (hasattr(self, 'search_container') and
                             hasattr(self.search_container, 'search_input') and
                             self.search_container.search_input.hasFocus())
-        if not search_has_focus and hasattr(self, 'qml_view'):
+        if not search_has_focus and hasattr(self, 'qml_view') and self.isVisible():
             self.qml_view.setFocus()
 
     def start_play_fetch(self, data):
@@ -1099,7 +1099,7 @@ class PlaylistsBrowser(QWidget):
             
         self.stack.setCurrentIndex(0)
 
-        if hasattr(self, 'qml_view'):
+        if hasattr(self, 'qml_view') and self.isVisible():
             self.qml_view.setFocus()
 
         if getattr(self, 'current_query', ""):

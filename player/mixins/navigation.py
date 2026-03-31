@@ -171,6 +171,8 @@ class NavigationMixin:
             self.album_browser.grid_view.setFocus(Qt.FocusReason.OtherFocusReason)
         elif widget is self.artist_browser:
             self.artist_browser.grid_view.setFocus(Qt.FocusReason.OtherFocusReason)
+        elif widget is self.home_tab:
+            self.home_tab.focus_first_grid()
 
         self.add_global_nav(index, view_type)    
 

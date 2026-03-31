@@ -8,6 +8,18 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 
 ---
 
+## Screenshots
+
+| Albums | Now Playing |
+|--------|-------------|
+| ![Albums browser](media/1.png) | ![Now Playing queue](media/2.png) |
+
+| Tracks & Search | Artist Page |
+|-----------------|-------------|
+| ![Tracks browser](media/3.png) | ![Artist detail](media/4.png) |
+
+---
+
 ## Features
 
 - **Gapless playback** — tracks cross-fade seamlessly via the C++ engine
@@ -35,8 +47,8 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourname/raud-player.git
-cd raud-player
+git clone https://github.com/raudraido/Sonar.git
+cd Sonar
 ```
 
 ### 2. Install Python dependencies
