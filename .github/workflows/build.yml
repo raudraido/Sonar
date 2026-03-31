@@ -1,0 +1,113 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+
+  # ──────────────────────────────────────────
+  # Windows → Sonar.exe
+  # ──────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libcurl dev (MSYS2 MinGW64)
+        run: C:\msys64\usr\bin\pacman -S --noconfirm mingw-w64-x86_64-curl
+        shell: cmd
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build audio_core.dll
+        run: python build.py
+        env:
+          PATH: C:\msys64\mingw64\bin;${{ env.PATH }}
+          CURL_DIR: C:\msys64\mingw64
+
+      - name: Build Sonar.exe
+        run: python build_exe.py
+
+      - name: Upload Sonar.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sonar-Windows
+          path: dist/Sonar.exe
+
+  # ──────────────────────────────────────────
+  # Linux → Sonar (portable binary)
+  # ──────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++ libcurl4-openssl-dev \
+            libgl1 libegl1 \
+            libxcb-xinerama0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0 \
+            libpython3-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller evdev
+
+      - name: Build audio_core.so
+        run: python build.py
+
+      - name: Build Sonar Linux binary
+        run: python build_appimage.py
+
+      - name: Upload Sonar Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sonar-Linux
+          path: dist/Sonar
+
+  # ──────────────────────────────────────────
+  # Publish both as a GitHub Release
+  # ──────────────────────────────────────────
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Sonar-Windows
+          path: artifacts/windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Sonar-Linux
+          path: artifacts/linux
+
+      - name: Create or update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build
+          prerelease: true
+          files: |
+            artifacts/windows/Sonar.exe
+            artifacts/linux/Sonar

@@ -1,6 +1,10 @@
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, 
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit,
                              QCheckBox, QPushButton, QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
@@ -8,7 +12,7 @@ class LoginDialog(QDialog):
         self.setWindowTitle("Connect to Server")
         
         # Make the window taller and wider for a premium layout
-        self.setFixedSize(400, 500)
+        self.setFixedWidth(400)
         
         # Modern Flat Styling
         self.setStyleSheet("""
@@ -95,16 +99,24 @@ class LoginDialog(QDialog):
 
         layout = QVBoxLayout(self)
         # Give the whole window massive inner padding so it breathes
-        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setContentsMargins(40, 8, 40, 40)
         layout.setSpacing(8)
 
         # --- HEADER ---
-        title = QLabel("Sonar")
+        logo_label = QLabel()
+        pixmap = QPixmap(os.path.join(BASE_DIR, "img", "icon.png"))
+        logo_label.setPixmap(pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo_label)
+        layout.addSpacing(12)
+
+        title = QLabel("SONAR")
         title.setObjectName("Title")
-        
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         subtitle = QLabel("")
         subtitle.setObjectName("Subtitle")
-        
+
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addSpacing(10)
