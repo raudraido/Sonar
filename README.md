@@ -90,32 +90,7 @@ On first launch you will be prompted to enter your Navidrome server URL, usernam
 
 ---
 
-## Project Structure
 
-```
-raud-player/
-├── main.py                  # Entry point and main window (RRPlayer)
-├── audio_engine.py          # Python wrapper around the C++ engine
-├── audio_core.cpp           # C++ audio engine (miniaudio + SoundTouch)
-├── build.py                 # Compiles audio_core.cpp → .dll/.so
-├── build_exe.py             # Packages the app with PyInstaller
-├── cover_cache.py           # Two-tier album art cache (memory + disk)
-├── subsonic_client.py       # Navidrome / Subsonic API client
-├── login_dialog.py          # Server connection dialog
-├── now_playing.py           # Now Playing queue panel and tree widget
-├── library_browser.py       # Albums grid browser and album detail view
-├── artists_browser.py       # Artists grid browser and artist detail view
-├── tracks_browser.py        # Flat tracks list browser
-├── playlists_browser.py     # Playlists browser and playlist detail view
-├── home.py                  # Home tab (recently played, random albums)
-├── spotlight_search.py      # Global search overlay
-├── visualizer.py            # Frequency bar visualizer widget
-├── waveform_scrubber.py     # Waveform / seek bar widget
-├── waveform_renderer.py     # SoundCloud-style bar renderer (helper)
-├── components.py            # Shared UI components
-├── requirements.txt
-└── img/                     # Icons and default artwork
-```
 
 ---
 
