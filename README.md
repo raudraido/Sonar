@@ -31,6 +31,7 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 - **Media key support** — play/pause/next/prev via keyboard media keys (Windows & Linux)
 - **Crossfade backgrounds** — blurred album art as the window background
 - **Now Playing queue** — drag-to-reorder, favourite toggling, column resize
+- **Reorganizable tabs** — reorder browser tabs to match your workflow
 
 ---
 
