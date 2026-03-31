@@ -277,6 +277,36 @@ class LivePageWorker(QThread):
         except Exception as e:
             print(f"[LivePageWorker] Error loading page: {e}")
 
+class SongCountWorker(QThread):
+    """Fetches all albums and sorts them by song count client-side."""
+    page_ready = pyqtSignal(list, object)
+
+    def __init__(self, client, total_count, ascending=True):
+        super().__init__()
+        self.client = client
+        self.total_count = total_count
+        self.ascending = ascending
+        self.is_cancelled = False
+
+    def run(self):
+        try:
+            if not self.client: return
+            all_albums = []
+            page_size = 500
+            offset = 0
+            while offset < self.total_count:
+                if self.is_cancelled: return
+                albums, _ = self.client.get_albums_live(sort_type='newest', size=page_size, offset=offset)
+                if not albums:
+                    break
+                all_albums.extend(albums)
+                offset += page_size
+            all_albums.sort(key=lambda a: a.get('songCount', 0), reverse=not self.ascending)
+            if not self.is_cancelled:
+                self.page_ready.emit(all_albums, len(all_albums))
+        except Exception as e:
+            print(f"[SongCountWorker] Error: {e}")
+
 class ServerCountWorker(QThread):
     count_ready = pyqtSignal(int)
 
@@ -1210,6 +1240,7 @@ class LibraryGridBrowser(QWidget):
             'latest': True,
             'alphabetical': True,
             'favorites': True,
+            'song_count': True,
         }
         self.current_sort = 'latest'
         
@@ -1428,6 +1459,7 @@ class LibraryGridBrowser(QWidget):
         self.create_sort_action(menu, 'random', 'Random')
         self.create_sort_action(menu, 'latest', 'Latest')
         self.create_sort_action(menu, 'alphabetical', 'Alphabetical')
+        self.create_sort_action(menu, 'song_count', 'Song Count')
 
         menu.addSeparator()
 
@@ -1449,8 +1481,12 @@ class LibraryGridBrowser(QWidget):
     
     def get_tinted_sort_icon(self, sort_type, is_ascending):
         """Get a tinted icon for the sort menu based on current accent color"""
-        suffix = 'a' if is_ascending else 'd'
-        icon_path = resource_path(f"img/sort-{sort_type}-{suffix}.png")
+        if sort_type == 'song_count':
+            suffix = 'asc' if is_ascending else 'desc'
+            icon_path = resource_path(f"img/sort-num-{suffix}.png")
+        else:
+            suffix = 'a' if is_ascending else 'd'
+            icon_path = resource_path(f"img/sort-{sort_type}-{suffix}.png")
         try:
             pixmap = QPixmap(icon_path)
             if not pixmap.isNull() and hasattr(self, 'current_accent'):
@@ -1531,10 +1567,14 @@ class LibraryGridBrowser(QWidget):
 
         # Get the current sort state (ascending/descending)
         is_ascending = self.sort_states.get(self.current_sort, True)
-        suffix = 'a' if is_ascending else 'd'
 
         # Load the icon for current sort
-        icon_path = resource_path(f"img/sort-{self.current_sort}-{suffix}.png")
+        if self.current_sort == 'song_count':
+            suffix = 'asc' if is_ascending else 'desc'
+            icon_path = resource_path(f"img/sort-num-{suffix}.png")
+        else:
+            suffix = 'a' if is_ascending else 'd'
+            icon_path = resource_path(f"img/sort-{self.current_sort}-{suffix}.png")
         
         try:
             pixmap = QPixmap(icon_path)
@@ -1909,6 +1949,7 @@ class LibraryGridBrowser(QWidget):
             if getattr(self, 'current_sort', 'latest') == 'alphabetical': api_sort = 'alphabeticalByName'
             elif getattr(self, 'current_sort', 'latest') == 'random': api_sort = 'random'
             elif getattr(self, 'current_sort', 'latest') == 'favorites': api_sort = 'starred'
+            # song_count uses 'newest' for count fetching, sorting happens client-side
             worker = LivePageWorker(self.client, sort_type=api_sort, size=1, offset=0, query="")
             worker.page_ready.connect(self._on_initial_count_loaded)
             worker.start()
@@ -1916,7 +1957,15 @@ class LibraryGridBrowser(QWidget):
             return
 
         self.status_label.setText(f"{self.true_server_count:,} albums")
-        
+
+        if getattr(self, 'current_sort', 'latest') == 'song_count' and self.true_server_count > 0:
+            is_ascending = self.sort_states.get('song_count', True)
+            worker = SongCountWorker(self.client, self.true_server_count, ascending=is_ascending)
+            worker.page_ready.connect(self._on_search_loaded)
+            worker.start()
+            self.live_worker = worker
+            return
+
         if self.true_server_count > 0:
             placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
             self.album_model.clear()
