@@ -55,9 +55,17 @@ class VisualsMixin:
             self.master_color = dominant_color
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
             if 0 <= self.current_index < len(self.playlist_data):
-                raw_artist = self.playlist_data[self.current_index].get('artist', 'Unknown')
+                track = self.playlist_data[self.current_index]
+                raw_artist = track.get('artist', 'Unknown')
                 formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{self.master_color}; font-size:24px'>•</span> ")
+                year = str(track.get('year', '') or '').strip()
+                if year and year != '0':
+                    formatted_artist += f"  •  {year}"
                 self.track_artist.setText(formatted_artist)
+                if hasattr(self, 'heart_btn'):
+                    raw_state = track.get('starred')
+                    is_fav = raw_state.lower() in ('true', '1') if isinstance(raw_state, str) else bool(raw_state)
+                    self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.master_color))
             self.refresh_ui_styles(scroll_to_current=False)
 
         if not self.current_cover_pixmap.isNull():
@@ -195,9 +203,17 @@ class VisualsMixin:
             return icon
 
         if 0 <= self.current_index < len(self.playlist_data):
-            raw_artist = self.playlist_data[self.current_index].get('artist', 'Unknown')
+            track = self.playlist_data[self.current_index]
+            raw_artist = track.get('artist', 'Unknown')
             formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{mc}; font-size:24px'>•</span> ")
+            year = str(track.get('year', '') or '').strip()
+            if year and year != '0':
+                formatted_artist += f"  •  {year}"
             self.track_artist.setText(formatted_artist)
+            if hasattr(self, 'heart_btn'):
+                raw_state = track.get('starred')
+                is_fav = raw_state.lower() in ('true', '1') if isinstance(raw_state, str) else bool(raw_state)
+                self.heart_btn.setIcon(self._make_heart_icon(is_fav, mc))
 
         # Only walk the tree and repaint the indicator row when the playing track or
         # accent color actually changed — skips the expensive tree scan on volume/tab events.
@@ -556,8 +572,8 @@ class VisualsMixin:
             # 1. Update Title and Artist
             title = track.get('title', 'Unknown').strip()
             artist = track.get('artist', 'Unknown').strip()
-            year = str(track.get('year', '') or '')
-            artist_year = f"{artist}  •  {year}" if year else artist
+            year = str(track.get('year', '') or '').strip()
+            artist_year = f"{artist}  •  {year}" if (year and year != '0') else artist
             self.track_title.setText(title)
             self.track_artist.setText(artist_year)
 
@@ -569,12 +585,7 @@ class VisualsMixin:
                 else:
                     is_fav = bool(raw_state)
                 accent = getattr(self, 'master_color', '#ffffff')
-                self.heart_btn.setText("♥" if is_fav else "♡")
-                self.heart_btn.setStyleSheet(
-                    f"font-size: 18px; color: {accent}; background: transparent; border: none;"
-                    if is_fav else
-                    "font-size: 18px; color: #555; background: transparent; border: none;"
-                )
+                self.heart_btn.setIcon(self._make_heart_icon(is_fav, accent))
             
             # 2. Determine Base File Type (STREAM vs MP3/FLAC)
             target_path = track.get('path', '')
@@ -614,6 +625,20 @@ class VisualsMixin:
                 self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
                 self.bpm_worker.start()
 
+    def _make_heart_icon(self, active, color_str):
+        path = resource_path("img/heart_filled.png" if active else "img/heart.png")
+        base = QPixmap(path)
+        if base.isNull():
+            return QIcon()
+        pix = QPixmap(base.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.drawPixmap(0, 0, base)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(pix.rect(), QColor(color_str if active else "#555555"))
+        painter.end()
+        return QIcon(pix)
+
     def _toggle_now_playing_favorite(self):
         if not (0 <= self.current_index < len(self.playlist_data)):
             return
@@ -626,12 +651,7 @@ class VisualsMixin:
         new_state = not current_state
         track['starred'] = new_state
         accent = getattr(self, 'master_color', '#ffffff')
-        self.heart_btn.setText("♥" if new_state else "♡")
-        self.heart_btn.setStyleSheet(
-            f"font-size: 18px; color: {accent}; background: transparent; border: none;"
-            if new_state else
-            "font-size: 18px; color: #555; background: transparent; border: none;"
-        )
+        self.heart_btn.setIcon(self._make_heart_icon(new_state, accent))
         if hasattr(self, 'navidrome_client') and self.navidrome_client:
             import threading
             threading.Thread(
