@@ -64,7 +64,7 @@ class PlaybackMixin:
         item.setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
         item.setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
 
-        fav_color = QColor(self.master_color) if is_fav else QColor("#555555")
+        fav_color = QColor("#E91E63") if is_fav else QColor("#555555")
         item.setForeground(7, fav_color)
 
         item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'track', 'data': track_data})
@@ -804,7 +804,7 @@ class PlaybackMixin:
             
             # Instantly update visual state using Master Color!
             item.setText(7, "♥" if new_state else "♡")
-            item.setForeground(7, QColor(self.master_color) if new_state else QColor("#555"))
+            item.setForeground(7, QColor("#E91E63") if new_state else QColor("#555"))
             
             # Sync to the master playlist array so it doesn't revert on next song
             idx = self.tree.indexOfTopLevelItem(item)

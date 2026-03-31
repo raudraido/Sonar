@@ -665,7 +665,7 @@ class NowPlayingPanel(QWidget):
         item.setText(COL_FAV, "♥" if new_state else "♡")
         
         # MASTER COLOR
-        item.setForeground(COL_FAV, QColor(self._current_accent) if new_state else QColor("#555555"))
+        item.setForeground(COL_FAV, QColor("#E91E63") if new_state else QColor("#555555"))
         
         # SYNC WITH MAIN.PY PLAYLIST DATA
         if self.main_window:

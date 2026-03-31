@@ -635,7 +635,7 @@ class VisualsMixin:
         painter = QPainter(pix)
         painter.drawPixmap(0, 0, base)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(pix.rect(), QColor(color_str if active else "#555555"))
+        painter.fillRect(pix.rect(), QColor("#E91E63" if active else "#555555"))
         painter.end()
         return QIcon(pix)
 
