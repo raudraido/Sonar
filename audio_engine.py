@@ -22,6 +22,9 @@ class AudioEngine(QObject):
 
         if platform.system() == "Windows":
             lib_path = os.path.join(os.path.dirname(__file__), "audio_core.dll")
+            libs_dir = os.path.join(os.path.dirname(__file__), "libs")
+            if os.path.isdir(libs_dir):
+                os.add_dll_directory(libs_dir)
         else:
             lib_path = os.path.join(os.path.dirname(__file__), "audio_core.so")
 

@@ -2,6 +2,9 @@
 audio_core.dll
 audio_core.so
 
+# Runtime DLLs bundled by build.py
+libs/
+
 # Python cache
 __pycache__/
 *.pyc

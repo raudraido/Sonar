@@ -43,7 +43,6 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 
 - Python 3.10+
 - A running [Navidrome](https://www.navidrome.org/) server (or any Subsonic-compatible server)
-- A C++ compiler (g++) to build the audio engine
 
 ---
 
@@ -56,7 +55,33 @@ git clone https://github.com/raudraido/Sonar.git
 cd Sonar
 ```
 
-### 2. Install Python dependencies
+### 2. Install a C++ compiler with libcurl
+
+The audio engine is a compiled C++ library. You need g++ and libcurl before running `build.py`.
+
+**Windows — install MSYS2 (recommended)**
+
+1. Download and install [MSYS2](https://www.msys2.org/)
+2. Open the **MSYS2 MinGW64** terminal and run:
+   ```bash
+   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-curl
+   ```
+3. Add `C:\msys64\mingw64\bin` to your Windows PATH  
+   *(Search "Edit the system environment variables" → Environment Variables → Path → New)*
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+sudo apt install g++ libcurl4-openssl-dev
+```
+
+**Linux (Fedora/RHEL)**
+
+```bash
+sudo dnf install gcc-c++ libcurl-devel
+```
+
+### 3. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -67,25 +92,15 @@ pip install -r requirements.txt
 pip install evdev
 ```
 
-### 3. Build the C++ audio engine
+### 4. Build the C++ audio engine
 
-The player depends on a compiled shared library (`audio_core.dll` on Windows, `audio_core.so` on Linux).
-
-**Dependencies for the C++ build:**
-
-| Platform | Required |
-|----------|----------|
-| Windows  | g++ (MinGW), libcurl (`-I C:/curl/include -L C:/curl/lib`) |
-| Linux    | g++, libcurl (`sudo apt install libcurl4-openssl-dev`) |
-
-**Build:**
 ```bash
 python build.py
 ```
 
-This compiles `audio_core.cpp` (with SoundTouch for pitch-correct scratch) and outputs the `.dll` / `.so` file in the project root.
+This compiles `audio_core.cpp` and outputs `audio_core.dll` (Windows) or `audio_core.so` (Linux) in the project root. On Windows it also copies the required runtime DLLs into `libs/` automatically.
 
-### 4. Run
+### 5. Run
 
 ```bash
 python main.py
