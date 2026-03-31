@@ -357,10 +357,26 @@ class SonarPlayer(
         self.track_artist.setStyleSheet("font-size: 18px; color: #888;")
         text_info_layout.addWidget(self.track_artist)
 
-        
+        bottom_row = QWidget()
+        bottom_row_layout = QHBoxLayout(bottom_row)
+        bottom_row_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_row_layout.setSpacing(8)
+
         self.file_type_label = QLabel("")
         self.file_type_label.setStyleSheet("font-size: 11px; color: #888; font-weight: 600;")
-        text_info_layout.addWidget(self.file_type_label)
+        bottom_row_layout.addWidget(self.file_type_label)
+
+        bottom_row_layout.addStretch()
+
+        self.heart_btn = QPushButton("♡")
+        self.heart_btn.setFixedSize(28, 28)
+        self.heart_btn.setFlat(True)
+        self.heart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.heart_btn.setStyleSheet("font-size: 18px; color: #555; background: transparent; border: none;")
+        self.heart_btn.clicked.connect(self._toggle_now_playing_favorite)
+        bottom_row_layout.addWidget(self.heart_btn)
+
+        text_info_layout.addWidget(bottom_row)
 
         left_panel.addWidget(text_info_container, 0)
         left_panel.addStretch(1)

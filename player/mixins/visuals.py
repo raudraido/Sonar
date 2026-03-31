@@ -556,8 +556,25 @@ class VisualsMixin:
             # 1. Update Title and Artist
             title = track.get('title', 'Unknown').strip()
             artist = track.get('artist', 'Unknown').strip()
+            year = str(track.get('year', '') or '')
+            artist_year = f"{artist}  •  {year}" if year else artist
             self.track_title.setText(title)
-            self.track_artist.setText(artist)
+            self.track_artist.setText(artist_year)
+
+            # Update heart button state
+            if hasattr(self, 'heart_btn'):
+                raw_state = track.get('starred')
+                if isinstance(raw_state, str):
+                    is_fav = raw_state.lower() in ('true', '1')
+                else:
+                    is_fav = bool(raw_state)
+                accent = getattr(self, 'master_color', '#ffffff')
+                self.heart_btn.setText("♥" if is_fav else "♡")
+                self.heart_btn.setStyleSheet(
+                    f"font-size: 18px; color: {accent}; background: transparent; border: none;"
+                    if is_fav else
+                    "font-size: 18px; color: #555; background: transparent; border: none;"
+                )
             
             # 2. Determine Base File Type (STREAM vs MP3/FLAC)
             target_path = track.get('path', '')
@@ -597,7 +614,32 @@ class VisualsMixin:
                 self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
                 self.bpm_worker.start()
 
-    def set_elided_text(self, label, text): 
+    def _toggle_now_playing_favorite(self):
+        if not (0 <= self.current_index < len(self.playlist_data)):
+            return
+        track = self.playlist_data[self.current_index]
+        raw_state = track.get('starred')
+        if isinstance(raw_state, str):
+            current_state = raw_state.lower() in ('true', '1')
+        else:
+            current_state = bool(raw_state)
+        new_state = not current_state
+        track['starred'] = new_state
+        accent = getattr(self, 'master_color', '#ffffff')
+        self.heart_btn.setText("♥" if new_state else "♡")
+        self.heart_btn.setStyleSheet(
+            f"font-size: 18px; color: {accent}; background: transparent; border: none;"
+            if new_state else
+            "font-size: 18px; color: #555; background: transparent; border: none;"
+        )
+        if hasattr(self, 'navidrome_client') and self.navidrome_client:
+            import threading
+            threading.Thread(
+                target=lambda: self.navidrome_client.set_favorite(track.get('id'), new_state),
+                daemon=True
+            ).start()
+
+    def set_elided_text(self, label, text):
         metrics = QFontMetrics(label.font())
         elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, label.width())
         label.setText(elided)
