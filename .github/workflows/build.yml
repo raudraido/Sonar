@@ -19,6 +19,9 @@ jobs:
         run: C:\msys64\usr\bin\pacman -S --noconfirm mingw-w64-x86_64-curl
         shell: cmd
 
+      - name: Add MinGW64 to PATH
+        run: echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -30,7 +33,6 @@ jobs:
       - name: Build audio_core.dll
         run: python build.py
         env:
-          PATH: C:\msys64\mingw64\bin;${{ env.PATH }}
           CURL_DIR: C:\msys64\mingw64
 
       - name: Build Sonar.exe
