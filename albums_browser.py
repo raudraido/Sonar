@@ -1823,14 +1823,19 @@ class LibraryGridBrowser(QWidget):
 
     def check_viewport_qml(self, start_idx, end_idx):
         if self.album_model.rowCount() == 0: return
-        
+
+        # song_count loads the entire grid at once — chunks can't be refetched
+        # in sorted order, so skip GC and individual fetches entirely.
+        if getattr(self, 'current_sort', 'latest') == 'song_count':
+            return
+
         start_chunk = max(0, start_idx // 50)
         end_chunk = max(0, end_idx // 50)
         visible_chunks = set(range(start_chunk, end_chunk + 1))
-        
+
         if not hasattr(self, 'loaded_chunks'): self.loaded_chunks = set()
         if not hasattr(self, 'active_chunk_workers'): self.active_chunk_workers = {}
-        
+
         # 1. GHOST CANCEL
         for chunk, worker in list(self.active_chunk_workers.items()):
             if chunk not in visible_chunks:
