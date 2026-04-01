@@ -65,10 +65,17 @@ class SubsonicClient:
         self.api_version = "1.30.0"
         self.client_name = "ProFeishin"
         self._api_cache = LRUCache(max_size=20)
-        self._artists_cache = None  
-        self._scan_status_cache = None 
-        
+        self._artists_cache = None
+        self._scan_status_cache = None
+
         self._auth_lock = threading.Lock()
+
+        import requests
+        from requests.adapters import HTTPAdapter
+        self.session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=1, pool_maxsize=10)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     # ------------------------------------------------------------------
     # Disk cache helpers
@@ -790,11 +797,11 @@ class SubsonicClient:
         if not cover_id: return None
         params = self._get_auth_params()
         params['id'] = cover_id
-        params['size'] = size 
+        params['size'] = size
         try:
-            r = requests.get(f"{self.base_url}/rest/getCoverArt", params=params, stream=True)
+            r = self.session.get(f"{self.base_url}/rest/getCoverArt", params=params, timeout=15)
             if r.status_code == 200:
-                return r.content 
+                return r.content
         except:
             pass
         return None

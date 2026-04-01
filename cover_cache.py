@@ -52,7 +52,7 @@ class CoverCache:
         self._mem_lock = threading.Lock()
         
         
-        self.MAX_THUMBS = 150
+        self.MAX_THUMBS = 1000
         self.MAX_FULL = 5
 
     # ------------------------------------------------------------------ #
