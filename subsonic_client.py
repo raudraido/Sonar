@@ -426,6 +426,47 @@ class SubsonicClient:
             print(f"[Client] Native track fetch failed: {e}")
             return [], 0
        
+    def get_albums_native_page(self, sort_by="name", order="ASC", start=0, end=50, query=""):
+        """Fetches a specific page of albums using Navidrome's native API for true server-side sorting."""
+        import requests
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            if not self.authenticate_native():
+                return [], 0
+            
+        headers = {
+            "x-nd-authorization": f"Bearer {self.native_jwt}"
+        }
+            
+        params = {
+            "_start": start,
+            "_end": end,
+            "_sort": sort_by,
+            "_order": order,
+        }
+        if query:
+            params["_q"] = query 
+            
+        try:
+            r = requests.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
+            
+            if r.status_code == 401: 
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = requests.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
+            
+            data = r.json()
+            if not isinstance(data, list):
+                return [], 0
+
+            total_count = int(r.headers.get('X-Total-Count', len(data)))
+            
+            # The native API returns items that are mostly compatible.
+            # We just need to ensure the keys match what the UI expects.
+            return data, total_count
+        except Exception as e:
+            print(f"[Client] Native album fetch failed: {e}")
+            return [], 0
+       
     def get_artists_live(self, force_refresh=False):
         """Fetches ALL artists (including track artists) using OpenSubsonic empty-query search."""
         if not force_refresh and self._artists_cache is not None:
