@@ -174,42 +174,67 @@ Rectangle {
                 property bool isKeyboardFocused: grid.activeFocus && grid.currentIndex === index
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
+                // Skeleton shimmer sweep — animates a highlight across the card
+                property real shimmerPos: -1.0
+                SequentialAnimation on shimmerPos {
+                    running: isLoading
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 2.0; duration: 1200; easing.type: Easing.InOutSine }
+                    PauseAnimation  { duration: 400 }
+                }
+
                 Item {
                     id: coverContainer
                     width: parent.width
-                    height: parent.width 
+                    height: parent.width
                     anchors.top: parent.top
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
-                        color: coverId ? "transparent" : "#1a1a1a"
+                        color: isLoading ? "#2a2a2a" : (coverId ? "transparent" : "#1a1a1a")
+
+                        Rectangle {
+                            visible: isLoading
+                            width: parent.width * 0.4
+                            height: parent.height
+                            x: parent.width * cardRoot.shimmerPos - width / 2
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.5; color: "#44ffffff" }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
                     }
 
                     Image {
                         anchors.fill: parent
+                        visible: !isLoading
                         source: coverId ? "image://covers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
                         mipmap: true
-                        cache: false 
+                        cache: false
                     }
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
                         color: "#000"
+                        visible: !isLoading
                         opacity: cardRoot.isHovered ? 0.4 : 0.0
                         Behavior on opacity { NumberAnimation { duration: 150 } }
                     }
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
                         color: "transparent"
+                        visible: !isLoading
                         border.color: cardRoot.isHovered ? root.accentColor : "transparent"
                         border.width: cardRoot.isHovered ? 1 : 0
                     }
-                    
+
                     Rectangle {
                         id: playBtnObj
                         width: Math.min(60, parent.width / 2)
@@ -217,12 +242,13 @@ Rectangle {
                         radius: width / 2
                         color: root.accentColor
                         anchors.centerIn: parent
-                        
+                        visible: !isLoading
+
                         opacity: playArea.containsMouse ? 1.0 : (cardRoot.isHovered ? 0.8 : 0.0)
                         scale: playArea.containsMouse ? 1.0 : 0.8
                         Behavior on opacity { NumberAnimation { duration: 150 } }
                         Behavior on scale { NumberAnimation { duration: 150 } }
-                        
+
                         Canvas {
                             anchors.fill: parent
                             onPaint: {
@@ -240,16 +266,63 @@ Rectangle {
                     }
                 }
 
+                // Skeleton text pills
                 Column {
-                    
-                    z: 2 
-                    
+                    visible: isLoading
+                    anchors.top: coverContainer.bottom
+                    anchors.topMargin: 10
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    spacing: 6
+
+                    Rectangle {
+                        width: parent.width * 0.75
+                        height: 11
+                        radius: 5
+                        color: "#2a2a2a"
+                        clip: true
+                        Rectangle {
+                            width: parent.width * 0.6
+                            height: parent.height
+                            x: parent.width * cardRoot.shimmerPos - width / 2
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.5; color: "#33ffffff" }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: parent.width * 0.5
+                        height: 9
+                        radius: 4
+                        color: "#222"
+                        clip: true
+                        Rectangle {
+                            width: parent.width * 0.6
+                            height: parent.height
+                            x: parent.width * cardRoot.shimmerPos - width / 2
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.5; color: "#33ffffff" }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
+                    }
+                }
+
+                Column {
+                    visible: !isLoading
+                    z: 2
+
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8
                     anchors.left: parent.left
                     anchors.right: parent.right
                     spacing: 2
-                    
+
                     Text {
                         width: parent.width
                         text: albumTitle
@@ -258,7 +331,7 @@ Rectangle {
                         font.bold: true
                         elide: Text.ElideRight
                     }
-                    
+
                     Flow {
                         width: parent.width
                         spacing: 0

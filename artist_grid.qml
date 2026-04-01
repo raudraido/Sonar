@@ -161,41 +161,63 @@ Rectangle {
                 property bool isKeyboardFocused: grid.activeFocus && grid.currentIndex === index
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
+                property real shimmerPos: -1.0
+                SequentialAnimation on shimmerPos {
+                    running: isLoading
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 2.0; duration: 1200; easing.type: Easing.InOutSine }
+                    PauseAnimation  { duration: 400 }
+                }
+
                 Item {
                     id: coverContainer
                     width: parent.width
                     height: parent.width
                     anchors.top: parent.top
 
-                    // Skeleton box shown when no cover loaded
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
-                        color: coverId ? "transparent" : "#1a1a1a"
+                        color: isLoading ? "#2a2a2a" : (coverId ? "transparent" : "#1a1a1a")
+                        clip: true
+
+                        Rectangle {
+                            visible: isLoading
+                            width: parent.width * 0.4
+                            height: parent.height
+                            x: parent.width * cardRoot.shimmerPos - width / 2
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.5; color: "#44ffffff" }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
                     }
 
                     Image {
                         anchors.fill: parent
+                        visible: !isLoading
                         source: coverId ? "image://artistcovers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
                         mipmap: true
                         cache: false
                     }
 
-                    // Hover dark overlay — box, radius 8
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
                         color: "#000"
+                        visible: !isLoading
                         opacity: cardRoot.isHovered ? 0.4 : 0.0
                         Behavior on opacity { NumberAnimation { duration: 150 } }
                     }
 
-                    // Accent border — box, radius 8
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
                         color: "transparent"
+                        visible: !isLoading
                         border.color: cardRoot.isHovered ? root.accentColor : "transparent"
                         border.width: cardRoot.isHovered ? 1 : 0
                     }
@@ -207,6 +229,7 @@ Rectangle {
                         radius: width / 2
                         color: root.accentColor
                         anchors.centerIn: parent
+                        visible: !isLoading
 
                         opacity: playArea.containsMouse ? 1.0 : (cardRoot.isHovered ? 0.8 : 0.0)
                         scale: playArea.containsMouse ? 1.0 : 0.8
@@ -230,8 +253,34 @@ Rectangle {
                     }
                 }
 
+                // Skeleton name pill
+                Rectangle {
+                    visible: isLoading
+                    anchors.top: coverContainer.bottom
+                    anchors.topMargin: 10
+                    anchors.left: parent.left
+                    width: parent.width * 0.65
+                    height: 11
+                    radius: 5
+                    color: "#2a2a2a"
+                    clip: true
+
+                    Rectangle {
+                        width: parent.width * 0.6
+                        height: parent.height
+                        x: parent.width * cardRoot.shimmerPos - width / 2
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "transparent" }
+                            GradientStop { position: 0.5; color: "#33ffffff" }
+                            GradientStop { position: 1.0; color: "transparent" }
+                        }
+                    }
+                }
+
                 // Artist name below the cover
                 Text {
+                    visible: !isLoading
                     z: 2
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8

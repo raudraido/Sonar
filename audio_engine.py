@@ -88,9 +88,10 @@ class AudioEngine(QObject):
         # ------------------------------------------------------------------
         self.lib.audio_init()
 
-        self.is_playing     = False
-        self.total_ms       = 0
-        self.current_buffer = None
+        self.is_playing             = False
+        self.total_ms               = 0
+        self.current_buffer         = None
+        self.ignore_end_checks_until = 0.0
 
         self.update_timer = QTimer()
         self.update_timer.setInterval(16)

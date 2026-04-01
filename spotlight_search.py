@@ -12,6 +12,65 @@ from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QPainterPath
 
       
 
+# --- BACKGROUND WORKER FOR SEARCH ---
+
+class SearchWorker(QThread):
+    results_ready = pyqtSignal(list, list, list)  # tracks, artists, albums
+
+    def __init__(self, client, query):
+        super().__init__()
+        self.client = client
+        self.query = query
+        self.is_cancelled = False
+
+    def run(self):
+        import re
+        try:
+            api_query = self.query.replace('"', '')
+            query_words = api_query.lower().split()
+
+            results = self.client.search3(api_query, size=2000, offset=0, artist_count=20, album_count=20)
+            if self.is_cancelled:
+                return
+
+            raw_tracks  = results.get('song', [])
+            raw_artists = results.get('artist', [])
+            raw_albums  = results.get('album', [])
+
+            tracks  = [t for t in raw_tracks  if all(w in str(t.get('title', '')).lower() for w in query_words)]
+            artists = [a for a in raw_artists if all(w in str(a.get('name') or a.get('artist', '')).lower() for w in query_words)]
+            albums  = [a for a in raw_albums  if all(w in str(a.get('title') or a.get('name', '')).lower() for w in query_words)]
+
+            def sort_score(name):
+                name = str(name).lower().strip()
+                q = api_query.lower().strip()
+                if name == q:                                  return (1, len(name))
+                if re.search(rf"\b{re.escape(q)}\b", name):
+                    return (2, len(name)) if name.startswith(q) else (3, len(name))
+                if name.startswith(q):                         return (4, len(name))
+                return (5, len(name))
+
+            tracks.sort(key=lambda t: sort_score(t.get('title', '')))
+            tracks = tracks[:6]
+
+            for a in artists:
+                a['title'] = a.get('name') or a.get('artist') or 'Unknown'
+                a['album_count'] = a.get('albumCount') or 0
+            artists.sort(key=lambda a: sort_score(a['title']))
+            artists = artists[:4]
+
+            for a in albums:
+                a['title'] = a.get('title') or a.get('name') or 'Unknown'
+                a['artist'] = a.get('artist') or 'Various Artists'
+            albums.sort(key=lambda a: sort_score(a['title']))
+            albums = albums[:4]
+
+            if not self.is_cancelled:
+                self.results_ready.emit(tracks, artists, albums)
+        except Exception as e:
+            print(f"[SearchWorker] Error: {e}")
+
+
 # --- BACKGROUND WORKER FOR COVERS ---
 
 class SearchCoverWorker(QThread):
@@ -264,7 +323,9 @@ class SearchResultRow(QWidget):
 class SpotlightSearch(QWidget):
     play_requested = pyqtSignal(dict)           # Single tracks
     play_multiple_requested = pyqtSignal(list)  # Albums and Artists
-    view_requested = pyqtSignal(dict) # Albums and Artists
+    view_requested = pyqtSignal(dict)           # Albums and Artists
+    search_opened = pyqtSignal()
+    search_closed = pyqtSignal()
 
     def __init__(self, parent_window, db):
     # Pass None so it becomes a top-level window, store parent_window separately
@@ -282,8 +343,26 @@ class SpotlightSearch(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        
-        self.setStyleSheet("SpotlightSearch { background-color: rgba(0, 0, 0, 200); }")
+
+        self._bg_alpha = 0
+        self.setStyleSheet("SpotlightSearch { background-color: transparent; }")
+
+        self._dim_timer = QTimer()
+        self._dim_timer.setInterval(16)
+        self._dim_target = 0
+        self._dim_step = 0
+
+        def _dim_tick():
+            self._bg_alpha += self._dim_step
+            if self._dim_step > 0 and self._bg_alpha >= self._dim_target:
+                self._bg_alpha = self._dim_target
+                self._dim_timer.stop()
+            elif self._dim_step < 0 and self._bg_alpha <= self._dim_target:
+                self._bg_alpha = self._dim_target
+                self._dim_timer.stop()
+            self.update()
+
+        self._dim_timer.timeout.connect(_dim_tick)
         
         self.container = QWidget(self)
         self.container.setFixedWidth(750)
@@ -382,6 +461,11 @@ class SpotlightSearch(QWidget):
             widget = self.list_widget.itemWidget(current)
             if isinstance(widget, SearchResultRow): widget.set_active_state(True)
 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, int(self._bg_alpha)))
+        painter.end()
+
     def show_search(self, initial_char=""):
         self.apply_list_stylesheet()
         
@@ -392,19 +476,47 @@ class SpotlightSearch(QWidget):
                             (self.height() - self.container.height()) // 2)
         
         self.input.setText(initial_char)
+        self._dim_timer.stop()
+        self._bg_alpha = 0
+        self._dim_target = 200
+        self._dim_step = 200 / 10
+        self._was_visible = True
         self.show()
         self.raise_()
         self.activateWindow()
         self.input.setFocus()
         self.input.setCursorPosition(len(initial_char))
+        self._dim_timer.start()
+        self.search_opened.emit()
 
     def hide_search(self):
+        if hasattr(self, '_search_worker') and self._search_worker.isRunning():
+            self._search_worker.is_cancelled = True
+        if hasattr(self, '_play_artist_worker') and self._play_artist_worker.isRunning():
+            self._play_artist_worker.is_cancelled = True
+            try: self._play_artist_worker.tracks_ready.disconnect()
+            except: pass
         self.input.clear()
         self.list_widget.clear()
         self.list_widget.hide()
         self.line.hide()
+        self.container.setFixedHeight(90)
+        self._dim_timer.stop()
+        self._dim_target = 0
+        self._dim_step = -(200 / 10)
+        self._dim_timer.start()
+        fade_ms = int(abs(200 / self._dim_step) * self._dim_timer.interval()) + 20
+        QTimer.singleShot(fade_ms, self._finish_hide)
+
+    def _finish_hide(self):
         self.hide()
         if self.parent_window: self.parent_window.setFocus()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if getattr(self, '_was_visible', False):
+            self.search_closed.emit()
+        self._was_visible = False
 
     def on_text_changed(self, text):
         if not text.strip():
@@ -426,143 +538,93 @@ class SpotlightSearch(QWidget):
     def perform_search(self):
         query = self.input.text().strip()
         if not query: return
-        self.list_widget.clear()
-        
+
         client = getattr(self.parent_window, 'navidrome_client', None)
         if not client: return
 
-        api_query = query.replace('"', '')
-        query_words = api_query.lower().split()
-        
-        try:
-            
-            results = client.search3(api_query, size=2000, offset=0, artist_count=20, album_count=20)
-            
-            raw_tracks = results.get('song', [])
-            raw_artists = results.get('artist', [])
-            raw_albums = results.get('album', [])
+        # Cancel previous worker if still running
+        if hasattr(self, '_search_worker') and self._search_worker.isRunning():
+            self._search_worker.is_cancelled = True
 
-            # 1. STRICT CATEGORY FILTERING (Keep only if all query words exist in the target field)
-            # Replaces the current tracks filter:
-            # STRICTLY check the title only!
-            tracks = [t for t in raw_tracks if all(w in str(t.get('title', '')).lower() for w in query_words)]
-            artists = [a for a in raw_artists if all(w in str(a.get('name') or a.get('artist', '')).lower() for w in query_words)]
-            albums = [a for a in raw_albums if all(w in str(a.get('title') or a.get('name', '')).lower() for w in query_words)]
+        self._search_worker = SearchWorker(client, query)
+        self._search_worker.results_ready.connect(self._on_results)
+        self._search_worker.start()
 
-            # 2. EXACT QUOTE FILTERING (If the user explicitly wrapped words in " ")
-            if '"' in query:
-                tracks = self.apply_quote_filter(tracks, query, category='track')
-                artists = self.apply_quote_filter(artists, query, category='artist')
-                albums = self.apply_quote_filter(albums, query, category='album')
+    def _on_results(self, tracks, artists, albums):
+        if self.sender() and getattr(self.sender(), 'is_cancelled', False):
+            return
+        if not self.isVisible():
+            return
+        query = self.input.text().strip()
+        if not query:
+            return
 
-            # 3. ADVANCED SORTING AND LIMITING
-            import re
-            
-            def sort_score(item_name):
-                name = str(item_name).lower().strip()
-                q = api_query.lower().strip()
-                
-                # Tier 1: Exact perfect match ("Musi" == "Musi")
-                if name == q: 
-                    return (1, len(name))
-                    
-                # Tier 2: Exact standalone word match ("Musi (Remix)" or "My Musi")
-                # The \b ensures we are looking at full words, ignoring "Music"
-                if re.search(rf"\b{re.escape(q)}\b", name):
-                    if name.startswith(q):
-                        return (2, len(name)) # "Musi" is the first word
-                    return (3, len(name))     # "Musi" is a word later in the title
-                    
-                # Tier 3: Prefix match part of a larger word ("Music")
-                if name.startswith(q): 
-                    return (4, len(name))
-                    
-                # Tier 4: Substring match inside a larger word ("Popmusic")
-                return (5, len(name))
+        # Quote filter runs on main thread (cheap — no network)
+        if '"' in query:
+            tracks  = self.apply_quote_filter(tracks,  query, category='track')
+            artists = self.apply_quote_filter(artists, query, category='artist')
+            albums  = self.apply_quote_filter(albums,  query, category='album')
 
-            # Limit and sort Tracks
-            tracks.sort(key=lambda t: sort_score(t.get('title', '')))
-            tracks = tracks[:6] 
+        self.list_widget.clear()
 
-            # Limit and sort Artists
+        def add_header(title):
+            item = QListWidgetItem(self.list_widget)
+            item.setSizeHint(QSize(self.list_widget.width(), 35))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
+            self.list_widget.setItemWidget(item, SearchHeaderRow(title))
+
+        def add_row(data_dict):
+            item = QListWidgetItem(self.list_widget)
+            item.setSizeHint(QSize(self.list_widget.width(), 64))
+            row_widget = SearchResultRow(data_dict, self.parent_window)
+            row_widget.action_requested.connect(self._handle_row_action)
+            row_widget.set_list_item(self.list_widget, item)
+            self.list_widget.setItemWidget(item, row_widget)
+            item.setData(Qt.ItemDataRole.UserRole, data_dict)
+
+        if tracks:
+            add_header("Tracks")
+            for t in tracks:
+                t['type'] = 'track'
+                t['subtitle'] = t.get('artist') or "Unknown Artist"
+                t['cover_id'] = t.get('coverArt') or t.get('albumId')
+                add_row(t)
+
+        if artists:
+            add_header("Artists")
             for a in artists:
-                a['title'] = a.get('name') or a.get('artist') or "Unknown"
-                a['album_count'] = a.get('albumCount') or 0
-            artists.sort(key=lambda a: sort_score(a['title']))
-            artists = artists[:4]
+                a['type'] = 'artist'
+                cnt = a.get('album_count', 0)
+                a['subtitle'] = f"{cnt} album{'s' if cnt != 1 else ''}" if cnt else "Artist"
+                a['cover_id'] = a.get('cover_id') or a.get('coverArt') or a.get('id')
+                add_row(a)
 
-            # Limit and sort Albums
+        if albums:
+            add_header("Albums")
             for a in albums:
-                a['title'] = a.get('title') or a.get('name') or "Unknown"
-                a['artist'] = a.get('artist') or "Various Artists"
-            albums.sort(key=lambda a: sort_score(a['title']))
-            albums = albums[:4]
+                a['type'] = 'album'
+                a['subtitle'] = a.get('artist') or "Various Artists"
+                a['cover_id'] = a.get('coverArt') or a.get('id')
+                add_row(a)
 
-            # --- UI GENERATION ---
-            def add_header(title):
-                item = QListWidgetItem(self.list_widget)
-                item.setSizeHint(QSize(self.list_widget.width(), 35))
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
-                self.list_widget.setItemWidget(item, SearchHeaderRow(title))
+        if albums or artists or tracks:
+            self.list_widget.show()
+            self.line.show()
+            for i in range(self.list_widget.count()):
+                if self.list_widget.item(i).flags() & Qt.ItemFlag.ItemIsSelectable:
+                    self.list_widget.setCurrentRow(i); break
 
-            def add_row(data_dict):
-                item = QListWidgetItem(self.list_widget)
-                item.setSizeHint(QSize(self.list_widget.width(), 64))
-                row_widget = SearchResultRow(data_dict, self.parent_window)
-                row_widget.action_requested.connect(self._handle_row_action)
-                row_widget.set_list_item(self.list_widget, item)
-                self.list_widget.setItemWidget(item, row_widget)
-                item.setData(Qt.ItemDataRole.UserRole, data_dict)
+            exact_list_height = sum(self.list_widget.item(i).sizeHint().height() for i in range(self.list_widget.count())) + 10
+            max_list_height = int(self.parent_window.height() * 0.85)
+            actual_list_height = min(exact_list_height, max_list_height)
+            self.list_widget.setFixedHeight(actual_list_height)
+            self.container.setFixedHeight(90 + actual_list_height)
+        else:
+            self.list_widget.hide()
+            self.line.hide()
+            self.container.setFixedHeight(90)
 
-            if tracks:
-                add_header("Tracks")
-                for t in tracks:
-                    t['type'] = 'track'
-                    t['subtitle'] = t.get('artist') or "Unknown Artist"
-                    t['cover_id'] = t.get('coverArt') or t.get('albumId')
-                    add_row(t)
-
-            if artists:
-                add_header("Artists")
-                for a in artists:
-                    a['type'] = 'artist'
-                    cnt = a.get('album_count', 0)
-                    a['subtitle'] = f"{cnt} album{'s' if cnt != 1 else ''}" if cnt else "Artist"
-                    a['cover_id'] = a.get('cover_id') or a.get('coverArt') or a.get('id')
-                    add_row(a)
-
-            if albums:
-                add_header("Albums")
-                for a in albums:
-                    a['type'] = 'album'
-                    a['subtitle'] = a.get('artist') or "Various Artists"
-                    a['cover_id'] = a.get('coverArt') or a.get('id')
-                    add_row(a)
-            
-            if albums or artists or tracks:
-                self.list_widget.show()
-                self.line.show() 
-                for i in range(self.list_widget.count()):
-                    if self.list_widget.item(i).flags() & Qt.ItemFlag.ItemIsSelectable:
-                        self.list_widget.setCurrentRow(i); break
-                
-                exact_list_height = 0
-                for i in range(self.list_widget.count()): exact_list_height += self.list_widget.item(i).sizeHint().height()
-                exact_list_height += 10
-                
-                max_list_height = int(self.parent_window.height() * 0.85)
-                actual_list_height = min(exact_list_height, max_list_height)
-                self.list_widget.setFixedHeight(actual_list_height)
-                self.container.setFixedHeight(90 + actual_list_height)
-            else:
-                self.list_widget.hide()
-                self.line.hide() 
-                self.container.setFixedHeight(90)
-                
-            self.container.move((self.width() - self.container.width()) // 2, (self.height() - self.container.height()) // 2)
-            
-        except Exception as e: 
-            print(f"Spotlight API search error: {e}")
+        self.container.move((self.width() - self.container.width()) // 2, (self.height() - self.container.height()) // 2)
 
     def _handle_row_action(self, data, action_type):
         if action_type == 'play_default':

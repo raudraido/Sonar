@@ -144,6 +144,7 @@ class AlbumModel(QAbstractListModel):
     YEAR_ROLE = Qt.ItemDataRole.UserRole + 3
     COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 4
     RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
+    IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 6
 
     def __init__(self):
         super().__init__()
@@ -158,14 +159,15 @@ class AlbumModel(QAbstractListModel):
         if role == self.ARTIST_ROLE: return a.get('artist', '')
         if role == self.YEAR_ROLE: return str(a.get('year', '')).replace('None', '')
         if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
-        if role == self.RAW_DATA_ROLE: return a 
+        if role == self.RAW_DATA_ROLE: return a
+        if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
         return None
 
     def roleNames(self):
         return {
             self.TITLE_ROLE: b"albumTitle", self.ARTIST_ROLE: b"albumArtist",
             self.YEAR_ROLE: b"albumYear", self.COVER_ID_ROLE: b"coverId",
-            self.RAW_DATA_ROLE: b"rawData"
+            self.RAW_DATA_ROLE: b"rawData", self.IS_LOADING_ROLE: b"isLoading",
         }
         
     def append_albums(self, new_albums):
@@ -1240,7 +1242,7 @@ class LibraryGridBrowser(QWidget):
             'latest': True,
             'alphabetical': True,
             'favorites': True,
-            'song_count': True,
+            'song_count': False,
         }
         self.current_sort = 'latest'
         
@@ -1538,9 +1540,9 @@ class LibraryGridBrowser(QWidget):
             # If clicking the currently active sort, flip its direction
             self.sort_states[sort_type] = not self.sort_states[sort_type]
         else:
-            # If switching to a NEW sort, make it active and set to default direction
+            # If switching to a NEW sort, make it active and reset to its default direction
             self.current_sort = sort_type
-            self.sort_states[sort_type] = True
+            self.sort_states[sort_type] = False if sort_type == 'song_count' else True
             
         # CACHE FLUSH FOR RANDOM: Re-randomize every single time it's clicked!
         if sort_type == 'random' and hasattr(self, 'client'):
@@ -1824,8 +1826,7 @@ class LibraryGridBrowser(QWidget):
     def check_viewport_qml(self, start_idx, end_idx):
         if self.album_model.rowCount() == 0: return
 
-        # song_count loads the entire grid at once — chunks can't be refetched
-        # in sorted order, so skip GC and individual fetches entirely.
+        # song_count is fully populated from cache by _fill_song_count_chunks — nothing to do on scroll.
         if getattr(self, 'current_sort', 'latest') == 'song_count':
             return
 
@@ -1855,10 +1856,11 @@ class LibraryGridBrowser(QWidget):
                 
                 # Tell QML the chunks were wiped to save RAM
                 self.album_model.dataChanged.emit(
-                    self.album_model.index(chunk_start, 0), 
+                    self.album_model.index(chunk_start, 0),
                     self.album_model.index(chunk_end - 1, 0),
                     [self.album_model.TITLE_ROLE, self.album_model.ARTIST_ROLE,
-                    self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE]
+                    self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE,
+                    self.album_model.IS_LOADING_ROLE]
                 )
                             
         # 3. FETCH VISIBLE
@@ -1907,15 +1909,62 @@ class LibraryGridBrowser(QWidget):
             self.album_model.albums[target_row] = album_data
             
         self.album_model.dataChanged.emit(
-            self.album_model.index(start_row, 0), 
+            self.album_model.index(start_row, 0),
             self.album_model.index(start_row + len(albums) - 1, 0),
             [self.album_model.TITLE_ROLE, self.album_model.ARTIST_ROLE,
-            self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE]
+            self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE,
+            self.album_model.IS_LOADING_ROLE]
         )
         
         if hasattr(self, 'cover_worker') and self.cover_worker:
             for cid in reversed(covers_to_queue):
                 self.cover_worker.queue_cover(cid, priority=True)
+
+    def _on_song_count_loaded(self, albums, total, cache_key):
+        """Called when the full sorted list is ready. Caches it and repopulates in chunks."""
+        if hasattr(self, 'live_worker') and self.live_worker:
+            self._safe_discard_worker(self.live_worker)
+            self.live_worker = None
+        if not albums:
+            return
+        self.all_albums_cache = albums
+        self.all_albums_sort = cache_key
+        self.status_label.setText(f"{len(albums):,} albums")
+        # Reset model to sorted placeholders then fill in chunks
+        placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(len(albums))]
+        self.album_model.clear()
+        self.album_model.append_albums(placeholders)
+        self._fill_song_count_chunks(albums)
+
+    def _fill_song_count_chunks(self, albums, chunk_size=50, chunk_index=0):
+        """Populate the model chunk by chunk via QTimer so the main thread isn't blocked."""
+        start = chunk_index * chunk_size
+        if start >= len(albums):
+            return
+        end = min(start + chunk_size, len(albums))
+        covers_to_queue = []
+        for i, album in enumerate(albums[start:end]):
+            row = start + i
+            if row >= len(self.album_model.albums):
+                break
+            cid = album.get('cover_id') or album.get('coverArt') or album.get('id')
+            if cid:
+                album['cover_id'] = cid
+                covers_to_queue.append(cid)
+            self.album_model.albums[row] = album
+        self.album_model.dataChanged.emit(
+            self.album_model.index(start, 0),
+            self.album_model.index(end - 1, 0),
+            [self.album_model.TITLE_ROLE, self.album_model.ARTIST_ROLE,
+             self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE,
+             self.album_model.IS_LOADING_ROLE]
+        )
+        if hasattr(self, 'cover_worker') and self.cover_worker:
+            for cid in reversed(covers_to_queue):
+                self.cover_worker.queue_cover(cid)
+        if end < len(albums):
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(16, lambda: self._fill_song_count_chunks(albums, chunk_size, chunk_index + 1))
 
     def load_albums_page(self, reset=False):
         # If we just restored from a save file, don't let it reset our page!
@@ -1965,8 +2014,23 @@ class LibraryGridBrowser(QWidget):
 
         if getattr(self, 'current_sort', 'latest') == 'song_count' and self.true_server_count > 0:
             is_ascending = self.sort_states.get('song_count', True)
+            cache_key = f'song_count_{"asc" if is_ascending else "desc"}'
+
+            # Cache hit — skip the network entirely
+            if self.all_albums_sort == cache_key and self.all_albums_cache:
+                placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(len(self.all_albums_cache))]
+                self.album_model.clear()
+                self.album_model.append_albums(placeholders)
+                self._fill_song_count_chunks(self.all_albums_cache)
+                return
+
+            # Show placeholders immediately so the UI isn't blank while fetching
+            placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
+            self.album_model.clear()
+            self.album_model.append_albums(placeholders)
+
             worker = SongCountWorker(self.client, self.true_server_count, ascending=is_ascending)
-            worker.page_ready.connect(self._on_search_loaded)
+            worker.page_ready.connect(lambda albums, total, key=cache_key: self._on_song_count_loaded(albums, total, key))
             worker.start()
             self.live_worker = worker
             return
@@ -2056,6 +2120,8 @@ class LibraryGridBrowser(QWidget):
     def refresh_grid(self):
         # 1. Reset the server count so we ask the server exactly how many albums exist right now!
         self.true_server_count = 0
+        self.all_albums_cache = []
+        self.all_albums_sort = None
         
         # 2. Brutally wipe the API cache so we don't just reload the old albums from memory!
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):

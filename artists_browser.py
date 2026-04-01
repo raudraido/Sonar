@@ -2114,30 +2114,33 @@ class ArtistRichDetailView(QWidget):
             self.set_header_image(pixmap)
 
 class ArtistModel(QAbstractListModel):
-    NAME_ROLE     = Qt.ItemDataRole.UserRole + 1
-    COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 2
-    RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 3
+    NAME_ROLE      = Qt.ItemDataRole.UserRole + 1
+    COVER_ID_ROLE  = Qt.ItemDataRole.UserRole + 2
+    RAW_DATA_ROLE  = Qt.ItemDataRole.UserRole + 3
+    IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 4
 
     def __init__(self):
         super().__init__()
         self.artists = []
 
-    def rowCount(self, parent=QModelIndex()): 
+    def rowCount(self, parent=QModelIndex()):
         return len(self.artists)
 
     def data(self, index, role):
         if not index.isValid(): return None
         a = self.artists[index.row()]
-        if role == self.NAME_ROLE:     return a.get('name') or a.get('artist') or 'Unknown'
-        if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
-        if role == self.RAW_DATA_ROLE: return a
+        if role == self.NAME_ROLE:      return a.get('name') or a.get('artist') or 'Unknown'
+        if role == self.COVER_ID_ROLE:  return a.get('coverId_forced') or a.get('cover_id') or ''
+        if role == self.RAW_DATA_ROLE:  return a
+        if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
         return None
 
     def roleNames(self):
         return {
-            self.NAME_ROLE:     b"artistName",
-            self.COVER_ID_ROLE: b"coverId",
-            self.RAW_DATA_ROLE: b"rawData",
+            self.NAME_ROLE:      b"artistName",
+            self.COVER_ID_ROLE:  b"coverId",
+            self.RAW_DATA_ROLE:  b"rawData",
+            self.IS_LOADING_ROLE: b"isLoading",
         }
 
     def append_artists(self, new_artists):
@@ -2460,7 +2463,8 @@ class ArtistGridBrowser(QWidget):
                 self.artist_model.dataChanged.emit(
                     self.artist_model.index(cs, 0),
                     self.artist_model.index(ce - 1, 0),
-                    [self.artist_model.NAME_ROLE, self.artist_model.COVER_ID_ROLE]
+                    [self.artist_model.NAME_ROLE, self.artist_model.COVER_ID_ROLE,
+                     self.artist_model.IS_LOADING_ROLE]
                 )
 
         # 3. Fetch visible chunks not yet loaded
@@ -2724,7 +2728,8 @@ class ArtistGridBrowser(QWidget):
             self.artist_model.dataChanged.emit(
                 self.artist_model.index(start_row, 0),
                 self.artist_model.index(start_row + items_written - 1, 0),
-                [self.artist_model.NAME_ROLE, self.artist_model.COVER_ID_ROLE]
+                [self.artist_model.NAME_ROLE, self.artist_model.COVER_ID_ROLE,
+                 self.artist_model.IS_LOADING_ROLE]
             )
 
         if hasattr(self, 'cover_worker') and self.cover_worker:

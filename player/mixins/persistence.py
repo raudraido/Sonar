@@ -390,3 +390,6 @@ class PersistenceMixin:
             
         super().resizeEvent(event)
 
+    def moveEvent(self, event):
+        super().moveEvent(event)
+

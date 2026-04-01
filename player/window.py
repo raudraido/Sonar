@@ -235,9 +235,10 @@ class SonarPlayer(
         
         # 1. Connect single tracks
         self.spotlight.play_requested.connect(self.play_track_from_data)
-        
+
         # 2. Connect entire artists and albums
         self.spotlight.play_multiple_requested.connect(self.play_whole_album)
+
 
         # --- evdev Media Key Listener (Linux, direct kernel input) ---
         self.media_key_listener = CrossPlatformMediaKeyListener()
