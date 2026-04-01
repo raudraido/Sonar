@@ -62,13 +62,21 @@ class GridBridge(QObject):
         self.last_start, self.last_end = start, end
         if not hasattr(self, 'scroll_timer'):
             from PyQt6.QtCore import QTimer
+            self._scroll_prev = (-1, -1)
             self.scroll_timer = QTimer()
-            self.scroll_timer.setSingleShot(True)
-            self.scroll_timer.timeout.connect(lambda: self.visibleRangeChanged.emit(self.last_start, self.last_end))
-            
-        # 👇 🟢 THE THROTTLE FIX: Only start the timer if it isn't already counting down!
+            self.scroll_timer.setInterval(80)
+            self.scroll_timer.timeout.connect(self._on_scroll_tick)
         if not self.scroll_timer.isActive():
-            self.scroll_timer.start(150)
+            self._scroll_prev = (-1, -1)
+            self.scroll_timer.start()
+
+    def _on_scroll_tick(self):
+        current = (self.last_start, self.last_end)
+        if current == self._scroll_prev:
+            self.scroll_timer.stop()
+            self.visibleRangeChanged.emit(self.last_start, self.last_end)
+        else:
+            self._scroll_prev = current
         
     @pyqtSlot(int)
     def emitItemClicked(self, idx): 
@@ -156,8 +164,8 @@ class AlbumModel(QAbstractListModel):
         if not index.isValid(): return None
         a = self.albums[index.row()]
         if role == self.TITLE_ROLE: return a.get('title') or a.get('name') or 'Unknown'
-        if role == self.ARTIST_ROLE: return a.get('artist', '')
-        if role == self.YEAR_ROLE: return str(a.get('year', '')).replace('None', '')
+        if role == self.ARTIST_ROLE: return a.get('artist') or a.get('albumArtist') or ''
+        if role == self.YEAR_ROLE: return str(a.get('year') or a.get('minYear') or a.get('maxYear') or '').replace('None', '')
         if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
         if role == self.RAW_DATA_ROLE: return a
         if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
@@ -254,6 +262,22 @@ class LivePageWorker(QThread):
         try:
             if not self.client: return
 
+            # NEW: Check for native album sort by song count
+            if not self.query and self.sort_type == 'song_count' and hasattr(self.client, 'get_albums_native_page'):
+                is_ascending = not self.reverse_list
+                albums, total_count = self.client.get_albums_native_page(
+                    sort_by='songCount',
+                    order='ASC' if is_ascending else 'DESC',
+                    start=self.offset,
+                    end=self.offset + self.size
+                )
+                # Native API handles sorting, so no client-side reversal needed.
+                if not self.is_cancelled:
+                    # The native API returns items that are mostly compatible.
+                    # We just need to ensure the keys match what the UI expects.
+                    self.page_ready.emit(albums, total_count)
+                return
+
             if self.query:
                 # Search mode: use the dedicated album search endpoint
                 albums, total_count = self.client.search_albums(
@@ -278,36 +302,6 @@ class LivePageWorker(QThread):
             self.page_ready.emit(albums, total_count)
         except Exception as e:
             print(f"[LivePageWorker] Error loading page: {e}")
-
-class SongCountWorker(QThread):
-    """Fetches all albums and sorts them by song count client-side."""
-    page_ready = pyqtSignal(list, object)
-
-    def __init__(self, client, total_count, ascending=True):
-        super().__init__()
-        self.client = client
-        self.total_count = total_count
-        self.ascending = ascending
-        self.is_cancelled = False
-
-    def run(self):
-        try:
-            if not self.client: return
-            all_albums = []
-            page_size = 500
-            offset = 0
-            while offset < self.total_count:
-                if self.is_cancelled: return
-                albums, _ = self.client.get_albums_live(sort_type='newest', size=page_size, offset=offset)
-                if not albums:
-                    break
-                all_albums.extend(albums)
-                offset += page_size
-            all_albums.sort(key=lambda a: a.get('songCount', 0), reverse=not self.ascending)
-            if not self.is_cancelled:
-                self.page_ready.emit(all_albums, len(all_albums))
-        except Exception as e:
-            print(f"[SongCountWorker] Error: {e}")
 
 class ServerCountWorker(QThread):
     count_ready = pyqtSignal(int)
@@ -342,7 +336,9 @@ class GridCoverWorker(QThread):
         self.client  = client
         self.queue   = []
         self.running = True
-        
+        self._abort_requested  = False
+        self._urgent_in_flight = set()
+
         from cover_cache import CoverCache
         self._cache  = CoverCache.instance()
 
@@ -403,15 +399,38 @@ class GridCoverWorker(QThread):
 
         return cid, None
 
+    def abort_current_batch(self):
+        """Clear the queue and cancel any not-yet-running futures on the next loop tick."""
+        self.queue.clear()
+        self._abort_requested = True
+
+    def load_urgent(self, cover_ids):
+        """Move visible covers to the front of the download queue for priority processing."""
+        for cid in reversed(cover_ids):
+            cid = str(cid)
+            data = self._cache.get_thumb(cid)
+            if data:
+                self.cover_ready.emit(cid, data)
+                continue
+            if cid in self.queue:
+                self.queue.remove(cid)
+            self.queue.insert(0, cid)
+
     def run(self):
         with ThreadPoolExecutor(max_workers=_COVER_WORKERS) as executor:
             futures = []
 
             while self.running:
                 try:
+                    if getattr(self, '_abort_requested', False):
+                        self._abort_requested = False
+                        for f in futures:
+                            f.cancel()
+                        futures = [f for f in futures if not f.done() and not f.cancelled()]
+
                     while self.queue and len(futures) < _COVER_WORKERS:
                         cover_id = str(self.queue.pop(0))
-                        
+
                         data = self._cache.get_thumb(cover_id)
                         if data:
                             self.cover_ready.emit(cover_id, data)
@@ -1826,9 +1845,7 @@ class LibraryGridBrowser(QWidget):
     def check_viewport_qml(self, start_idx, end_idx):
         if self.album_model.rowCount() == 0: return
 
-        # song_count is fully populated from cache by _fill_song_count_chunks — nothing to do on scroll.
-        if getattr(self, 'current_sort', 'latest') == 'song_count':
-            return
+
 
         start_chunk = max(0, start_idx // 50)
         end_chunk = max(0, end_idx // 50)
@@ -2000,42 +2017,19 @@ class LibraryGridBrowser(QWidget):
 
         if not hasattr(self, 'true_server_count') or self.true_server_count == 0:
             api_sort = 'newest'
-            if getattr(self, 'current_sort', 'latest') == 'alphabetical': api_sort = 'alphabeticalByName'
-            elif getattr(self, 'current_sort', 'latest') == 'random': api_sort = 'random'
-            elif getattr(self, 'current_sort', 'latest') == 'favorites': api_sort = 'starred'
-            # song_count uses 'newest' for count fetching, sorting happens client-side
+            current_sort = getattr(self, 'current_sort', 'latest')
+            if current_sort == 'alphabetical': api_sort = 'alphabeticalByName'
+            elif current_sort == 'random': api_sort = 'random'
+            elif current_sort == 'favorites': api_sort = 'starred'
+            elif current_sort == 'song_count': api_sort = 'song_count'
             worker = LivePageWorker(self.client, sort_type=api_sort, size=1, offset=0, query="")
             worker.page_ready.connect(self._on_initial_count_loaded)
             worker.start()
             self.live_worker = worker
             return
 
-        self.status_label.setText(f"{self.true_server_count:,} albums")
-
-        if getattr(self, 'current_sort', 'latest') == 'song_count' and self.true_server_count > 0:
-            is_ascending = self.sort_states.get('song_count', True)
-            cache_key = f'song_count_{"asc" if is_ascending else "desc"}'
-
-            # Cache hit — skip the network entirely
-            if self.all_albums_sort == cache_key and self.all_albums_cache:
-                placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(len(self.all_albums_cache))]
-                self.album_model.clear()
-                self.album_model.append_albums(placeholders)
-                self._fill_song_count_chunks(self.all_albums_cache)
-                return
-
-            # Show placeholders immediately so the UI isn't blank while fetching
-            placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
-            self.album_model.clear()
-            self.album_model.append_albums(placeholders)
-
-            worker = SongCountWorker(self.client, self.true_server_count, ascending=is_ascending)
-            worker.page_ready.connect(lambda albums, total, key=cache_key: self._on_song_count_loaded(albums, total, key))
-            worker.start()
-            self.live_worker = worker
-            return
-
         if self.true_server_count > 0:
+            self.status_label.setText(f"{self.true_server_count:,} albums")
             placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
             self.album_model.clear()
             self.album_model.append_albums(placeholders)
@@ -2044,9 +2038,11 @@ class LibraryGridBrowser(QWidget):
     def fetch_chunk(self, chunk_index):
         """Fires a background worker and returns it so we can cancel it if needed."""
         api_sort = 'newest'
-        if getattr(self, 'current_sort', 'latest') == 'alphabetical': api_sort = 'alphabeticalByName'
-        elif getattr(self, 'current_sort', 'latest') == 'random': api_sort = 'random'
-        elif getattr(self, 'current_sort', 'latest') == 'favorites': api_sort = 'starred'
+        current_sort = getattr(self, 'current_sort', 'latest')
+        if current_sort == 'alphabetical': api_sort = 'alphabeticalByName'
+        elif current_sort == 'random': api_sort = 'random'
+        elif current_sort == 'favorites': api_sort = 'starred'
+        elif current_sort == 'song_count': api_sort = 'song_count'
         
         query = getattr(self, 'current_query', '')
         
@@ -2057,7 +2053,9 @@ class LibraryGridBrowser(QWidget):
         size = 50
         
         # If descending, we have to read chunks from the END of the server's list backwards!
-        if not is_ascending and getattr(self, 'true_server_count', 0) > 0:
+        # This hack is only for getAlbumList2, which doesn't support descending order.
+        # Native API calls handle sorting direction via the 'order' parameter.
+        if not is_ascending and getattr(self, 'true_server_count', 0) > 0 and api_sort != 'song_count':
             true_start = self.true_server_count - (chunk_index * 50) - 50
             if true_start < 0:
                 size = 50 + true_start  # Shrink the size if we hit the very beginning of the list

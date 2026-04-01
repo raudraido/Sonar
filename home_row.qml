@@ -126,12 +126,21 @@ Rectangle {
                 property bool isKeyboardFocused: grid.activeFocus && grid.currentIndex === index
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
+                SkeletonCard {
+                    visible: isLoading
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    pillCount: 2
+                }
+
                 Item {
                     id: coverContainer
+                    visible: !isLoading
                     width: parent.width
-                    height: parent.width 
+                    height: parent.width
                     anchors.top: parent.top
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
@@ -143,9 +152,9 @@ Rectangle {
                         source: coverId ? "image://covers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
                         mipmap: true
-                        cache: false 
+                        cache: false
                     }
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
@@ -153,7 +162,7 @@ Rectangle {
                         opacity: cardRoot.isHovered ? 0.4 : 0.0
                         Behavior on opacity { NumberAnimation { duration: 150 } }
                     }
-                    
+
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
@@ -161,7 +170,7 @@ Rectangle {
                         border.color: cardRoot.isHovered ? root.accentColor : "transparent"
                         border.width: cardRoot.isHovered ? 1 : 0
                     }
-                    
+
                     Rectangle {
                         id: playBtnObj
                         width: Math.min(60, parent.width / 2)
@@ -169,12 +178,12 @@ Rectangle {
                         radius: width / 2
                         color: root.accentColor
                         anchors.centerIn: parent
-                        
+
                         opacity: playArea.containsMouse ? 1.0 : (cardRoot.isHovered ? 0.8 : 0.0)
                         scale: playArea.containsMouse ? 1.0 : 0.8
                         Behavior on opacity { NumberAnimation { duration: 150 } }
                         Behavior on scale { NumberAnimation { duration: 150 } }
-                        
+
                         Canvas {
                             anchors.fill: parent
                             onPaint: {
@@ -192,15 +201,15 @@ Rectangle {
                     }
                 }
 
-                
                 Column {
-                    z: 2 
+                    visible: !isLoading
+                    z: 2
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8
                     anchors.left: parent.left
                     anchors.right: parent.right
                     spacing: 2
-                    
+
                     Text {
                         width: parent.width
                         text: albumTitle
@@ -209,7 +218,7 @@ Rectangle {
                         font.bold: true
                         elide: Text.ElideRight
                     }
-                    
+
                     Text {
                         id: artistText
                         width: parent.width
@@ -218,22 +227,22 @@ Rectangle {
                         font.underline: artistMouseArea.containsMouse
                         font.pixelSize: 12
                         elide: Text.ElideRight
-                        
+
                         MouseArea {
                             id: artistMouseArea
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            
+
                             onClicked: (mouse) => {
                                 grid.forceActiveFocus()
                                 grid.currentIndex = index
                                 bridge.emitArtistClicked(Number(index))
-                                mouse.accepted = true 
+                                mouse.accepted = true
                             }
                         }
                     }
-                    
+
                     Text {
                         width: parent.width
                         text: albumYear

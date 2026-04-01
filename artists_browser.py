@@ -2181,15 +2181,21 @@ class ArtistGridBridge(QObject):
         self.last_start, self.last_end = start, end
         if not hasattr(self, 'scroll_timer'):
             from PyQt6.QtCore import QTimer
+            self._scroll_prev = (-1, -1)
             self.scroll_timer = QTimer()
-            self.scroll_timer.setSingleShot(True)
-            self.scroll_timer.timeout.connect(
-                lambda: self.visibleRangeChanged.emit(self.last_start, self.last_end)
-            )
-            
-        
+            self.scroll_timer.setInterval(80)
+            self.scroll_timer.timeout.connect(self._on_scroll_tick)
         if not self.scroll_timer.isActive():
-            self.scroll_timer.start(150)
+            self._scroll_prev = (-1, -1)
+            self.scroll_timer.start()
+
+    def _on_scroll_tick(self):
+        current = (self.last_start, self.last_end)
+        if current == self._scroll_prev:
+            self.scroll_timer.stop()
+            self.visibleRangeChanged.emit(self.last_start, self.last_end)
+        else:
+            self._scroll_prev = current
 
     @pyqtSlot(int)
     def emitItemClicked(self, idx):
@@ -2467,8 +2473,23 @@ class ArtistGridBrowser(QWidget):
                      self.artist_model.IS_LOADING_ROLE]
                 )
 
-        # 3. Fetch visible chunks not yet loaded
-        for chunk in visible_chunks:
+        # 3. Abort stale cover fetches; immediately load visible covers in dedicated threads
+        if hasattr(self, 'cover_worker') and self.cover_worker:
+            self.cover_worker.abort_current_batch()
+            urgent = []
+            for chunk in sorted(visible_chunks):
+                if chunk in self.loaded_chunks:
+                    cs = chunk * 50
+                    ce = min(cs + 50, len(self.artist_model.artists))
+                    for artist in self.artist_model.artists[cs:ce]:
+                        cid = artist.get('cover_id')
+                        if cid and not self.cover_provider.image_cache.get(str(cid)):
+                            urgent.append(cid)
+            if urgent:
+                self.cover_worker.load_urgent(urgent)
+
+        # 4. Fetch visible chunks not yet loaded
+        for chunk in sorted(visible_chunks):
             if chunk not in self.loaded_chunks and chunk not in self.active_chunk_workers:
                 self.loaded_chunks.add(chunk)
                 self.active_chunk_workers[chunk] = self.fetch_chunk(chunk)
@@ -2708,6 +2729,10 @@ class ArtistGridBrowser(QWidget):
 
         if not artists: return
 
+        if not hasattr(self, '_chunk_data_cache'):
+            self._chunk_data_cache = {}
+        self._chunk_data_cache[chunk_index] = artists
+
         start_row = chunk_index * 50
         covers_to_queue = []
 
@@ -2733,8 +2758,7 @@ class ArtistGridBrowser(QWidget):
             )
 
         if hasattr(self, 'cover_worker') and self.cover_worker:
-            for cid in reversed(covers_to_queue):
-                self.cover_worker.queue_cover(cid, priority=True)
+            self.cover_worker.load_urgent(covers_to_queue)
 
     def resizeEvent(self, event): 
         super().resizeEvent(event)

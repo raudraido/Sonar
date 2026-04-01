@@ -1,4 +1,3 @@
-import time
 import math
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -68,7 +67,6 @@ class HomeView(QWidget):
     def __init__(self, client):
         super().__init__()
         self.client = client
-        self.last_reload_time = time.time()
         self.current_accent = "#1DB954"
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -330,11 +328,6 @@ class HomeView(QWidget):
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self.client and (time.time() - self.last_reload_time) > 30:
-            self.load_data()
-
     def initialize(self, client):
         self.client = client
         if not self.cover_worker:
@@ -347,7 +340,6 @@ class HomeView(QWidget):
         self.load_data()
 
     def load_data(self):
-        self.last_reload_time = time.time()
         if getattr(self, 'worker', None) and self.worker.isRunning():
             self._safe_discard_worker(self.worker)
         self.worker = HomeLoaderWorker(self.client)
