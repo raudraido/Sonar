@@ -65,10 +65,12 @@ class NowPlayingFooterWidget(QWidget):
     artist_clicked = pyqtSignal(str)
     album_clicked = pyqtSignal()
     title_clicked = pyqtSignal()
+    track_right_clicked = pyqtSignal(object)  # emits the current track dict
 
     def __init__(self, parent=None):
         super().__init__(parent)
-         
+        self._current_track = None
+
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setFixedHeight(74)
@@ -96,6 +98,10 @@ class NowPlayingFooterWidget(QWidget):
         self.title_lbl = ElidedLabel("")
         self.title_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.title_lbl.clicked.connect(self.title_clicked.emit)
+        self.title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.title_lbl.customContextMenuRequested.connect(
+            lambda _: self.track_right_clicked.emit(self._current_track) if self._current_track else None
+        )
         f = self.title_lbl.font()
         f.setPixelSize(15)
         f.setBold(True)
@@ -151,6 +157,9 @@ class NowPlayingFooterWidget(QWidget):
         else:
             self.album_lbl.hide()
             
+    def set_track(self, track):
+        self._current_track = track
+
     def set_cover(self, pixmap):
         if pixmap and not pixmap.isNull():
             self.art_label.setPixmap(pixmap)

@@ -496,6 +496,7 @@ class NowPlayingPanel(QWidget):
         # Collect track IDs for all selected rows
         track_ids = []
         track_names = []
+        tracks = []
         for item in selected:
             wrapped = item.data(0, Qt.ItemDataRole.UserRole)
             track = wrapped.get('data', wrapped) if isinstance(wrapped, dict) else {}
@@ -503,6 +504,7 @@ class NowPlayingPanel(QWidget):
             if tid:
                 track_ids.append(str(tid))
                 track_names.append(track.get('title', 'Unknown'))
+                tracks.append(track)
 
         if not track_ids:
             return
@@ -512,10 +514,11 @@ class NowPlayingPanel(QWidget):
         if self.main_window and hasattr(self.main_window, 'playlists_browser'):
             playlists = self.main_window.playlists_browser.all_playlists or []
 
-        self._build_and_show_menu(global_pos, client, track_ids, track_names, playlists)
+        self._build_and_show_menu(global_pos, client, track_ids, track_names, playlists, tracks)
 
-    def _build_and_show_menu(self, global_pos, client, track_ids, track_names, playlists):
+    def _build_and_show_menu(self, global_pos, client, track_ids, track_names, playlists, tracks=None):
         """Builds and shows the context menu. Always called on the main thread."""
+        from components import TrackInfoDialog
         menu = QMenu()
         menu.setStyleSheet(
             "QMenu { background-color: #1e1e1e; color: #ddd; border: 1px solid #444;"
@@ -566,6 +569,28 @@ class NowPlayingPanel(QWidget):
                 add_menu.addAction(action)
 
         menu.addMenu(add_menu)
+
+        if tracks and len(tracks) == 1:
+            menu.addSeparator()
+            info_action = QAction("Get Info", menu)
+            first_track = tracks[0]
+            accent = getattr(self, '_current_accent', '#1DB954')
+            mw = self.main_window
+            album_data = {
+                'id': first_track.get('albumId'),
+                'title': first_track.get('album', ''),
+                'artist': first_track.get('artist', ''),
+                'coverArt': first_track.get('cover_id'),
+            }
+            def _open_info():
+                TrackInfoDialog(
+                    first_track, client=client, accent_color=accent, parent=self,
+                    on_artist_click=lambda name: mw.navigate_to_artist(name) if mw and hasattr(mw, 'navigate_to_artist') else None,
+                    on_album_click=lambda _: mw.navigate_to_album(album_data) if mw and hasattr(mw, 'navigate_to_album') else None,
+                ).exec()
+            info_action.triggered.connect(_open_info)
+            menu.addAction(info_action)
+
         menu.exec(global_pos)
 
     def _add_to_existing_playlist(self, client, playlist_id, playlist_name, track_ids):

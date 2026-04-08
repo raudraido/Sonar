@@ -603,6 +603,7 @@ class VisualsMixin:
                     artist=artist,
                     album=track.get('album', '')
                 )
+                self.now_playing_widget.set_track(track)
             
             # 4. BPM Cache Check & Worker Trigger
             # Get the unique ID (Navidrome ID for streams, or file path for local)

@@ -670,6 +670,7 @@ class SonarPlayer(
         self.now_playing_widget.artist_clicked.connect(self.on_footer_artist_click)
         self.now_playing_widget.album_clicked.connect(self.on_footer_album_click)
         self.now_playing_widget.title_clicked.connect(self.on_footer_title_click)
+        self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
         left_layout.addWidget(self.now_playing_widget)
         
         footer_center = QWidget()

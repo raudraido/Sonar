@@ -1196,6 +1196,37 @@ class SubsonicClient:
             print(f"Error searching artist tracks: {e}")
         return []
     
+    def get_song(self, song_id):
+        """Fetches full song details by ID via Subsonic API."""
+        params = self._get_auth_params()
+        params['id'] = song_id
+        try:
+            r = self.session.get(f"{self.base_url}/rest/getSong", params=params, timeout=10)
+            data = r.json()
+            sr = data.get('subsonic-response', {})
+            if sr.get('status') == 'ok' and 'song' in sr:
+                return sr['song']
+        except Exception as e:
+            print(f"[Client] Error fetching song {song_id}: {e}")
+        return None
+
+    def get_song_native(self, song_id):
+        """Fetches full song details via Navidrome's native API, which returns the real filesystem path."""
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            self.authenticate_native()
+        headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
+        try:
+            r = self.session.get(f"{self.base_url}/api/song/{song_id}", headers=headers, timeout=10)
+            if r.status_code == 401:
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = self.session.get(f"{self.base_url}/api/song/{song_id}", headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            print(f"[Client] Error fetching native song {song_id}: {e}")
+        return None
+
     def get_server_scan_status(self):
         """Returns the server's last scan revision/timestamp as an integer."""
         params = self._get_auth_params()

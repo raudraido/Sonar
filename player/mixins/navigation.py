@@ -589,6 +589,82 @@ class NavigationMixin:
             if item:
                 self.tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
 
+    def _show_footer_track_context_menu(self, track):
+        if not track:
+            return
+        import re
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction, QCursor
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
+            "QMenu::item { padding: 6px 25px; }"
+            "QMenu::item:selected { background-color: #333; }"
+            "QMenu::item:disabled { color: #555; }"
+            "QMenu::separator { height: 1px; background: #444; margin: 5px 0; }"
+        )
+
+        menu.addAction("Play Now").triggered.connect(lambda: self.add_and_play_from_browser(track))
+        album_id = track.get('albumId') or track.get('parent')
+        if album_id:
+            menu.addAction(f"Play Album: {track.get('album', 'Unknown')}").triggered.connect(
+                lambda: self.play_full_album_by_id(album_id)
+            )
+        menu.addAction("Play Next").triggered.connect(lambda: self.play_track_next(track))
+        menu.addAction("Add to Queue").triggered.connect(lambda: self.add_track_to_queue(track))
+        menu.addSeparator()
+
+        is_fav = bool(track.get('starred'))
+        menu.addAction("Unlove (♥)" if is_fav else "Love (♡)").triggered.connect(
+            lambda: self._toggle_now_playing_favorite()
+        )
+        menu.addSeparator()
+
+        goto_menu = menu.addMenu("Go to")
+        album_data = {
+            'id': album_id,
+            'title': track.get('album', 'Unknown'),
+            'artist': track.get('artist', ''),
+            'coverArt': track.get('coverArt'),
+        }
+        if album_id:
+            goto_menu.addAction(f"Album: {album_data['title']}").triggered.connect(
+                lambda: self.navigate_to_album(album_data)
+            )
+            goto_menu.addSeparator()
+        artists = [p.strip() for p in re.split(
+            r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
+            track.get('artist', '')
+        ) if p.strip()]
+        for art in artists:
+            goto_menu.addAction(f"Artist: {art}").triggered.connect(
+                lambda checked, a=art: self.navigate_to_artist(a)
+            )
+
+        menu.addSeparator()
+        menu.addAction("Get Info").triggered.connect(lambda: self._show_footer_track_info(track))
+
+        menu.exec(QCursor.pos())
+
+    def _show_footer_track_info(self, track):
+        from components import TrackInfoDialog
+        accent = getattr(self, 'master_color', '#1DB954')
+        album_id = track.get('albumId') or track.get('parent')
+        album_data = {
+            'id': album_id,
+            'title': track.get('album', ''),
+            'artist': track.get('artist', ''),
+            'coverArt': track.get('coverArt'),
+        }
+        client = getattr(self, 'navidrome_client', None) or getattr(self, 'client', None)
+        dlg = TrackInfoDialog(
+            track, client=client, accent_color=accent, parent=self,
+            on_artist_click=lambda name: self.navigate_to_artist(name),
+            on_album_click=lambda _: self.navigate_to_album(album_data),
+        )
+        dlg.exec()
+
     def on_tab_changed(self, new_index):
         
         from PyQt6.QtCore import QTimer

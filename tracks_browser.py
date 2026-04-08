@@ -20,7 +20,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QTimer, QModelIndex, QEvent, QPoint, Q
 from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont
 
 from albums_browser import resource_path
-from components import PaginationFooter, SmartSearchContainer
+from components import PaginationFooter, SmartSearchContainer, TrackInfoDialog
 
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import OrderedDict
@@ -2323,6 +2323,11 @@ class TracksBrowser(QWidget):
             artists = [p.strip() for p in re.split(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )', first_track.get('artist', 'Unknown')) if p.strip()]
             for art in artists: goto_menu.addAction(f"Artist: {art}").triggered.connect(lambda checked, a=art: self.switch_to_artist_tab.emit(a))
 
+        if not is_multi:
+            menu.addSeparator()
+            action_info = menu.addAction("Get Info")
+            action_info.triggered.connect(lambda: self._show_track_info(first_track))
+
         if is_multi:
              action_play.triggered.connect(lambda: self.play_multiple_tracks.emit(selected_tracks))
              action_next.triggered.connect(lambda: [self.play_next.emit(t) for t in reversed(selected_tracks)])
@@ -2334,6 +2339,22 @@ class TracksBrowser(QWidget):
              action_queue.triggered.connect(lambda: self.queue_track.emit(first_track))
              action_fav.triggered.connect(lambda: self.toggle_track_favorite(first_track, selected_items[0]))
         menu.exec(self.tree.mapToGlobal(pos))
+
+    def _show_track_info(self, track):
+        client = getattr(self, 'client', None)
+        accent = getattr(self, 'current_accent', '#1DB954')
+        album_data = {
+            'id': track.get('albumId'),
+            'title': track.get('album', ''),
+            'artist': track.get('artist', ''),
+            'coverArt': track.get('cover_id'),
+        }
+        dlg = TrackInfoDialog(
+            track, client=client, accent_color=accent, parent=self,
+            on_artist_click=lambda name: self.switch_to_artist_tab.emit(name),
+            on_album_click=lambda _: self.switch_to_album_tab.emit(album_data),
+        )
+        dlg.exec()
         
     
     def _add_to_existing_playlist(self, playlist_id, playlist_name, track_ids):
