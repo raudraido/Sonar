@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [master]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -106,12 +107,25 @@ jobs:
           name: Sonar-Linux
           path: artifacts/linux
 
-      - name: Create or update latest release
+      - name: Publish latest (branch push)
+        if: startsWith(github.ref, 'refs/heads/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Latest Build
           prerelease: true
+          files: |
+            artifacts/windows/Sonar.exe
+            artifacts/linux/Sonar
+
+      - name: Publish versioned release (tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: true
+          generate_release_notes: true
           files: |
             artifacts/windows/Sonar.exe
             artifacts/linux/Sonar
