@@ -3,7 +3,7 @@ import os, sys, threading
 from PyQt6.QtWidgets import (QDialog, QToolButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                               QPushButton, QWidget, QCheckBox, QFrame, QScrollArea, QSizePolicy,
                               QApplication)
-from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QParallelAnimationGroup,
+from PyQt6.QtCore import (Qt, pyqtSignal, pyqtProperty, QSize,
                           QPropertyAnimation, QEasingCurve, QMetaObject, Q_ARG, QObject, QPoint, QUrl, QTimer, QEvent)
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QDesktopServices, QGuiApplication
 
@@ -194,26 +194,41 @@ class AutoCollapseInput(QLineEdit):
         if event.key() == Qt.Key.Key_Escape:
             # 1. Erase the text (This auto-resets the grid/list below it)
             self.clear()
-            
+
             # 2. Drop keyboard focus (This triggers focusOutEvent -> check_collapse!)
             self.clearFocus()
-            
+
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def getAnimWidth(self):
+        return self.maximumWidth()
+
+    def setAnimWidth(self, w):
+        # Set both constraints in one call before any layout pass fires
+        self.setMinimumWidth(w)
+        self.setMaximumWidth(w)
+
+    animWidth = pyqtProperty(int, getAnimWidth, setAnimWidth)
 
 class SmartSearchContainer(QWidget):
     text_changed = pyqtSignal(str)
     burger_clicked = pyqtSignal()
 
+    TARGET_WIDTH = 230
+
     def __init__(self, parent=None, placeholder="Search..."):
         super().__init__(parent)
         self.setStyleSheet("background: transparent; border: none;")
-        
+        # Fixed width always = input + two buttons.
+        # Parent header never changes this, so it never reflows during animation.
+        self.setFixedWidth(self.TARGET_WIDTH + 70)
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
         # --- INPUT ---
         self.search_input = AutoCollapseInput()
         self.search_input.setPlaceholderText(placeholder)
@@ -268,7 +283,9 @@ class SmartSearchContainer(QWidget):
         self.burger_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
         self.burger_btn.clicked.connect(self.burger_clicked.emit)
         
+        layout.addStretch(1)  # absorbs empty space; input grows leftward from the search button
         layout.addWidget(self.search_input)
+        layout.addSpacing(4)
         layout.addWidget(self.search_btn)
         layout.addWidget(self.burger_btn)
         
@@ -277,35 +294,29 @@ class SmartSearchContainer(QWidget):
         self.text_changed.emit(text)
         
     def toggle_search(self):
-        self.anim_group = QParallelAnimationGroup(self)
-        anim_min = QPropertyAnimation(self.search_input, b"minimumWidth")
-        anim_max = QPropertyAnimation(self.search_input, b"maximumWidth")
-        anim_min.setDuration(300); anim_max.setDuration(300)
-        anim_min.setEasingCurve(QEasingCurve.Type.InOutQuart)
-        anim_max.setEasingCurve(QEasingCurve.Type.InOutQuart)
-        
-        self.anim_group.addAnimation(anim_min)
-        self.anim_group.addAnimation(anim_max)
+        if getattr(self, '_search_animating', False):
+            return
+        self._search_animating = True
 
-        TARGET_WIDTH = 230
-        
-        
+        self._search_anim = QPropertyAnimation(self.search_input, b"animWidth")
+        self._search_anim.setDuration(300)
+        self._search_anim.setEasingCurve(QEasingCurve.Type.InOutQuart)
+        self._search_anim.finished.connect(lambda: setattr(self, '_search_animating', False))
+
         if self.search_input.maximumWidth() == 0:
-            anim_min.setStartValue(0); anim_min.setEndValue(TARGET_WIDTH)
-            anim_max.setStartValue(0); anim_max.setEndValue(TARGET_WIDTH)
-            anim_max.valueChanged.connect(lambda _: self.updateGeometry())
-            self.anim_group.start()
+            self._search_anim.setStartValue(0)
+            self._search_anim.setEndValue(self.TARGET_WIDTH)
+            self._search_anim.start()
             self.search_input.setFocus()
         else:
             current_w = self.search_input.maximumWidth()
-            anim_min.setStartValue(current_w); anim_min.setEndValue(0)
-            anim_max.setStartValue(current_w); anim_max.setEndValue(0)
-            self.anim_group.start()
+            self._search_anim.setStartValue(current_w)
+            self._search_anim.setEndValue(0)
+            self._search_anim.start()
             self.search_input.clearFocus()
             self.search_input.clear()
-            
+
     def check_collapse(self):
-        
         if self.search_input.maximumWidth() > 0 and not self.search_input.text():
             self.toggle_search()
 
