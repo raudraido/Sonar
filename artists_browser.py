@@ -1245,11 +1245,23 @@ class ArtistRichDetailView(QWidget):
         self.lbl_about_header.hide()
         self.content_layout.addWidget(self.lbl_about_header)
 
+        self._bio_collapsed = True
+        self._bio_full_text = ""
+
         self.lbl_bio = QLabel()
         self.lbl_bio.setWordWrap(True)
         self.lbl_bio.setStyleSheet("color: #bbb; font-size: 14px; line-height: 1.4; padding-left: 8px;")
+        self.lbl_bio.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lbl_bio.mousePressEvent = lambda e: self._toggle_bio()
         self.lbl_bio.hide()
         self.content_layout.addWidget(self.lbl_bio)
+
+        self.lbl_bio_toggle = QLabel("Show more")
+        self.lbl_bio_toggle.setStyleSheet("color: #888; font-size: 13px; padding-left: 8px; padding-top: 2px;")
+        self.lbl_bio_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lbl_bio_toggle.mousePressEvent = lambda e: self._toggle_bio()
+        self.lbl_bio_toggle.hide()
+        self.content_layout.addWidget(self.lbl_bio_toggle)
 
         # POPULAR TRACKS
         self.lbl_top_tracks = QLabel(" Popular")
@@ -1740,20 +1752,45 @@ class ArtistRichDetailView(QWidget):
 
     def set_bio(self, text):
         if text:
-            # Strip HTML tags for a clean plain-text display
             import re as _re
             clean = _re.sub(r'<[^>]+>', '', text).strip()
-            # Trim trailing Last.fm attribution link text if present
             clean = _re.sub(r'\s*Read more on Last\.fm\.?\s*$', '', clean, flags=_re.IGNORECASE).strip()
             if clean:
-                self.lbl_bio.setText(clean)
-                self.lbl_bio.show()
+                self._bio_full_text = clean
+                self._bio_collapsed = True
+                self._render_bio()
                 artist = getattr(self, 'current_artist_name', '')
                 self.lbl_about_header.setText(f'About {artist}')
                 self.lbl_about_header.show()
                 return
+        self._bio_full_text = ""
         self.lbl_bio.hide()
+        self.lbl_bio_toggle.hide()
         self.lbl_about_header.hide()
+
+    def _render_bio(self):
+        text = self._bio_full_text
+        lines = text.splitlines()
+        n = 10  # collapsed line count
+        if self._bio_collapsed:
+            if len(lines) > n:
+                preview = '\n'.join(lines[:n])
+            else:
+                chars = n * 100
+                preview = text[:chars].rsplit(' ', 1)[0] + '…' if len(text) > chars else text
+            self.lbl_bio.setText(preview)
+            needs_toggle = len(lines) > n or len(text) > n * 100
+            self.lbl_bio_toggle.setText("Show more")
+            self.lbl_bio_toggle.setVisible(needs_toggle)
+        else:
+            self.lbl_bio.setText(text)
+            self.lbl_bio_toggle.setText("Show less")
+            self.lbl_bio_toggle.show()
+        self.lbl_bio.show()
+
+    def _toggle_bio(self):
+        self._bio_collapsed = not self._bio_collapsed
+        self._render_bio()
 
     def set_related_artists(self, similar_artists):
         # Remove old row if present
