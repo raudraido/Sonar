@@ -287,14 +287,18 @@ class LiveTrackWorker(QThread):
 # --- SMART DELEGATES ---
 
 class SmartSortHeader(QHeaderView):
+    section_drag_finished = pyqtSignal()
+
     def __init__(self, parent=None):
-        
         super().__init__(Qt.Orientation.Horizontal, parent)
-        
         self.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setStretchLastSection(False)
         self.up_icon = QIcon(resource_path("img/filter_up.png"))
         self.down_icon = QIcon(resource_path("img/filter_down.png"))
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self.section_drag_finished.emit()
 
     def paintSection(self, painter, rect, logicalIndex):
         painter.save()
@@ -1265,44 +1269,37 @@ class TracksBrowser(QWidget):
         
         self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH"])
         self.tree.headerItem().setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
-        self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
-        
-        # 🟢 Tell Qt to center the TRACK header natively
-        self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
-        
-        
+
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(False)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows) 
-        
-        #self.tree.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
         self.tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.tree.setMouseTracking(True) 
-        
+        self.tree.setMouseTracking(True)
+
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionsClickable(True)
         self.tree.header().setSortIndicatorShown(True)
         self.tree.header().sectionClicked.connect(self.on_header_clicked)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
-        
-        # 🟢 Force column 0 (#) to perfectly shrink-to-fit its content!
-        # 🟢 SPEED FIX: Fixed width prevents Qt from measuring 500 fonts!
+
+        # Col 0 (#): fixed width, not resizable
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(0, 45)        
-        # 🟢 THE FIX: Tell TRACK (1) and ALBUM (4) to dynamically absorb window resizes (Stretch mode)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        
-        # Keep all the other columns Interactive (they stay the exact size you defined, but can be dragged manually)
-        for i in [2, 3, 5, 6, 7, 8, 9]: 
+        self.tree.setColumnWidth(0, 45)
+        # Cols 1-9: all freely interactive
+        for i in range(1, 10):
             self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        # 🟢 Updated column widths (Matching your exact requested specs)
+        self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60}
+        # These columns never grow beyond their default on window resize (user can still drag them)
+        self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75}
+
         self.tree.setColumnWidth(1, 350) # TRACK (Combined)
         self.tree.setColumnWidth(2, 200) # TITLE
         self.tree.setColumnWidth(3, 200) # ARTIST
@@ -1313,9 +1310,9 @@ class TracksBrowser(QWidget):
         self.tree.setColumnWidth(8, 70)  # PLAYS
         self.tree.setColumnWidth(9, 75)  # LENGTH
 
-        # 🟢 NEW: Define minimum widths and attach the drag-limiter
-        self.min_widths = {2: 200, 3: 200, 5: 70, 6: 120, 7: 60, 8: 70, 9: 75}
-        self.tree.header().sectionResized.connect(self.enforce_min_widths)
+        self._col_resize_guard = False
+        self.tree.header().sectionResized.connect(self._on_section_resized)
+        self.tree.header().section_drag_finished.connect(self._on_drag_finished)
 
         # 🟢 Specific Delegates
         self.combined_delegate = CombinedTrackDelegate(self.tree)
@@ -1408,10 +1405,6 @@ class TracksBrowser(QWidget):
         # Count is determined by LiveTrackWorker results; return cached total
         return getattr(self, 'total_items', 0)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.check_for_updates()
-
     def check_for_updates(self):
         pass  # Updates are driven by SmartBackgroundSyncer signals, not local DB polling.
     
@@ -1424,9 +1417,6 @@ class TracksBrowser(QWidget):
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH"]
         
         for i, name in enumerate(headers):
-            # Skip TRACK column so it is always visible and can't be hidden
-            if i == 1: continue
-                
             action = QAction(name, menu)
             action.setCheckable(True)
             action.setChecked(not self.tree.isColumnHidden(i))
@@ -1835,13 +1825,21 @@ class TracksBrowser(QWidget):
     
     
     def toggle_column(self, col, is_checked):
+        self._col_resize_guard = True
         self.tree.setColumnHidden(col, not is_checked)
+        if is_checked:
+            saved_w = self.tree.columnWidth(col)
+            self.tree.header().resizeSection(col, max(saved_w, self.col_min_widths.get(col, 60)))
+        self._col_resize_guard = False
         self.save_column_state()
 
     def save_column_state(self):
         state = {}
-        for i in range(10): # 🟢 Now 10 columns
-            state[str(i)] = self.tree.isColumnHidden(i)
+        for i in range(10):
+            state[str(i)] = {
+                'hidden': self.tree.isColumnHidden(i),
+                'width': self.tree.columnWidth(i),
+            }
         try:
             self._settings.setValue('tracks_columns_hidden', json.dumps(state))
         except: pass
@@ -1851,55 +1849,147 @@ class TracksBrowser(QWidget):
             state_str = self._settings.value('tracks_columns_hidden')
             if state_str:
                 state = json.loads(state_str)
-                for col_str, is_hidden in state.items():
+                self._col_resize_guard = True
+                for col_str, val in state.items():
                     col_idx = int(col_str)
-                    if col_idx < 10: self.tree.setColumnHidden(col_idx, is_hidden)
+                    if col_idx >= 10: continue
+                    # Support old format (bool) and new format (dict)
+                    if isinstance(val, dict):
+                        self.tree.setColumnHidden(col_idx, val.get('hidden', False))
+                        w = val.get('width', 0)
+                        if w > 0:
+                            self.tree.header().resizeSection(col_idx, w)
+                    else:
+                        self.tree.setColumnHidden(col_idx, val)
+                # Sanity check: corrupt state if <3 columns visible OR any single
+                # column is wider than 1200px (pushed everything off-screen)
+                visible = sum(1 for i in range(1, 10) if not self.tree.isColumnHidden(i))
+                any_insane = any(self.tree.columnWidth(i) > 1200 for i in range(1, 10))
+                if visible < 3 or any_insane:
+                    self._settings.remove('tracks_columns_hidden')
+                    for i in range(1, 10):
+                        self.tree.setColumnHidden(i, False)
+                        self.tree.header().resizeSection(i, self.col_min_widths.get(i, 80))
+                    self.tree.setColumnHidden(2, True)
+                    self.tree.setColumnHidden(3, True)
+                self._col_resize_guard = False
             else:
-                self.tree.setColumnHidden(2, True) # 🟢 Default hide standard Title
-                self.tree.setColumnHidden(3, True) # 🟢 Default hide standard Artist
+                self._col_resize_guard = True
+                self.tree.setColumnHidden(2, True)
+                self.tree.setColumnHidden(3, True)
+                self._col_resize_guard = False
         except:
+            self._col_resize_guard = True
             self.tree.setColumnHidden(2, True)
-            self.tree.setColumnHidden(3, True) # 🟢 Default hide standard Artist
+            self.tree.setColumnHidden(3, True)
+            self._col_resize_guard = False
     
     
-    def enforce_min_widths(self, logicalIndex, oldSize, newSize):
-        """Prevents the user from manually dragging non-stretch columns smaller than their initial size."""
+    def _last_visible_col(self):
+        """Return the logical index of the last visible interactive column (the stretch column)."""
+        for i in range(9, 0, -1):
+            if not self.tree.isColumnHidden(i):
+                return i
+        return -1
+
+    def _on_section_resized(self, logical_index, old_size, new_size):
+        """Enforce minimum widths while dragging."""
+        if getattr(self, '_col_resize_guard', False): return
         if getattr(self, 'is_album_mode', False): return
-        if hasattr(self, 'min_widths') and logicalIndex in self.min_widths:
-            min_w = self.min_widths[logicalIndex]
-            if newSize < min_w:
-                # Silently snap it back to the minimum size if they drag it too small
-                self.tree.header().blockSignals(True)
-                self.tree.header().resizeSection(logicalIndex, min_w)
-                self.tree.header().blockSignals(False)
+        if logical_index not in self.col_min_widths: return
+        if self.tree.isColumnHidden(logical_index): return
+        min_w = self.col_min_widths[logical_index]
+        if new_size < min_w:
+            self._col_resize_guard = True
+            self.tree.header().resizeSection(logical_index, min_w)
+            self._col_resize_guard = False
+
+    def _clamp_columns(self):
+        """After drag ends: shrink any column that pushed others below their minimum."""
+        if getattr(self, 'is_album_mode', False): return
+        viewport_w = self.tree.viewport().width()
+        self._col_resize_guard = True
+        for col in range(1, 10):
+            if self.tree.isColumnHidden(col): continue
+            used_by_others = self.tree.columnWidth(0)
+            for other in range(1, 10):
+                if other == col or self.tree.isColumnHidden(other): continue
+                used_by_others += self.col_min_widths.get(other, 60)
+            max_w = viewport_w - used_by_others
+            cur_w = self.tree.columnWidth(col)
+            if cur_w > max_w:
+                self.tree.header().resizeSection(col, max(self.col_min_widths.get(col, 60), max_w))
+        self._col_resize_guard = False
+
+    def _on_drag_finished(self):
+        self._clamp_columns()
+        self._fit_columns_to_viewport()
+        self.save_column_state()
+
+    def _visible_cols(self):
+        return [i for i in range(1, 10) if not self.tree.isColumnHidden(i)]
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._fit_columns_to_viewport)
+        self.check_for_updates()
 
     def resizeEvent(self, event):
-        """Custom Window Resize Logic: Shrink oversized columns before squishing TRACK and ALBUM"""
-        if not getattr(self, 'is_album_mode', False) and hasattr(self, 'min_widths'):
-            old_w = event.oldSize().width()
-            new_w = event.size().width()
-            
-            # 🟢 If the window is shrinking...
-            if old_w > 0 and new_w < old_w:
-                diff = old_w - new_w
-                
-                # ...steal back the missing pixels from any column the user made larger than minimum!
-                for col, min_w in self.min_widths.items():
-                    if diff <= 0: break
-                    if not self.tree.isColumnHidden(col):
-                        current_w = self.tree.columnWidth(col)
-                        if current_w > min_w:
-                            # Calculate how much we can safely steal from this column
-                            steal = min(diff, current_w - min_w)
-                            
-                            self.tree.header().blockSignals(True)
-                            self.tree.setColumnWidth(col, current_w - steal)
-                            self.tree.header().blockSignals(False)
-                            
-                            diff -= steal # Update remaining pixels to steal
-                            
-        # Now pass the event to Qt, where TRACK and ALBUM (Stretch) will absorb whatever shrink is left over!
         super().resizeEvent(event)
+        if not getattr(self, 'is_album_mode', False):
+            QTimer.singleShot(0, self._fit_columns_to_viewport)
+
+    def _fit_columns_to_viewport(self):
+        """Scale flex columns proportionally to fill viewport; fixed-size cols stay capped."""
+        if getattr(self, 'is_album_mode', False): return
+        cols = self._visible_cols()
+        if not cols: return
+        viewport_w = self.tree.viewport().width()
+        if viewport_w <= 0: return
+
+        # Fixed-size cols: cap at their max, don't change unless user dragged them smaller
+        fixed_cols = [c for c in cols if c in self.col_max_widths]
+        flex_cols  = [c for c in cols if c not in self.col_max_widths]
+
+        self._col_resize_guard = True
+
+        # First pass: apply caps to fixed-size cols
+        for col in fixed_cols:
+            cur_w = self.tree.columnWidth(col)
+            capped = min(cur_w, self.col_max_widths[col])
+            if cur_w != capped:
+                self.tree.header().resizeSection(col, capped)
+
+        if not flex_cols:
+            self._col_resize_guard = False
+            return
+
+        # Available space for flex cols = viewport - col0 - all fixed-size cols
+        used = self.tree.columnWidth(0)
+        for col in fixed_cols:
+            used += self.tree.columnWidth(col)
+        available = viewport_w - used
+        if available <= 0:
+            self._col_resize_guard = False
+            return
+
+        total_cur = sum(self.tree.columnWidth(c) for c in flex_cols)
+        if total_cur <= 0:
+            self._col_resize_guard = False
+            return
+
+        # Distribute available space proportionally among flex cols
+        assigned = 0
+        for i, col in enumerate(flex_cols):
+            if i == len(flex_cols) - 1:
+                new_w = available - assigned
+            else:
+                new_w = int(self.tree.columnWidth(col) / total_cur * available)
+            new_w = max(new_w, self.col_min_widths.get(col, 60))
+            self.tree.header().resizeSection(col, new_w)
+            assigned += new_w
+
+        self._col_resize_guard = False
 
     def on_header_clicked(self, logical_index):
         # Ignore click on # column (index 0) if desired
@@ -1985,14 +2075,10 @@ class TracksBrowser(QWidget):
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
             self.tree.setColumnWidth(0, 45)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            
-            # 🟢 THE FIX: Change to Fixed so Qt actually listens to our widths!
             header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
             header.setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed)
-            
-            # Now we can manually set them exactly how wide we want them!
             self.tree.setColumnWidth(7, 60)
-            self.tree.setColumnWidth(9, 70) 
+            self.tree.setColumnWidth(9, 70)
             
             # Disable inner scrollbars
             self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
