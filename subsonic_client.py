@@ -387,16 +387,43 @@ class SubsonicClient:
             print(f"[DEBUG API] Native API fetch failed: {e}")
             return [], 0
     
-    def get_tracks_native_page(self, sort_by="title", order="ASC", start=0, end=50, query=""):
+    def get_genres_native(self):
+        """Fetches all genres from Navidrome native API. Returns {name: id} dict. Cached."""
+        import requests
+        if hasattr(self, '_genre_map_cache') and self._genre_map_cache:
+            return self._genre_map_cache
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            self.authenticate_native()
+        headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
+        try:
+            r = requests.get(f"{self.base_url}/api/genre",
+                             params={"_start": 0, "_end": 5000},
+                             headers=headers, timeout=10)
+            if r.status_code == 401:
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = requests.get(f"{self.base_url}/api/genre",
+                                     params={"_start": 0, "_end": 5000},
+                                     headers=headers, timeout=10)
+            data = r.json()
+            result = {g['name']: g['id'] for g in data
+                      if isinstance(g, dict) and 'name' in g and 'id' in g}
+            self._genre_map_cache = result
+            return result
+        except Exception as e:
+            print(f"[Client] Genre fetch failed: {e}")
+            return {}
+
+    def get_tracks_native_page(self, sort_by="title", order="ASC", start=0, end=50, query="", server_filters=None):
         """Fetches a specific page of tracks using Navidrome's native API for true server-side sorting."""
         import requests
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
-            
+
         headers = {
             "x-nd-authorization": f"Bearer {self.native_jwt}"
         }
-            
+
         params = {
             "_start": start,
             "_end": end,
@@ -404,22 +431,24 @@ class SubsonicClient:
             "_order": order,
         }
         if query:
-            params["_q"] = query 
-            
+            params["title"] = query   # Navidrome native: title= for server-side filtering with X-Total-Count
+        if server_filters:
+            params.update(server_filters)
+
         try:
             r = requests.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
-            
-            if r.status_code == 401: 
+
+            if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
                     r = requests.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
-            
+
             data = r.json()
             if not isinstance(data, list):
                 return [], 0
 
             total_count = int(r.headers.get('X-Total-Count', len(data)))
-            
+
             # Navidrome's native API returns items that map perfectly to our UI parser
             clean_tracks = []
             for item in data:
@@ -427,12 +456,66 @@ class SubsonicClient:
                 if 'coverArt' in item and 'cover_id' not in item:
                     item['cover_id'] = item['coverArt']
                 clean_tracks.append(self._parse_song_data(item))
-                
+
             return clean_tracks, total_count
         except Exception as e:
             print(f"[Client] Native track fetch failed: {e}")
             return [], 0
        
+    def get_all_artists_native(self):
+        """Returns all artists as {name: id} dict via /api/artist. Cached per session."""
+        import requests
+        if hasattr(self, '_artist_map_cache') and self._artist_map_cache:
+            return self._artist_map_cache
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            self.authenticate_native()
+        headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
+        try:
+            r = requests.get(f"{self.base_url}/api/artist",
+                             params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
+                             headers=headers, timeout=15)
+            if r.status_code == 401:
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = requests.get(f"{self.base_url}/api/artist",
+                                     params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
+                                     headers=headers, timeout=15)
+            data = r.json()
+            result = {a['name']: a['id'] for a in data
+                      if isinstance(a, dict) and 'name' in a and 'id' in a}
+            self._artist_map_cache = result
+            return result
+        except Exception as e:
+            print(f"[Client] Artist map fetch failed: {e}")
+            return {}
+
+    def get_all_albums_native(self):
+        """Returns all albums as {name: id} dict via /api/album. Cached per session."""
+        import requests
+        if hasattr(self, '_album_map_cache') and self._album_map_cache:
+            return self._album_map_cache
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            self.authenticate_native()
+        headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
+        try:
+            r = requests.get(f"{self.base_url}/api/album",
+                             params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
+                             headers=headers, timeout=15)
+            if r.status_code == 401:
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = requests.get(f"{self.base_url}/api/album",
+                                     params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
+                                     headers=headers, timeout=15)
+            data = r.json()
+            result = {a['name']: a['id'] for a in data
+                      if isinstance(a, dict) and 'name' in a and 'id' in a}
+            self._album_map_cache = result
+            return result
+        except Exception as e:
+            print(f"[Client] Album map fetch failed: {e}")
+            return {}
+
     def get_albums_native_page(self, sort_by="name", order="ASC", start=0, end=50, query=""):
         """Fetches a specific page of albums using Navidrome's native API for true server-side sorting."""
         import requests

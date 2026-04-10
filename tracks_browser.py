@@ -5,11 +5,12 @@ import json
 import math
 import threading
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, 
-                             QHeaderView, QAbstractItemView, QMenu, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
+                             QHeaderView, QAbstractItemView, QMenu, QPushButton,
                              QHBoxLayout, QLabel, QProgressBar, QApplication, QLineEdit,
                              QStyledItemDelegate, QStyle, QStyleOptionHeader, QStyleOptionViewItem,
-                             QSpacerItem, QSizePolicy, QToolButton, QTreeWidget, QFrame)
+                             QSpacerItem, QSizePolicy, QToolButton, QTreeWidget, QFrame,
+                             QListWidget, QListWidgetItem, QCheckBox, QScrollArea)
 
 
 
@@ -185,7 +186,7 @@ class TBCoverWorker(QThread):
 class LiveTrackWorker(QThread):
     results_ready = pyqtSignal(list, int, int, int)
 
-    def __init__(self, client, query_text, page, page_size, is_album_mode, album_id, known_total=0, sort_field="title", sort_order="ASC"):
+    def __init__(self, client, query_text, page, page_size, is_album_mode, album_id, known_total=0, sort_field="title", sort_order="ASC", server_filters=None):
         super().__init__()
         self.client = client
         self.query_text = query_text
@@ -196,6 +197,7 @@ class LiveTrackWorker(QThread):
         self.known_total = known_total
         self.sort_field = sort_field
         self.sort_order = sort_order
+        self.server_filters = server_filters or {}
         self.is_cancelled = False
 
     def run(self):
@@ -231,45 +233,16 @@ class LiveTrackWorker(QThread):
                 start = (self.page - 1) * self.page_size
                 end = start + self.page_size
 
-                if self.query_text:
-                    # 🟢 SEARCH MODE: Use search3 (reliable cross-field search).
-                    # The native API's _q param is unreliable — search3 always works.
-                    tracks = self.client.get_tracks_live(
-                        query=self.query_text,
-                        size=self.page_size,
-                        offset=start
-                    )
-
-                    # 🛑 Exit immediately if the thread was cancelled!
-                    if self.is_cancelled: return
-
-                    # Sort search results client-side to honour the header sort state
-                    reverse = (self.sort_order == "DESC")
-                    def _sort_key(t):
-                        # play_count is stored as snake_case in the track dict
-                        field = 'play_count' if self.sort_field == 'playCount' else self.sort_field
-                        v = t.get(field, '') or ''
-                        if self.sort_field in ('year', 'trackNumber', 'playCount'):
-                            try: return int(v)
-                            except: return 0
-                        return str(v).lower()
-                    tracks.sort(key=_sort_key, reverse=reverse)
-
-                    count = len(tracks)
-                    # Estimate total for pagination
-                    if count == self.page_size:
-                        total_items = start + self.page_size + 1  # There may be more pages
-                    else:
-                        total_items = start + count
-                else:
-                    # 🟢 BROWSE MODE: Native API for true server-side sorting + pagination
-                    tracks, total_items = self.client.get_tracks_native_page(
-                        sort_by=self.sort_field,
-                        order=self.sort_order,
-                        start=start,
-                        end=end,
-                        query=""
-                    )
+                # One call for both search and browse — title= param filters server-side,
+                # X-Total-Count header gives exact total. Same as Feishin /api/song approach.
+                tracks, total_items = self.client.get_tracks_native_page(
+                    sort_by=self.sort_field,
+                    order=self.sort_order,
+                    start=start,
+                    end=end,
+                    query=self.query_text,
+                    server_filters=self.server_filters or None,
+                )
                     
                 # 🛑 Exit immediately if the thread was cancelled!
                 if self.is_cancelled: return
@@ -284,21 +257,373 @@ class LiveTrackWorker(QThread):
             if not self.is_cancelled:
                 self.results_ready.emit([], 0, 1, 1)
 
+class FilterValuesWorker(QThread):
+    """Fetches ALL tracks for the current query, collects distinct column values + server ID maps."""
+    values_ready = pyqtSignal(dict, dict)  # col_values, id_maps
+
+    _COL_FIELD = {
+        2: 'title', 3: 'artist', 4: 'album',
+        5: 'year',  6: 'genre', 7: 'starred',
+        8: 'play_count', 9: 'duration',
+    }
+
+    def __init__(self, client, query_text, is_album_mode, album_id):
+        super().__init__()
+        self.client = client
+        self.query_text = query_text
+        self.is_album_mode = is_album_mode
+        self.album_id = album_id
+        self.is_cancelled = False
+
+    def run(self):
+        try:
+            col_values = {}
+            id_maps = {}
+
+            if self.is_album_mode and self.album_id:
+                # Album mode: track data is small, fetch it directly
+                tracks = self.client.get_album_tracks(self.album_id)
+                if self.is_cancelled: return
+                for col, field in self._COL_FIELD.items():
+                    vals = set()
+                    for t in tracks:
+                        v = "True" if col == 7 and t.get('starred') else str(t.get(field, '') or '').strip()
+                        if v: vals.add(v)
+                    col_values[col] = sorted(vals, key=lambda x: x.lower())
+            else:
+                # Use dedicated fast endpoints instead of fetching all songs
+
+                # Genres (col 6) — /api/genre
+                try:
+                    genre_map = self.client.get_genres_native()
+                    id_maps[6] = genre_map
+                    col_values[6] = sorted(genre_map.keys(), key=str.lower)
+                except Exception: pass
+                if self.is_cancelled: return
+
+                # Artists (col 3) — /api/artist
+                try:
+                    artist_map = self.client.get_all_artists_native()
+                    id_maps[3] = artist_map
+                    col_values[3] = sorted(artist_map.keys(), key=str.lower)
+                except Exception: pass
+                if self.is_cancelled: return
+
+                # Albums (col 4) — /api/album
+                try:
+                    album_map = self.client.get_all_albums_native()
+                    id_maps[4] = album_map
+                    col_values[4] = sorted(album_map.keys(), key=str.lower)
+                except Exception: pass
+                if self.is_cancelled: return
+
+                # Starred (col 7) — static values
+                col_values[7] = ["False", "True"]
+
+                # Year, title, play_count, duration (cols 2,5,8,9):
+                # These have no dedicated endpoint; collect from a sample page of songs
+                try:
+                    sample_tracks, _ = self.client.get_tracks_native_page(
+                        sort_by="title", order="ASC",
+                        start=0, end=500,
+                        query=self.query_text or "",
+                    )
+                    if self.is_cancelled: return
+                    for col, field in [(2, 'title'), (5, 'year'), (8, 'play_count'), (9, 'duration')]:
+                        vals = set()
+                        for t in sample_tracks:
+                            v = str(t.get(field, '') or '').strip()
+                            if v: vals.add(v)
+                        col_values[col] = sorted(vals, key=lambda x: x.lower())
+                except Exception: pass
+
+            if not self.is_cancelled:
+                self.values_ready.emit(col_values, id_maps)
+        except Exception as e:
+            print(f"[FilterValuesWorker] {e}")
+
+
 # --- SMART DELEGATES ---
+
+class ColumnFilterPopup(QFrame):
+    """Excel-style column filter popup: sort rows + search box + multi-select checklist."""
+    filters_applied = pyqtSignal(int, set)  # col, selected values
+    sort_requested  = pyqtSignal(int, str)  # col, "ASC" or "DESC"
+
+    def __init__(self, col, values, active_values, up_icon, down_icon, filter_off_icon, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.col = col
+        self.all_values = sorted(values, key=lambda v: str(v).lower())
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet("""
+            ColumnFilterPopup {
+                background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
+            }
+            QLineEdit {
+                background: #2a2a2a; color: #ddd; border: 1px solid #444;
+                border-radius: 4px; padding: 4px 8px; font-size: 13px;
+            }
+            QListWidget {
+                background: #1e1e1e; border: none; color: #ddd; font-size: 13px;
+            }
+            QListWidget::item { padding: 3px 6px; border-radius: 3px; }
+            QListWidget::item:hover { background: #2a2a2a; }
+            QPushButton {
+                background: #2a2a2a; color: #ddd; border: 1px solid #444;
+                border-radius: 4px; padding: 4px 12px; font-size: 12px;
+            }
+            QPushButton:hover { background: #333; }
+            QFrame#sort_row {
+                background: transparent;
+            }
+            QFrame#sort_row:hover {
+                background: #2a2a2a;
+                border-radius: 3px;
+            }
+        """)
+        self.setFixedWidth(240)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        icon_size = 14
+        has_filter = bool(active_values)
+
+        def _make_action_row(icon, label, callback, enabled=True, tint=True):
+            row = QFrame()
+            row.setObjectName("sort_row")
+            if enabled:
+                row.setCursor(Qt.CursorShape.PointingHandCursor)
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(4, 4, 4, 4)
+            hl.setSpacing(6)
+            lbl_icon = QLabel()
+            px = icon.pixmap(icon_size, icon_size)
+            if tint:
+                # Tint white
+                white_px = QPixmap(px.size())
+                white_px.fill(Qt.GlobalColor.transparent)
+                p2 = QPainter(white_px)
+                p2.setOpacity(1.0 if enabled else 0.3)
+                p2.drawPixmap(0, 0, px)
+                p2.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                p2.fillRect(white_px.rect(), QColor("#ffffff"))
+                p2.end()
+                px = white_px
+            else:
+                if not enabled:
+                    dim = QPixmap(px.size())
+                    dim.fill(Qt.GlobalColor.transparent)
+                    p2 = QPainter(dim)
+                    p2.setOpacity(0.3)
+                    p2.drawPixmap(0, 0, px)
+                    p2.end()
+                    px = dim
+            lbl_icon.setPixmap(px)
+            lbl_icon.setFixedSize(icon_size, icon_size)
+            color = "#ddd" if enabled else "#555"
+            lbl_text = QLabel(label)
+            lbl_text.setStyleSheet(f"color: {color}; font-size: 13px; background: transparent;")
+            hl.addWidget(lbl_icon)
+            hl.addWidget(lbl_text)
+            hl.addStretch()
+            if enabled:
+                row.mousePressEvent = lambda e: callback()
+            return row
+
+        layout.addWidget(_make_action_row(up_icon,        "Sort ascending",  lambda: self._sort("ASC")))
+        layout.addWidget(_make_action_row(down_icon,      "Sort descending", lambda: self._sort("DESC")))
+        layout.addWidget(_make_action_row(filter_off_icon, "Clear filter",   self._clear_filter, enabled=has_filter, tint=False))
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #444;")
+        layout.addWidget(sep)
+
+        layout.setSpacing(6)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search…")
+        self.search_box.textChanged.connect(self._filter_list)
+        self.search_box.returnPressed.connect(self._apply)
+        layout.addWidget(self.search_box)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setFixedHeight(200)
+        layout.addWidget(self.list_widget)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self.btn_ok     = QPushButton("OK")
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_ok.clicked.connect(self._apply)
+        self.btn_cancel.clicked.connect(self.close)
+        btn_row.addStretch()
+        btn_row.addWidget(self.btn_ok)
+        btn_row.addWidget(self.btn_cancel)
+        layout.addLayout(btn_row)
+
+        self._populate(active_values)
+        self.adjustSize()
+
+    SELECT_ALL_TEXT = "(Select All)"
+
+    def _populate(self, active_values):
+        self._has_active_filter = bool(active_values)
+        self.list_widget.blockSignals(True)
+        self.list_widget.clear()
+
+        # "Select All" header item
+        all_checked = not active_values or len(active_values) == len(self.all_values)
+        sa = QListWidgetItem(self.SELECT_ALL_TEXT)
+        sa.setFlags(sa.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        sa.setCheckState(Qt.CheckState.Checked if all_checked else Qt.CheckState.Unchecked)
+        font = sa.font()
+        font.setBold(True)
+        sa.setFont(font)
+        self.list_widget.addItem(sa)
+
+        for v in self.all_values:
+            item = QListWidgetItem(str(v))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            checked = not active_values or v in active_values
+            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            self.list_widget.addItem(item)
+            # setHidden must be called AFTER addItem, otherwise Qt ignores it
+            if active_values and not checked:
+                item.setHidden(True)
+
+        self.list_widget.blockSignals(False)
+        self.list_widget.itemChanged.connect(self._on_item_changed)
+
+    def _on_item_changed(self, changed_item):
+        self.list_widget.blockSignals(True)
+        if changed_item.text() == self.SELECT_ALL_TEXT:
+            # Propagate to all value rows
+            state = changed_item.checkState()
+            for i in range(1, self.list_widget.count()):
+                self.list_widget.item(i).setCheckState(state)
+        else:
+            # Sync "Select All" state
+            all_checked = all(
+                self.list_widget.item(i).checkState() == Qt.CheckState.Checked
+                for i in range(1, self.list_widget.count())
+            )
+            self.list_widget.item(0).setCheckState(
+                Qt.CheckState.Checked if all_checked else Qt.CheckState.Unchecked
+            )
+        self.list_widget.blockSignals(False)
+
+    def _filter_list(self, text):
+        q = text.lower()
+        # Always show "Select All"
+        self.list_widget.item(0).setHidden(False)
+        for i in range(1, self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if q:
+                # Search overrides everything — show all matches
+                item.setHidden(q not in item.text().lower())
+            else:
+                # No search: restore initial visibility (hide unchecked if filter active)
+                unchecked = item.checkState() == Qt.CheckState.Unchecked
+                item.setHidden(self._has_active_filter and unchecked)
+
+
+    def _apply(self):
+        q = self.search_box.text().strip()
+        if q:
+            # Use all visible (search-matching) values as the filter
+            checked = set(
+                self.list_widget.item(i).text()
+                for i in range(1, self.list_widget.count())
+                if not self.list_widget.item(i).isHidden()
+            )
+        else:
+            # Use checked items (skip "Select All" at index 0)
+            checked = set(
+                self.list_widget.item(i).text()
+                for i in range(1, self.list_widget.count())
+                if self.list_widget.item(i).checkState() == Qt.CheckState.Checked
+            )
+        # If everything is checked = no filter
+        if len(checked) == len(self.all_values):
+            checked = set()
+        self.filters_applied.emit(self.col, checked)
+        self.close()
+
+    def _sort(self, order):
+        self.sort_requested.emit(self.col, order)
+        self.close()
+
+    def _clear_filter(self):
+        self.filters_applied.emit(self.col, set())
+        self.close()
+
 
 class SmartSortHeader(QHeaderView):
     section_drag_finished = pyqtSignal()
+    filter_clicked = pyqtSignal(int, QRect)  # col, icon rect in global coords
+    sort_clicked   = pyqtSignal(int)          # col — for sort-only columns
+
+    SORT_COLS = {1, 2, 8, 9}  # TRACK, TITLE, PLAYS, LENGTH — show sort icon, not filter
+
+    FILTER_ICON_SIZE = 14
 
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
         self.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setStretchLastSection(False)
-        self.up_icon = QIcon(resource_path("img/filter_up.png"))
+        self.up_icon   = QIcon(resource_path("img/filter_up.png"))
         self.down_icon = QIcon(resource_path("img/filter_down.png"))
+        self.filter_icon     = QIcon(resource_path("img/filter.png"))
+        self.filter_off_icon = QIcon(resource_path("img/filter_off.png"))
+        self._active_filter_cols = set()  # cols that have an active filter
+        self._filter_icon_rects = {}  # logical_index -> QRect (viewport coords, set during paint)
+        self._hovered_col = -1
+        self.viewport().setMouseTracking(True)
+
+    def set_active_filters(self, cols):
+        self._active_filter_cols = set(cols)
+        self.viewport().update()
+
+    def _filter_icon_rect(self, logical_index):
+        """Return the QRect for the filter icon in viewport coordinates (cached from last paint)."""
+        return self._filter_icon_rects.get(logical_index, QRect())
+
+    def mouseMoveEvent(self, event):
+        col = self.logicalIndexAt(event.pos())
+        hovered = col if col != 0 else -1
+        if hovered != self._hovered_col:
+            self._hovered_col = hovered
+            self.viewport().update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._hovered_col != -1:
+            self._hovered_col = -1
+            self.viewport().update()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         self.section_drag_finished.emit()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.pos()
+            logical = self.logicalIndexAt(pos)
+            if logical > 0:
+                if logical in self.SORT_COLS:
+                    self.sort_clicked.emit(logical)
+                else:
+                    sec_pos = self.sectionViewportPosition(logical)
+                    sec_w   = self.sectionSize(logical)
+                    global_tl = self.viewport().mapToGlobal(QPoint(sec_pos, self.height()))
+                    global_rect = QRect(global_tl, QRect(sec_pos, 0, sec_w, self.height()).size())
+                    self.filter_clicked.emit(logical, global_rect)
+                return
+        super().mousePressEvent(event)
 
     def paintSection(self, painter, rect, logicalIndex):
         painter.save()
@@ -326,14 +651,12 @@ class SmartSortHeader(QHeaderView):
         
         fm = painter.fontMetrics()
         text_width = fm.horizontalAdvance(label_text)
-        
-        arrow_size = 14
-        spacing = 6
-        has_arrow = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
-        
-        content_width = text_width
-        if has_arrow: content_width += spacing + arrow_size
-            
+
+        sz = self.FILTER_ICON_SIZE
+        icon_spacing = 4
+        show_icon = logicalIndex != 0  # col 0 = # — no icon
+        content_width = text_width + (icon_spacing + sz if show_icon else 0)
+
         alignment = opt.textAlignment
 
         # 🟢 FORCE ALIGNMENTS
@@ -341,37 +664,61 @@ class SmartSortHeader(QHeaderView):
              alignment = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         elif logicalIndex == 1:
              alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        
-        padding_left = 5 
-        
+
+        padding_left = 5
+
         if alignment & Qt.AlignmentFlag.AlignRight:
             start_x = rect.right() - padding_left - content_width
         elif alignment & Qt.AlignmentFlag.AlignCenter:
             start_x = rect.left() + (rect.width() - content_width) // 2
         else:
             start_x = rect.left() + padding_left
-            
-        # 🟢 THE FOOLPROOF FIX: Brutally force the TRACK header to the left edge, 
+
+        # 🟢 THE FOOLPROOF FIX: Brutally force the TRACK header to the left edge,
         # completely ignoring whatever centering rules Qt is trying to apply to it!
         if logicalIndex == 1:
             start_x = rect.left() + 15
-            
+
         text_rect = QRect(int(start_x), rect.top(), int(text_width) + 10, rect.height())
-        
+
         painter.setPen(QColor("#888"))
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label_text)
-        
-        if has_arrow:
-            arrow_x = start_x + text_width + spacing
-            arrow_y = rect.center().y() - (arrow_size // 2)
-            
-            if arrow_x + arrow_size <= rect.right():
-                if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder:
-                    icon = self.down_icon
+
+        # Highlight whole section on hover
+        is_hovered = logicalIndex == self._hovered_col
+        if is_hovered and show_icon:
+            painter.fillRect(rect, QColor(255, 255, 255, 18))
+
+        # Draw icon right after text
+        if show_icon:
+            fx = int(start_x + text_width + icon_spacing)
+            fy = rect.center().y() - sz // 2
+
+            if logicalIndex in self.SORT_COLS:
+                # Sort icon — show current sort direction if this col is sorted
+                is_sorted = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
+                icon = (self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+                        else self.up_icon) if is_sorted else self.up_icon
+                tint = QColor("#ffffff") if is_hovered else (QColor("#aaaaaa") if is_sorted else QColor("#444444"))
+                px = icon.pixmap(sz, sz)
+            else:
+                # Filter icon
+                is_active = logicalIndex in self._active_filter_cols
+                fi = self.filter_off_icon if is_active else self.filter_icon
+                px = fi.pixmap(sz, sz)
+                if is_active:
+                    tint = QColor("#ff4444") if is_hovered else QColor("#cc2222")
                 else:
-                    icon = self.up_icon
-                
-                icon.paint(painter, int(arrow_x), int(arrow_y), arrow_size, arrow_size)
+                    tint = QColor("#ffffff") if is_hovered else QColor("#555555")
+
+            tinted = QPixmap(px.size())
+            tinted.fill(Qt.GlobalColor.transparent)
+            p2 = QPainter(tinted)
+            p2.drawPixmap(0, 0, px)
+            p2.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p2.fillRect(tinted.rect(), tint)
+            p2.end()
+            painter.drawPixmap(fx, int(fy), tinted)
 
         painter.restore()
 
@@ -1244,9 +1591,21 @@ class TracksBrowser(QWidget):
         self.burger_btn = self.search_container.get_burger_btn()
         self.burger_btn.clicked.connect(self.show_column_menu) 
         
+        # --- CLEAR FILTERS BUTTON ---
+        self.clear_filters_btn = QPushButton()
+        self.clear_filters_btn.setToolTip("Clear all column filters")
+        self.clear_filters_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_filters_btn.setFixedSize(32, 32)
+        self.clear_filters_btn.setFlat(True)
+        self.clear_filters_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
+        self.clear_filters_btn.clicked.connect(self._clear_all_filters)
+        self.clear_filters_btn.setIconSize(QSize(18, 18))
+        self.clear_filters_btn.hide()
+
         # 🟢 CLEAN HEADER ASSEMBLY
         header_layout.addWidget(self.status_label)
-        header_layout.addStretch() # Pushes the label to the far left, and search to the far right!
+        header_layout.addWidget(self.clear_filters_btn)
+        header_layout.addStretch()
         header_layout.addWidget(self.search_container, 0, Qt.AlignmentFlag.AlignRight)
 
         self.main_layout.addWidget(header_container)
@@ -1284,9 +1643,8 @@ class TracksBrowser(QWidget):
 
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionsClickable(True)
+        self.tree.header().setSectionsClickable(False)
         self.tree.header().setSortIndicatorShown(True)
-        self.tree.header().sectionClicked.connect(self.on_header_clicked)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
 
         # Col 0 (#): fixed width, not resizable
@@ -1313,6 +1671,15 @@ class TracksBrowser(QWidget):
         self._col_resize_guard = False
         self.tree.header().sectionResized.connect(self._on_section_resized)
         self.tree.header().section_drag_finished.connect(self._on_drag_finished)
+
+        # Column filters: col -> set of allowed string values (empty set = no filter)
+        self._col_filters = {}
+        self._col_filter_values = {}  # col -> list of all known values for the popup
+        self._col_id_map = {}         # col -> {display_value: server_id}
+        self._filter_values_worker = None
+        self.tree.header().filter_clicked.connect(self._on_filter_clicked)
+        self.tree.header().sort_clicked.connect(self._on_sort_col_clicked)
+        self._active_filter_popup = None
 
         # 🟢 Specific Delegates
         self.combined_delegate = CombinedTrackDelegate(self.tree)
@@ -1346,7 +1713,7 @@ class TracksBrowser(QWidget):
         
         self.is_loading_db = False
         self.load_column_state()
-        self.load_from_db(reset=True)
+        self.load_from_db(reset=True, invalidate_filter_cache=True)
 
     
     def focus_first_tree_item(self):
@@ -1484,13 +1851,69 @@ class TracksBrowser(QWidget):
             self.pending_page = None
         self.load_from_db(reset=False)
 
-    def load_from_db(self, reset=False):
+    def load_from_db(self, reset=False, invalidate_filter_cache=False):
         if getattr(self, 'album_mode_id', None): return
-        if reset: self.current_page = 1
+        if reset:
+            self.current_page = 1
+            self.total_items = 0
+            self.total_pages = 1
+        if invalidate_filter_cache:
+            # Only clear filter values when the search query changes, not on filter apply
+            self._col_filter_values = {}
+            self._col_id_map = {}
         self._start_worker(is_album=False, album_id=None)
 
     def load_album_tracks(self, album_id):
+        self._col_filter_values = {}
+        self._col_id_map = {}
+        self._start_filter_values_worker(is_album=True, album_id=album_id)
         self._start_worker(is_album=True, album_id=album_id)
+
+    def _start_filter_values_worker(self, is_album, album_id):
+        if not self.client:
+            return
+        if self._filter_values_worker and self._filter_values_worker.isRunning():
+            self._filter_values_worker.is_cancelled = True
+            try: self._filter_values_worker.values_ready.disconnect()
+            except: pass
+        w = FilterValuesWorker(self.client, self.current_query, is_album, album_id)
+        w.values_ready.connect(self._on_filter_values_ready)
+        self._filter_values_worker = w
+        w.start()
+
+    def _on_filter_values_ready(self, col_values, id_maps):
+        self._col_filter_values = col_values
+        self._col_id_map = id_maps
+        # Reconnect the normal handler (may have been temporarily replaced)
+        w = self._filter_values_worker
+        if w:
+            try: w.values_ready.disconnect()
+            except: pass
+            w.values_ready.connect(self._on_filter_values_ready)
+
+    def _build_server_filters(self):
+        """Convert _col_filters to Navidrome /api/song params. Always server-side, no client fallback."""
+        server_params = {}
+
+        for col, allowed in self._col_filters.items():
+            if not allowed:
+                continue
+
+            if col == 7:  # starred — single boolean param
+                val = next(iter(allowed))
+                server_params['starred'] = 'true' if val == 'True' else 'false'
+
+            elif col == 5:  # year — single value
+                server_params['year'] = next(iter(allowed))
+
+            elif col in (3, 4, 6):  # artist_id / album_id / genre_id — supports multiple
+                id_map = self._col_id_map.get(col, {})
+                param = {3: 'artist_id', 4: 'album_id', 6: 'genre_id'}[col]
+                ids = [id_map[v] for v in allowed if v in id_map]
+                if ids:
+                    server_params[param] = ids
+
+        return server_params
 
     def _start_worker(self, is_album, album_id):
         # 🟢 THE CRASH FIX: Save old workers in a graveyard so Python doesn't delete them while C++ is still running!
@@ -1517,16 +1940,19 @@ class TracksBrowser(QWidget):
         sort_str = self.get_sort_string()
         sort_field, sort_order = sort_str.split(" ")
 
+        server_params = self._build_server_filters() if self._col_filters else {}
+
         self.live_worker = LiveTrackWorker(
-            client=self.client, 
-            query_text=self.current_query, 
-            page=self.current_page, 
-            page_size=self.page_size, 
-            is_album_mode=is_album, 
+            client=self.client,
+            query_text=self.current_query,
+            page=self.current_page,
+            page_size=self.page_size,
+            is_album_mode=is_album,
             album_id=album_id,
             known_total=known_total,
-            sort_field=sort_field,     # 🟢 Pass it in
-            sort_order=sort_order      # 🟢 Pass it in
+            sort_field=sort_field,
+            sort_order=sort_order,
+            server_filters=server_params or None,
         )
         self.live_worker.results_ready.connect(self.on_worker_finished)
         
@@ -1593,15 +2019,15 @@ class TracksBrowser(QWidget):
             
         else:
             if hasattr(self, 'status_label'):
-                self.status_label.setText(f"{self.total_items} tracks")
-                
+                self.status_label.setText(f"{self.total_items:,} tracks")
+
             if hasattr(self, 'footer'):
                 self.footer.render_pagination(self.current_page, self.total_pages)
-                
+
             offset = (self.current_page - 1) * self.page_size
             for i, t in enumerate(tracks):
                 items_to_add.append(self.create_track_item(t, offset + i + 1))
-                
+
             self.tree.addTopLevelItems(items_to_add)
 
         if self.tree.topLevelItemCount() > 0:
@@ -1625,7 +2051,13 @@ class TracksBrowser(QWidget):
         self.tree.setUpdatesEnabled(True)
         self.start_cover_loader(tracks)
 
-    
+        # Kick off filter values worker in background after first data load,
+        # so values+IDs are ready by the time user opens a filter popup.
+        if not getattr(self, 'album_mode_id', None):
+            if not self._col_filter_values:
+                is_album = False
+                self._start_filter_values_worker(is_album=is_album, album_id=None)
+
     def show_skeleton_ui(self):
         """Draws the exact visual from your screenshot: Numbers on the left, pills on the right!"""
         self.tree.setUpdatesEnabled(False)
@@ -1926,6 +2358,91 @@ class TracksBrowser(QWidget):
         self._fit_columns_to_viewport()
         self.save_column_state()
 
+    # --- COLUMN FILTERS ---
+
+    # Map column index to track dict key
+    _COL_FIELD = {
+        3: 'artist', 4: 'album',
+        5: 'year',   6: 'genre', 7: 'starred',
+    }
+
+    def _on_filter_clicked(self, col, global_rect):
+        if col not in self._COL_FIELD:
+            return
+        if self._active_filter_popup:
+            self._active_filter_popup.close()
+            self._active_filter_popup = None
+            return  # second click just closes
+
+        # If worker is still running, wait for it then open the popup
+        worker = self._filter_values_worker
+        if worker and worker.isRunning():
+            def _open_when_ready(col_values, id_maps, col=col, global_rect=global_rect):
+                self._on_filter_values_ready(col_values, id_maps)
+                self._open_filter_popup(col, global_rect)
+            try: worker.values_ready.disconnect()
+            except: pass
+            worker.values_ready.connect(_open_when_ready)
+            return
+
+        self._open_filter_popup(col, global_rect)
+
+    def _open_filter_popup(self, col, global_rect):
+        values = self._col_filter_values.get(col, [])
+        active = self._col_filters.get(col, set())
+        hdr = self.tree.header()
+        popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, hdr.filter_off_icon, parent=self)
+        popup.filters_applied.connect(self._apply_col_filter)
+        popup.sort_requested.connect(self._on_sort_from_popup)
+        popup.move(global_rect.bottomLeft())
+        popup.show()
+        self._active_filter_popup = popup
+
+    def _apply_col_filter(self, col, values):
+        if values:
+            self._col_filters[col] = values
+        else:
+            self._col_filters.pop(col, None)
+        self.tree.header().set_active_filters(self._col_filters.keys())
+        self._active_filter_popup = None
+        self._update_clear_filters_btn()
+        self.load_from_db(reset=True)
+
+    def _clear_all_filters(self):
+        self._col_filters = {}
+        self.tree.header().set_active_filters([])
+        self._update_clear_filters_btn()
+        self.load_from_db(reset=True)
+
+    def _update_clear_filters_btn(self):
+        if not hasattr(self, 'clear_filters_btn'):
+            return
+        if self._col_filters:
+            self.clear_filters_btn.show()
+        else:
+            self.clear_filters_btn.hide()
+
+    def _on_sort_col_clicked(self, col):
+        """Toggle sort asc/desc when TRACK or TITLE column header is clicked."""
+        if self.sort_col == col:
+            self.sort_order = (Qt.SortOrder.DescendingOrder
+                               if self.sort_order == Qt.SortOrder.AscendingOrder
+                               else Qt.SortOrder.AscendingOrder)
+        else:
+            self.sort_col = col
+            self.sort_order = Qt.SortOrder.AscendingOrder
+        self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
+        self.save_sort_state()
+        self.load_from_db(reset=True)
+
+    def _on_sort_from_popup(self, col, order):
+        self._active_filter_popup = None
+        qt_order = Qt.SortOrder.AscendingOrder if order == "ASC" else Qt.SortOrder.DescendingOrder
+        self.sort_col = col
+        self.sort_order = qt_order
+        self.tree.header().setSortIndicator(col, qt_order)
+        self.load_from_db(reset=True)
+
     def _visible_cols(self):
         return [i for i in range(1, 10) if not self.tree.isColumnHidden(i)]
 
@@ -1991,41 +2508,6 @@ class TracksBrowser(QWidget):
 
         self._col_resize_guard = False
 
-    def on_header_clicked(self, logical_index):
-        # Ignore click on # column (index 0) if desired
-        if logical_index == 0: 
-            self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
-            return
-
-        if getattr(self, 'album_mode_id', None): 
-            return
-            
-        # Ignore click on # column
-        if logical_index == 0: 
-            self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
-            return
-        
-        # Toggle sort order
-        if self.sort_col == logical_index:
-            if self.sort_order == Qt.SortOrder.AscendingOrder:
-                self.sort_order = Qt.SortOrder.DescendingOrder
-            else:
-                self.sort_order = Qt.SortOrder.AscendingOrder
-        else:
-            self.sort_col = logical_index
-            self.sort_order = Qt.SortOrder.AscendingOrder
-            
-        # Update Header State
-        self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
-        
-        # 🟢 FIX: Force the header to repaint immediately so the arrow flips
-        self.tree.header().viewport().update()
-        
-        # 🟢 NEW: Save the user's choice to the database!
-        self.save_sort_state()
-        
-        # Reload Data
-        self.load_from_db(reset=True)
 
     def get_sort_string(self):
         col = self.sort_col
@@ -2050,13 +2532,16 @@ class TracksBrowser(QWidget):
         self.current_query = text.strip()
         self.search_timer.start()
     
-    def execute_search(self): 
-        # 🟢 STRICT ROUTING: Send the search to the correct loader and nowhere else!
+    def execute_search(self):
+        # Reset all column filters when user starts a local search
+        if self._col_filters:
+            self._col_filters = {}
+            self.tree.header().set_active_filters([])
+            self._update_clear_filters_btn()
         if getattr(self, 'album_mode_id', None):
-            # 🟢 THE FIX: Pass the album ID that we saved!
             self.load_album_tracks(self.album_mode_id)
         else:
-            self.load_from_db(reset=True)
+            self.load_from_db(reset=True, invalidate_filter_cache=True)
 
     def set_album_mode(self, enabled=True):
         self.is_album_mode = enabled
@@ -2595,6 +3080,21 @@ class TracksBrowser(QWidget):
                 except Exception as e:
                     print(f"Error tinting burger icon: {e}")
                 if h or in_album: self.burger_btn.hide()
+
+            if hasattr(self, 'clear_filters_btn'):
+                h = self.clear_filters_btn.isHidden()
+                try:
+                    icon_path = resource_path("img/filter_off-2.png")
+                    pixmap = QPixmap(icon_path).scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    if not pixmap.isNull():
+                        painter = QPainter(pixmap)
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                        painter.fillRect(pixmap.rect(), QColor(color))
+                        painter.end()
+                        self.clear_filters_btn.setIcon(QIcon(pixmap))
+                except Exception as e:
+                    print(f"Error tinting clear filters icon: {e}")
+                if h: self.clear_filters_btn.hide()
             
             if hasattr(self, 'footer'):
                 h = self.footer.isHidden()
