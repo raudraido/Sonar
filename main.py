@@ -13,6 +13,8 @@ import platform
 import threading
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+os.environ["QT_QPA_PLATFORMTHEME"] = ""  # Disable GTK/KDE theme override
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # Use XWayland so Qt stylesheets apply to tooltips
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QSettings

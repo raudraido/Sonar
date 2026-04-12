@@ -373,9 +373,7 @@ class VisualsMixin:
                 self._now_playing_panel.set_accent_color(mc, alpha)
             self._last_tree_alpha = alpha
 
-        if not getattr(self, '_global_tt_set', False):
-            QApplication.instance().setStyleSheet("QToolTip { background-color: #0d0d0d; color: #ffffff; border: 1px solid #222222; border-radius: 8px; padding: 3px 10px; font-family: sans-serif; font-weight: bold; font-size: 11px; }")
-            self._global_tt_set = True
+        pass  # Tooltip styling handled by _TooltipFilter in window.py
 
     def refresh_visuals(self):
         self.refresh_ui_styles()

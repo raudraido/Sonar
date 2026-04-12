@@ -1597,6 +1597,7 @@ class TracksBrowser(QWidget):
     play_track = pyqtSignal(dict)
     play_multiple_tracks = pyqtSignal(list)
     shuffle_tracks = pyqtSignal(list)
+    _scan_done = pyqtSignal()
     queue_track = pyqtSignal(dict)
     play_next = pyqtSignal(dict)
     switch_to_artist_tab = pyqtSignal(str)
@@ -1711,6 +1712,17 @@ class TracksBrowser(QWidget):
         self.play_filtered_btn.pressed.connect(lambda: (self._play_filtered_timer.start(), setattr(self, '_play_filtered_held', False)))
         self.play_filtered_btn.released.connect(self._on_play_filtered_released)
 
+        # --- REFRESH BUTTON ---
+        self.refresh_btn = QPushButton()
+        self.refresh_btn.setToolTip("Refresh library from server")
+        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_btn.setFixedSize(32, 32)
+        self.refresh_btn.setFlat(True)
+        self.refresh_btn.setIcon(QIcon(resource_path("img/refresh.png")))
+        self.refresh_btn.setIconSize(QSize(18, 18))
+        self.refresh_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
+        self.refresh_btn.clicked.connect(self._refresh_library)
+
         # 🟢 CLEAN HEADER ASSEMBLY
         filter_btns = QWidget()
         filter_btns.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
@@ -1719,6 +1731,10 @@ class TracksBrowser(QWidget):
         filter_btns_layout.setSpacing(2)
         filter_btns_layout.addWidget(self.play_filtered_btn)
         filter_btns_layout.addWidget(self.clear_filters_btn)
+
+        # Insert refresh_btn into search_container layout right after burger_btn
+        sc_layout = self.search_container.layout()
+        sc_layout.addWidget(self.refresh_btn)
 
         header_layout.addWidget(self.status_label)
         header_layout.addWidget(filter_btns)
@@ -1892,6 +1908,42 @@ class TracksBrowser(QWidget):
 
     def check_for_updates(self):
         pass  # Updates are driven by SmartBackgroundSyncer signals, not local DB polling.
+
+    def _refresh_library(self):
+        """Trigger a server scan then re-fetch when done."""
+        if not self.client:
+            return
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setToolTip("Scanning library…")
+        self._scan_done.connect(self._on_scan_finished)
+
+        # Trigger scan in background thread, poll until done, then reload
+        def _do_refresh():
+            try:
+                self.client.start_scan()
+                import time
+                for _ in range(60):  # wait up to 30s
+                    time.sleep(0.5)
+                    if not self.client.is_scanning():
+                        break
+            except Exception as e:
+                print(f"[Refresh] scan error: {e}")
+            finally:
+                self._scan_done.emit()
+
+        import threading
+        threading.Thread(target=_do_refresh, daemon=True).start()
+
+    def _on_scan_finished(self):
+        try: self.client.reset_caches()
+        except: pass
+        try: self.client._api_cache.cache.clear()
+        except: pass
+        self._col_filter_values = {}
+        self._col_id_map = {}
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setToolTip("Refresh library from server")
+        self.load_from_db(reset=True, invalidate_filter_cache=True)
     
     # --- BURGER MENU: COLUMN VISIBILITY ---
     
@@ -2382,9 +2434,9 @@ class TracksBrowser(QWidget):
         self._col_resize_guard = True
         self.tree.setColumnHidden(col, not is_checked)
         if is_checked:
-            saved_w = self.tree.columnWidth(col)
-            self.tree.header().resizeSection(col, max(saved_w, self.col_min_widths.get(col, 60)))
+            self.tree.header().resizeSection(col, self.col_min_widths.get(col, 60))
         self._col_resize_guard = False
+        self._fit_columns_to_viewport()
         self.save_column_state()
 
     def save_column_state(self):
@@ -3306,6 +3358,18 @@ class TracksBrowser(QWidget):
                 except Exception as e:
                     print(f"Error tinting burger icon: {e}")
                 if h or in_album: self.burger_btn.hide()
+
+            if hasattr(self, 'refresh_btn'):
+                try:
+                    pixmap = QPixmap(resource_path("img/refresh.png")).scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    if not pixmap.isNull():
+                        painter = QPainter(pixmap)
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                        painter.fillRect(pixmap.rect(), QColor(color))
+                        painter.end()
+                        self.refresh_btn.setIcon(QIcon(pixmap))
+                except Exception as e:
+                    print(f"Error tinting refresh icon: {e}")
 
             if hasattr(self, 'clear_filters_btn'):
                 h = self.clear_filters_btn.isHidden()

@@ -271,15 +271,17 @@ class SmartSearchContainer(QWidget):
         self.search_btn.setIconSize(QSize(18, 18))
         self.search_btn.setFixedSize(32, 32)
         self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_btn.setToolTip("Search")
         self.search_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
         self.search_btn.clicked.connect(self.toggle_search)
-        
+
         # --- BURGER BUTTON ---
         self.burger_btn = QPushButton()
         self.burger_btn.setIcon(QIcon(resource_path("img/burger.png")))
         self.burger_btn.setIconSize(QSize(18, 18))
         self.burger_btn.setFixedSize(32, 32)
         self.burger_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.burger_btn.setToolTip("Select columns")
         self.burger_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
         self.burger_btn.clicked.connect(self.burger_clicked.emit)
         

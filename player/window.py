@@ -57,6 +57,75 @@ from player.mixins.navigation  import NavigationMixin
 from player.mixins.visuals     import VisualsMixin
 from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
+from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
+from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
+from PyQt6.QtCore import Qt as _Qt2
+
+
+class _TooltipLabel(_QFrame):
+    """Custom tooltip popup with column-header matching style."""
+    def __init__(self):
+        super().__init__(None, _Qt2.WindowType.ToolTip | _Qt2.WindowType.FramelessWindowHint | _Qt2.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(_Qt2.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #1a1a1a;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 0px;
+            }
+        """)
+        from PyQt6.QtWidgets import QVBoxLayout, QLabel
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 4, 8, 4)
+        self._lbl = QLabel(self)
+        self._lbl.setStyleSheet("color: #888888; background: transparent; border: none; font-weight: bold;")
+        f = self._lbl.font()
+        f.setBold(True)
+        f.setPixelSize(11)
+        self._lbl.setFont(f)
+        lay.addWidget(self._lbl)
+
+    def show_at(self, pos, text):
+        self._lbl.setText(text)
+        self._lbl.adjustSize()
+        self.adjustSize()
+        self.move(pos)
+        self.show()
+        self.raise_()
+
+
+class _TooltipFilter(_QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tip = None
+
+    def _ensure_tip(self):
+        if self._tip is None:
+            self._tip = _TooltipLabel()
+        return self._tip
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtWidgets import QWidget
+        from PyQt6.QtCore import QPoint
+        if event.type() == _QEvent2.Type.ToolTip:
+            widget = obj if isinstance(obj, QWidget) else None
+            text = widget.toolTip() if widget else ''
+            if text:
+                tip = self._ensure_tip()
+                # Position below the widget
+                gpos = widget.mapToGlobal(QPoint(0, widget.height() + 4))
+                tip.show_at(gpos, text)
+                return True
+            else:
+                if self._tip and self._tip.isVisible():
+                    self._tip.hide()
+                return False
+        if event.type() in (_QEvent2.Type.Leave, _QEvent2.Type.MouseButtonPress,
+                            _QEvent2.Type.KeyPress, _QEvent2.Type.WindowDeactivate):
+            if self._tip and self._tip.isVisible():
+                self._tip.hide()
+        return False
 
 
 class SonarPlayer(
@@ -76,6 +145,8 @@ class SonarPlayer(
 
     def __init__(self, client):
         super().__init__()
+        # Install custom tooltip renderer (Qt stylesheet/palette ignored on this platform)
+        QApplication.instance().installEventFilter(_TooltipFilter(QApplication.instance()))
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
         self.setWindowTitle("Sonar")

@@ -723,6 +723,28 @@ class SubsonicClient:
             print(f"Error getting total track count: {e}")
         return 0
     
+    def start_scan(self):
+        """Trigger a library scan on the server."""
+        try:
+            params = self._get_auth_params()
+            r = requests.get(f"{self.base_url}/rest/startScan", params=params, timeout=10)
+            return r.status_code == 200
+        except Exception as e:
+            print(f"[Client] startScan failed: {e}")
+            return False
+
+    def is_scanning(self):
+        """Return True if a library scan is currently in progress."""
+        try:
+            params = self._get_auth_params()
+            r = requests.get(f"{self.base_url}/rest/getScanStatus", params=params, timeout=5)
+            data = r.json()
+            status = data.get('subsonic-response', {}).get('scanStatus', {})
+            return bool(status.get('scanning', False))
+        except Exception as e:
+            print(f"[Client] getScanStatus failed: {e}")
+            return False
+
     def ping(self):
         try:
             r = requests.get(f"{self.base_url}/rest/ping", params=self._get_auth_params(), timeout=5)
