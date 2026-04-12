@@ -680,8 +680,8 @@ class SmartSortHeader(QHeaderView):
             else:
                 sec_pos = self.sectionViewportPosition(col)
                 sec_w   = self.sectionSize(col)
-                global_tl = self.viewport().mapToGlobal(QPoint(sec_pos, self.height()))
-                global_rect = QRect(global_tl, QRect(sec_pos, 0, sec_w, self.height()).size())
+                global_tl = self.viewport().mapToGlobal(QPoint(sec_pos, self.viewport().height()))
+                global_rect = QRect(global_tl, QSize(sec_w, self.viewport().height()))
                 self.filter_clicked.emit(col, global_rect)
         else:
             self._pending_click_col = None
@@ -1595,7 +1595,8 @@ class CombinedTrackDelegate(QStyledItemDelegate):
 
 class TracksBrowser(QWidget):
     play_track = pyqtSignal(dict)
-    play_multiple_tracks = pyqtSignal(list) 
+    play_multiple_tracks = pyqtSignal(list)
+    shuffle_tracks = pyqtSignal(list)
     queue_track = pyqtSignal(dict)
     play_next = pyqtSignal(dict)
     switch_to_artist_tab = pyqtSignal(str)
@@ -1691,9 +1692,36 @@ class TracksBrowser(QWidget):
         self.clear_filters_btn.setIconSize(QSize(18, 18))
         self.clear_filters_btn.hide()
 
+        # --- PLAY FILTERED BUTTON ---
+        self.play_filtered_btn = QPushButton()
+        self.play_filtered_btn.setToolTip("Play filtered tracks (hold for shuffle)")
+        self.play_filtered_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_filtered_btn.setFixedSize(32, 32)
+        self.play_filtered_btn.setFlat(True)
+        self.play_filtered_btn.setIcon(QIcon(resource_path("img/play-button.png")))
+        self.play_filtered_btn.setIconSize(QSize(18, 18))
+        self.play_filtered_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
+        self.play_filtered_btn.hide()
+        # Long-press detection
+        self._play_filtered_timer = QTimer(self)
+        self._play_filtered_timer.setSingleShot(True)
+        self._play_filtered_timer.setInterval(600)
+        self._play_filtered_timer.timeout.connect(self._shuffle_filtered_tracks)
+        self._play_filtered_held = False
+        self.play_filtered_btn.pressed.connect(lambda: (self._play_filtered_timer.start(), setattr(self, '_play_filtered_held', False)))
+        self.play_filtered_btn.released.connect(self._on_play_filtered_released)
+
         # 🟢 CLEAN HEADER ASSEMBLY
+        filter_btns = QWidget()
+        filter_btns.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        filter_btns_layout = QHBoxLayout(filter_btns)
+        filter_btns_layout.setContentsMargins(0, 0, 0, 0)
+        filter_btns_layout.setSpacing(2)
+        filter_btns_layout.addWidget(self.play_filtered_btn)
+        filter_btns_layout.addWidget(self.clear_filters_btn)
+
         header_layout.addWidget(self.status_label)
-        header_layout.addWidget(self.clear_filters_btn)
+        header_layout.addWidget(filter_btns)
         header_layout.addStretch()
         header_layout.addWidget(self.search_container, 0, Qt.AlignmentFlag.AlignRight)
 
@@ -2524,7 +2552,7 @@ class TracksBrowser(QWidget):
         popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, accent_color=getattr(self, 'current_accent', '#cccccc'), parent=self)
         popup.filters_applied.connect(self._apply_col_filter)
         popup.sort_requested.connect(self._on_sort_from_popup)
-        popup.move(global_rect.bottomLeft())
+        popup.move(global_rect.topLeft())
         popup.show()
         self._active_filter_popup = popup
         popup.destroyed.connect(lambda: setattr(self, '_active_filter_popup', None))
@@ -2550,8 +2578,71 @@ class TracksBrowser(QWidget):
             return
         if self._col_filters:
             self.clear_filters_btn.show()
+            self.play_filtered_btn.show()
         else:
             self.clear_filters_btn.hide()
+            self.play_filtered_btn.hide()
+
+    def _get_filtered_tracks(self):
+        tracks = []
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data and data.get('type') == 'track':
+                tracks.append(data['data'])
+        return tracks
+
+    def _fetch_all_filtered_tracks(self, callback):
+        """Fetch all filtered tracks across all pages, then call callback(tracks)."""
+        total = getattr(self, 'total_items', 0)
+        if total <= self.page_size:
+            callback(self._get_filtered_tracks())
+            return
+
+        sort_str = self.get_sort_string()
+        sort_field, sort_order = sort_str.split(" ")
+        server_params = self._build_server_filters() if self._col_filters else {}
+        client = self.client
+        query = self.current_query
+
+        worker = LiveTrackWorker(
+            client=client,
+            query_text=query,
+            page=1,
+            page_size=total,
+            is_album_mode=False,
+            album_id=None,
+            known_total=total,
+            sort_field=sort_field,
+            sort_order=sort_order,
+            server_filters=server_params or None,
+        )
+        if not hasattr(self, 'dead_workers'):
+            self.dead_workers = []
+        self.dead_workers.append(worker)
+
+        def _on_ready(tracks, *_):
+            try: worker.results_ready.disconnect()
+            except: pass
+            callback(tracks)
+
+        worker.results_ready.connect(_on_ready)
+        worker.start()
+
+    def _on_play_filtered_released(self):
+        if self._play_filtered_timer.isActive():
+            self._play_filtered_timer.stop()
+            self._fetch_all_filtered_tracks(lambda tracks: self.play_multiple_tracks.emit(tracks) if tracks else None)
+
+    def _shuffle_filtered_tracks(self):
+        self._play_filtered_held = True
+        import random
+        def _do_shuffle(tracks):
+            if tracks:
+                shuffled = tracks[:]
+                random.shuffle(shuffled)
+                self.play_multiple_tracks.emit(shuffled)
+        self._fetch_all_filtered_tracks(_do_shuffle)
 
     def _on_sort_col_clicked(self, col):
         """Toggle sort asc/desc when TRACK or TITLE column header is clicked."""
@@ -3230,6 +3321,20 @@ class TracksBrowser(QWidget):
                 except Exception as e:
                     print(f"Error tinting clear filters icon: {e}")
                 if h: self.clear_filters_btn.hide()
+
+            if hasattr(self, 'play_filtered_btn'):
+                h = self.play_filtered_btn.isHidden()
+                try:
+                    pixmap = QPixmap(resource_path("img/play-button.png")).scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    if not pixmap.isNull():
+                        painter = QPainter(pixmap)
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                        painter.fillRect(pixmap.rect(), QColor(color))
+                        painter.end()
+                        self.play_filtered_btn.setIcon(QIcon(pixmap))
+                except Exception as e:
+                    print(f"Error tinting play filtered icon: {e}")
+                if h: self.play_filtered_btn.hide()
             
             if hasattr(self, 'footer'):
                 h = self.footer.isHidden()
