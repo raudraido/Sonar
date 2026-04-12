@@ -628,6 +628,7 @@ class SmartSortHeader(QHeaderView):
         self._hovered_col = -1
         self._pending_click_col = None
         self._pending_click_pos = None
+        self.album_mode = False
         self.viewport().setMouseTracking(True)
 
     _CLICK_THRESHOLD = 4  # pixels — more than this = drag, not click
@@ -754,17 +755,17 @@ class SmartSortHeader(QHeaderView):
         painter.setPen(QColor("#888"))
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label_text)
 
-        # Highlight whole section on hover
-        is_hovered = logicalIndex == self._hovered_col
+        # Highlight whole section on hover (not in album mode)
+        is_hovered = (not self.album_mode) and logicalIndex == self._hovered_col
         if is_hovered and show_icon:
             painter.fillRect(rect, QColor(255, 255, 255, 18))
 
-        # Draw icon right after text — only when hovered or active/sorted
+        # Draw icon right after text — only when hovered or active/sorted; never in album mode
         is_sort_indicator_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
         is_sorted = logicalIndex in self.SORT_COLS and is_sort_indicator_shown
         is_col_sorted = is_sort_indicator_shown  # any col can be sorted
         is_active = logicalIndex in self._active_filter_cols
-        show_icon_now = show_icon and (is_hovered or is_sorted or is_col_sorted or is_active)
+        show_icon_now = (not self.album_mode) and show_icon and (is_hovered or is_sorted or is_col_sorted or is_active)
 
         if show_icon_now:
             fx = int(start_x + text_width + icon_spacing)
@@ -2359,11 +2360,13 @@ class TracksBrowser(QWidget):
         self.save_column_state()
 
     def save_column_state(self):
+        hdr = self.tree.header()
         state = {}
         for i in range(11):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
                 'width': self.tree.columnWidth(i),
+                'visual': hdr.visualIndex(i),
             }
         try:
             self._settings.setValue('tracks_columns_hidden', json.dumps(state))
@@ -2375,17 +2378,28 @@ class TracksBrowser(QWidget):
             if state_str:
                 state = json.loads(state_str)
                 self._col_resize_guard = True
+                hdr = self.tree.header()
+                # First pass: hidden + width
                 for col_str, val in state.items():
                     col_idx = int(col_str)
                     if col_idx >= 11: continue
-                    # Support old format (bool) and new format (dict)
                     if isinstance(val, dict):
                         self.tree.setColumnHidden(col_idx, val.get('hidden', False))
                         w = val.get('width', 0)
                         if w > 0:
-                            self.tree.header().resizeSection(col_idx, w)
+                            hdr.resizeSection(col_idx, w)
                     else:
                         self.tree.setColumnHidden(col_idx, val)
+                # Second pass: visual order (col 0 is fixed, skip it)
+                order = [(int(col_str), val['visual'])
+                         for col_str, val in state.items()
+                         if isinstance(val, dict) and 'visual' in val and int(col_str) > 0]
+                order.sort(key=lambda x: x[1])  # sort by saved visual index
+                for logical, target_visual in order:
+                    if logical >= 11: continue
+                    current_visual = hdr.visualIndex(logical)
+                    if current_visual != target_visual:
+                        hdr.moveSection(current_visual, target_visual)
                 # Sanity check: corrupt state if <3 columns visible OR any single
                 # column is wider than 1200px (pushed everything off-screen)
                 visible = sum(1 for i in range(1, 11) if not self.tree.isColumnHidden(i))
@@ -2465,7 +2479,6 @@ class TracksBrowser(QWidget):
         if self._active_filter_popup:
             self._active_filter_popup.close()
             self._active_filter_popup = None
-            return  # second click just closes
 
         # If worker is still running, wait for it then open the popup
         worker = self._filter_values_worker
@@ -2480,8 +2493,32 @@ class TracksBrowser(QWidget):
 
         self._open_filter_popup(col, global_rect)
 
+    def _values_from_tree(self, col):
+        """Derive unique filter values for col from the currently loaded tree items."""
+        vals = set()
+        # Multi-value separator pattern (matches artist/genre delegate splitting)
+        sep = re.compile(r' /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, ')
+        multi_val_cols = {3, 6}  # artist, genre — may have multiple values per cell
+        for i in range(self.tree.topLevelItemCount()):
+            text = self.tree.topLevelItem(i).text(col)
+            if not text:
+                continue
+            if col in multi_val_cols:
+                for part in sep.split(text):
+                    part = part.strip()
+                    if part:
+                        vals.add(part)
+            else:
+                vals.add(text)
+        return sorted(vals, key=lambda x: str(x).lower())
+
     def _open_filter_popup(self, col, global_rect):
-        values = self._col_filter_values.get(col, [])
+        # If other filters are active, derive values from the loaded tree (cascading)
+        other_filters_active = any(c != col for c in self._col_filters)
+        if other_filters_active:
+            values = self._values_from_tree(col)
+        else:
+            values = self._col_filter_values.get(col, [])
         active = self._col_filters.get(col, set())
         hdr = self.tree.header()
         popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, accent_color=getattr(self, 'current_accent', '#cccccc'), parent=self)
@@ -2490,6 +2527,7 @@ class TracksBrowser(QWidget):
         popup.move(global_rect.bottomLeft())
         popup.show()
         self._active_filter_popup = popup
+        popup.destroyed.connect(lambda: setattr(self, '_active_filter_popup', None))
 
     def _apply_col_filter(self, col, values):
         if values:
@@ -2643,11 +2681,12 @@ class TracksBrowser(QWidget):
     def set_album_mode(self, enabled=True):
         self.is_album_mode = enabled
         self.combined_delegate.is_album_mode = enabled
+        self.tree.header().album_mode = enabled
         if enabled:
             # Hide redundant columns
-            for col in [2, 3, 4, 5, 6, 8]: 
+            for col in [2, 3, 4, 5, 6, 8, 10]:
                 self.tree.hideColumn(col)
-                
+
             self.tree.showColumn(0) # #
             self.tree.showColumn(1) # TRACK
             self.tree.showColumn(7) # Heart
