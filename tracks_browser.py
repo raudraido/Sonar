@@ -180,7 +180,7 @@ class TBCoverWorker(QThread):
                             from cover_cache import CoverCache
                             CoverCache.instance().save_thumb(cid, data)
                             self.cover_ready.emit(cid, data)
-                    except Exception as e:
+                    except Exception:
                         pass
 
 class LiveTrackWorker(QThread):
@@ -329,7 +329,7 @@ class FilterValuesWorker(QThread):
                         query=self.query_text or "",
                     )
                     if self.is_cancelled: return
-                    for col, field in [(2, 'title'), (5, 'year'), (8, 'play_count'), (9, 'duration')]:
+                    for col, field in [(2, 'title'), (5, 'year'), (8, 'play_count'), (9, 'duration'), (10, 'trackNumber')]:
                         vals = set()
                         for t in sample_tracks:
                             v = str(t.get(field, '') or '').strip()
@@ -350,36 +350,47 @@ class ColumnFilterPopup(QFrame):
     filters_applied = pyqtSignal(int, set)  # col, selected values
     sort_requested  = pyqtSignal(int, str)  # col, "ASC" or "DESC"
 
-    def __init__(self, col, values, active_values, up_icon, down_icon, filter_off_icon, parent=None):
+    # Columns that map to server-side ID lists — Navidrome limits these
+    ID_FILTER_COLS = {3, 4, 6}
+    MAX_ID_FILTER_VALUES = 10
+
+    def __init__(self, col, values, active_values, up_icon, down_icon, accent_color="#cccccc", parent=None):
         super().__init__(parent, Qt.WindowType.Popup)
         self.col = col
         self.all_values = sorted(values, key=lambda v: str(v).lower())
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("""
-            ColumnFilterPopup {
-                background: #1e1e1e; border: 1px solid #444; border-radius: 6px;
-            }
-            QLineEdit {
-                background: #2a2a2a; color: #ddd; border: 1px solid #444;
+        self.setStyleSheet(f"""
+            ColumnFilterPopup {{
+                background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 6px;
+            }}
+            QLineEdit {{
+                background: #080808; color: #ddd; border: 1px solid #333;
                 border-radius: 4px; padding: 4px 8px; font-size: 13px;
-            }
-            QListWidget {
-                background: #1e1e1e; border: none; color: #ddd; font-size: 13px;
-            }
-            QListWidget::item { padding: 3px 6px; border-radius: 3px; }
-            QListWidget::item:hover { background: #2a2a2a; }
-            QPushButton {
-                background: #2a2a2a; color: #ddd; border: 1px solid #444;
+            }}
+            QLineEdit:focus {{ border: 1px solid #555; }}
+            QListWidget {{
+                background: transparent; border: none; color: #ddd; font-size: 13px;
+            }}
+            QListWidget::item {{ padding: 3px 6px; border-radius: 3px; }}
+            QListWidget::item:hover {{ background: rgba(255,255,255,0.07); }}
+            QListWidget::item:selected {{ background: rgba(255,255,255,0.07); color: #ddd; }}
+            QPushButton {{
+                background: #111; color: #ddd; border: 1px solid #2a2a2a;
                 border-radius: 4px; padding: 4px 12px; font-size: 12px;
-            }
-            QPushButton:hover { background: #333; }
-            QFrame#sort_row {
-                background: transparent;
-            }
-            QFrame#sort_row:hover {
-                background: #2a2a2a;
-                border-radius: 3px;
-            }
+            }}
+            QPushButton:hover {{ background: rgba(255,255,255,0.1); }}
+            QFrame#sort_row {{ background: transparent; }}
+            QFrame#sort_row:hover {{ background: rgba(255,255,255,0.07); border-radius: 3px; }}
+            QScrollBar:vertical {{ border: none; background: transparent; width: 10px; margin: 0; }}
+            QScrollBar::handle:vertical {{ background: #333; min-height: 30px; border-radius: 5px; }}
+            QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {accent_color}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+            QScrollBar:horizontal {{ border: none; background: transparent; height: 10px; margin: 0; }}
+            QScrollBar::handle:horizontal {{ background: #333; min-width: 30px; border-radius: 5px; }}
+            QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{ background: {accent_color}; }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
         """)
         self.setFixedWidth(240)
 
@@ -388,9 +399,10 @@ class ColumnFilterPopup(QFrame):
         layout.setSpacing(4)
 
         icon_size = 14
+        clear_filter_icon = QIcon(resource_path("img/filter_off-2.png"))
         has_filter = bool(active_values)
 
-        def _make_action_row(icon, label, callback, enabled=True, tint=True):
+        def _make_action_row(icon, label, callback, enabled=True, tint=True, tint_color=None):
             row = QFrame()
             row.setObjectName("sort_row")
             if enabled:
@@ -401,16 +413,16 @@ class ColumnFilterPopup(QFrame):
             lbl_icon = QLabel()
             px = icon.pixmap(icon_size, icon_size)
             if tint:
-                # Tint white
-                white_px = QPixmap(px.size())
-                white_px.fill(Qt.GlobalColor.transparent)
-                p2 = QPainter(white_px)
+                c = QColor(tint_color) if tint_color else QColor("#ffffff")
+                tinted_px = QPixmap(px.size())
+                tinted_px.fill(Qt.GlobalColor.transparent)
+                p2 = QPainter(tinted_px)
                 p2.setOpacity(1.0 if enabled else 0.3)
                 p2.drawPixmap(0, 0, px)
                 p2.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                p2.fillRect(white_px.rect(), QColor("#ffffff"))
+                p2.fillRect(tinted_px.rect(), c)
                 p2.end()
-                px = white_px
+                px = tinted_px
             else:
                 if not enabled:
                     dim = QPixmap(px.size())
@@ -422,7 +434,7 @@ class ColumnFilterPopup(QFrame):
                     px = dim
             lbl_icon.setPixmap(px)
             lbl_icon.setFixedSize(icon_size, icon_size)
-            color = "#ddd" if enabled else "#555"
+            color = (tint_color if tint_color else "#ddd") if enabled else "#555"
             lbl_text = QLabel(label)
             lbl_text.setStyleSheet(f"color: {color}; font-size: 13px; background: transparent;")
             hl.addWidget(lbl_icon)
@@ -434,7 +446,7 @@ class ColumnFilterPopup(QFrame):
 
         layout.addWidget(_make_action_row(up_icon,        "Sort ascending",  lambda: self._sort("ASC")))
         layout.addWidget(_make_action_row(down_icon,      "Sort descending", lambda: self._sort("DESC")))
-        layout.addWidget(_make_action_row(filter_off_icon, "Clear filter",   self._clear_filter, enabled=has_filter, tint=False))
+        layout.addWidget(_make_action_row(clear_filter_icon, "Clear filter",   self._clear_filter, enabled=has_filter, tint=has_filter, tint_color="#ff4444" if has_filter else None))
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -452,6 +464,13 @@ class ColumnFilterPopup(QFrame):
         self.list_widget = QListWidget()
         self.list_widget.setFixedHeight(200)
         layout.addWidget(self.list_widget)
+
+        # Warning shown when too many ID-based values are selected
+        self.warning_label = QLabel()
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet("color: #f0a030; font-size: 11px; padding: 2px 4px;")
+        self.warning_label.hide()
+        layout.addWidget(self.warning_label)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -496,6 +515,7 @@ class ColumnFilterPopup(QFrame):
 
         self.list_widget.blockSignals(False)
         self.list_widget.itemChanged.connect(self._on_item_changed)
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
 
     def _on_item_changed(self, changed_item):
         self.list_widget.blockSignals(True)
@@ -514,6 +534,31 @@ class ColumnFilterPopup(QFrame):
                 Qt.CheckState.Checked if all_checked else Qt.CheckState.Unchecked
             )
         self.list_widget.blockSignals(False)
+        self._update_warning()
+
+    def _on_item_clicked(self, item):
+        # Toggle check state when clicking anywhere on the row, not just the checkbox
+        new_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+        item.setCheckState(new_state)
+
+    def _update_warning(self):
+        if self.col not in self.ID_FILTER_COLS:
+            return
+        checked_count = sum(
+            1 for i in range(1, self.list_widget.count())
+            if self.list_widget.item(i).checkState() == Qt.CheckState.Checked
+        )
+        total = self.list_widget.count() - 1
+        # No filter (all checked) or single value = fine
+        if checked_count == total or checked_count <= self.MAX_ID_FILTER_VALUES:
+            self.warning_label.hide()
+        else:
+            self.warning_label.setText(
+                f"⚠ Server supports up to {self.MAX_ID_FILTER_VALUES} values "
+                f"({checked_count} selected — results may be incomplete)."
+            )
+            self.warning_label.show()
+        self.adjustSize()
 
     def _filter_list(self, text):
         q = text.lower()
@@ -566,7 +611,7 @@ class SmartSortHeader(QHeaderView):
     filter_clicked = pyqtSignal(int, QRect)  # col, icon rect in global coords
     sort_clicked   = pyqtSignal(int)          # col — for sort-only columns
 
-    SORT_COLS = {1, 2, 8, 9}  # TRACK, TITLE, PLAYS, LENGTH — show sort icon, not filter
+    SORT_COLS = {1, 2, 8, 9, 10}  # TRACK, TITLE, PLAYS, LENGTH, NO. — show sort icon, not filter
 
     FILTER_ICON_SIZE = 14
 
@@ -577,11 +622,23 @@ class SmartSortHeader(QHeaderView):
         self.up_icon   = QIcon(resource_path("img/filter_up.png"))
         self.down_icon = QIcon(resource_path("img/filter_down.png"))
         self.filter_icon     = QIcon(resource_path("img/filter.png"))
-        self.filter_off_icon = QIcon(resource_path("img/filter_off.png"))
+        self.filter_off_icon = QIcon(resource_path("img/filter.png"))
         self._active_filter_cols = set()  # cols that have an active filter
         self._filter_icon_rects = {}  # logical_index -> QRect (viewport coords, set during paint)
         self._hovered_col = -1
+        self._pending_click_col = None
+        self._pending_click_pos = None
         self.viewport().setMouseTracking(True)
+
+    _CLICK_THRESHOLD = 4  # pixels — more than this = drag, not click
+
+    def _is_resize_zone(self, pos):
+        grip = self.style().pixelMetric(QStyle.PixelMetric.PM_HeaderGripMargin) + 2
+        for i in range(self.count()):
+            boundary = self.sectionViewportPosition(i) + self.sectionSize(i)
+            if abs(pos.x() - boundary) <= grip:
+                return True
+        return False
 
     def set_active_filters(self, cols):
         self._active_filter_cols = set(cols)
@@ -597,6 +654,11 @@ class SmartSortHeader(QHeaderView):
         if hovered != self._hovered_col:
             self._hovered_col = hovered
             self.viewport().update()
+        # Cancel pending click if the mouse moved enough to be a drag
+        if (self._pending_click_pos is not None
+                and abs(event.pos().x() - self._pending_click_pos.x()) > self._CLICK_THRESHOLD):
+            self._pending_click_col = None
+            self._pending_click_pos = None
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
@@ -608,21 +670,29 @@ class SmartSortHeader(QHeaderView):
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         self.section_drag_finished.emit()
+        if event.button() == Qt.MouseButton.LeftButton and self._pending_click_col is not None:
+            col = self._pending_click_col
+            self._pending_click_col = None
+            self._pending_click_pos = None
+            if col in self.SORT_COLS:
+                self.sort_clicked.emit(col)
+            else:
+                sec_pos = self.sectionViewportPosition(col)
+                sec_w   = self.sectionSize(col)
+                global_tl = self.viewport().mapToGlobal(QPoint(sec_pos, self.height()))
+                global_rect = QRect(global_tl, QRect(sec_pos, 0, sec_w, self.height()).size())
+                self.filter_clicked.emit(col, global_rect)
+        else:
+            self._pending_click_col = None
+            self._pending_click_pos = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.pos()
             logical = self.logicalIndexAt(pos)
-            if logical > 0:
-                if logical in self.SORT_COLS:
-                    self.sort_clicked.emit(logical)
-                else:
-                    sec_pos = self.sectionViewportPosition(logical)
-                    sec_w   = self.sectionSize(logical)
-                    global_tl = self.viewport().mapToGlobal(QPoint(sec_pos, self.height()))
-                    global_rect = QRect(global_tl, QRect(sec_pos, 0, sec_w, self.height()).size())
-                    self.filter_clicked.emit(logical, global_rect)
-                return
+            if logical > 0 and not self._is_resize_zone(pos):
+                self._pending_click_col = logical
+                self._pending_click_pos = pos
         super().mousePressEvent(event)
 
     def paintSection(self, painter, rect, logicalIndex):
@@ -660,7 +730,7 @@ class SmartSortHeader(QHeaderView):
         alignment = opt.textAlignment
 
         # 🟢 FORCE ALIGNMENTS
-        if logicalIndex in (0, 7, 9):
+        if logicalIndex in (0, 7, 9, 10):
              alignment = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         elif logicalIndex == 1:
              alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -689,27 +759,35 @@ class SmartSortHeader(QHeaderView):
         if is_hovered and show_icon:
             painter.fillRect(rect, QColor(255, 255, 255, 18))
 
-        # Draw icon right after text
-        if show_icon:
+        # Draw icon right after text — only when hovered or active/sorted
+        is_sort_indicator_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
+        is_sorted = logicalIndex in self.SORT_COLS and is_sort_indicator_shown
+        is_col_sorted = is_sort_indicator_shown  # any col can be sorted
+        is_active = logicalIndex in self._active_filter_cols
+        show_icon_now = show_icon and (is_hovered or is_sorted or is_col_sorted or is_active)
+
+        if show_icon_now:
             fx = int(start_x + text_width + icon_spacing)
             fy = rect.center().y() - sz // 2
 
-            if logicalIndex in self.SORT_COLS:
-                # Sort icon — show current sort direction if this col is sorted
-                is_sorted = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
+            if is_active and logicalIndex not in self.SORT_COLS:
+                # Active filter takes priority — show filter_off icon, white tint
+                px = self.filter_off_icon.pixmap(sz, sz)
+                tint = QColor("#ffffff")
+            elif is_col_sorted and logicalIndex not in self.SORT_COLS:
+                # Filter column with active sort — show up/down arrow
+                icon = self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon
+                tint = QColor("#ffffff") if is_hovered else QColor("#aaaaaa")
+                px = icon.pixmap(sz, sz)
+            elif logicalIndex in self.SORT_COLS:
                 icon = (self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
                         else self.up_icon) if is_sorted else self.up_icon
-                tint = QColor("#ffffff") if is_hovered else (QColor("#aaaaaa") if is_sorted else QColor("#444444"))
+                tint = QColor("#ffffff") if is_hovered else QColor("#aaaaaa")
                 px = icon.pixmap(sz, sz)
             else:
-                # Filter icon
-                is_active = logicalIndex in self._active_filter_cols
-                fi = self.filter_off_icon if is_active else self.filter_icon
-                px = fi.pixmap(sz, sz)
-                if is_active:
-                    tint = QColor("#ff4444") if is_hovered else QColor("#cc2222")
-                else:
-                    tint = QColor("#ffffff") if is_hovered else QColor("#555555")
+                # Hovered filter column, no active filter or sort
+                px = self.filter_icon.pixmap(sz, sz)
+                tint = QColor("#ffffff") if is_hovered else QColor("#555555")
 
             tinted = QPixmap(px.size())
             tinted.fill(Qt.GlobalColor.transparent)
@@ -719,6 +797,10 @@ class SmartSortHeader(QHeaderView):
             p2.fillRect(tinted.rect(), tint)
             p2.end()
             painter.drawPixmap(fx, int(fy), tinted)
+
+        if show_icon and not show_icon_now:
+            # Still cache a zeroed rect so click detection stays consistent
+            self._filter_icon_rects[logicalIndex] = QRect()
 
         painter.restore()
 
@@ -761,6 +843,7 @@ class SkeletonDelegate(QStyledItemDelegate):
         elif col == 7: w = 16; x = rect.left() + (rect.width() - w) // 2
         elif col == 8: w = 30
         elif col == 9: w = 35; x = rect.left() + (rect.width() - w) // 2
+        elif col == 10: w = 25; x = rect.left() + (rect.width() - w) // 2
         else: w = 50
         
         w = min(w, max(10, rect.width() - 20)) 
@@ -973,11 +1056,16 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
             
             
             painter.setPen(base_color)
-            
+
             f = painter.font()
             f.setUnderline(is_hovering)
             painter.setFont(f)
-            
+
+            painter.drawText(token_rect, Qt.AlignmentFlag.AlignVCenter, part_text)
+            x_offset += width
+            if x_offset >= rect.right() - 5:
+                break
+
         painter.restore()
 
     def clear_hover(self):
@@ -1626,11 +1714,12 @@ class TracksBrowser(QWidget):
      
         
         
-        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH"])
+        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO."])
         self.tree.headerItem().setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
+        self.tree.headerItem().setTextAlignment(10, Qt.AlignmentFlag.AlignCenter)
 
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
@@ -1647,16 +1736,15 @@ class TracksBrowser(QWidget):
         self.tree.header().setSortIndicatorShown(True)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
 
-        # Col 0 (#): fixed width, not resizable
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(0, 45)
-        # Cols 1-9: all freely interactive
-        for i in range(1, 10):
+        # Col 0 (#): auto-size to fit content
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # Cols 1-10: all freely interactive
+        for i in range(1, 11):
             self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60}
+        self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60, 10: 40}
         # These columns never grow beyond their default on window resize (user can still drag them)
-        self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75}
+        self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75, 10: 60}
 
         self.tree.setColumnWidth(1, 350) # TRACK (Combined)
         self.tree.setColumnWidth(2, 200) # TITLE
@@ -1667,6 +1755,7 @@ class TracksBrowser(QWidget):
         self.tree.setColumnWidth(7, 60)  # ♥
         self.tree.setColumnWidth(8, 70)  # PLAYS
         self.tree.setColumnWidth(9, 75)  # LENGTH
+        self.tree.setColumnWidth(10, 55) # NO.
 
         self._col_resize_guard = False
         self.tree.header().sectionResized.connect(self._on_section_resized)
@@ -1781,7 +1870,7 @@ class TracksBrowser(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #222; color: #ddd; border: 1px solid #444; } QMenu::item { padding: 6px 25px; } QMenu::item:selected { background-color: #333; }")
         
-        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH"]
+        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO."]
         
         for i, name in enumerate(headers):
             action = QAction(name, menu)
@@ -1968,7 +2057,7 @@ class TracksBrowser(QWidget):
         self.tree.setUpdatesEnabled(False)
         self.tree.clear()
         
-        for i in range(10): self.tree.setItemDelegateForColumn(i, None)
+        for i in range(11): self.tree.setItemDelegateForColumn(i, None)
         self.tree.setItemDelegateForColumn(1, self.combined_delegate)
         self.tree.setItemDelegateForColumn(3, self.artist_delegate)
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
@@ -2067,7 +2156,7 @@ class TracksBrowser(QWidget):
             self.skeleton_delegate = SkeletonDelegate(self.tree)
             
         # 🟢 Skip column 0 so it uses the standard text renderer for the numbers!
-        for i in range(1, 10): 
+        for i in range(1, 11):
             self.tree.setItemDelegateForColumn(i, self.skeleton_delegate)
             
         offset = (self.current_page - 1) * self.page_size
@@ -2175,7 +2264,11 @@ class TracksBrowser(QWidget):
             
         item.setText(9, time_str)
         item.setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
-        
+
+        track_num = t.get('trackNumber') or t.get('track') or ''
+        item.setText(10, str(track_num) if track_num else '')
+        item.setTextAlignment(10, Qt.AlignmentFlag.AlignCenter)
+
         # Store a reference to the original dict — avoid dict(t) copy overhead.
         # Overwrite 'starred' in-place so toggle logic stays consistent.
         t['starred'] = is_fav
@@ -2267,7 +2360,7 @@ class TracksBrowser(QWidget):
 
     def save_column_state(self):
         state = {}
-        for i in range(10):
+        for i in range(11):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
                 'width': self.tree.columnWidth(i),
@@ -2284,7 +2377,7 @@ class TracksBrowser(QWidget):
                 self._col_resize_guard = True
                 for col_str, val in state.items():
                     col_idx = int(col_str)
-                    if col_idx >= 10: continue
+                    if col_idx >= 11: continue
                     # Support old format (bool) and new format (dict)
                     if isinstance(val, dict):
                         self.tree.setColumnHidden(col_idx, val.get('hidden', False))
@@ -2295,11 +2388,11 @@ class TracksBrowser(QWidget):
                         self.tree.setColumnHidden(col_idx, val)
                 # Sanity check: corrupt state if <3 columns visible OR any single
                 # column is wider than 1200px (pushed everything off-screen)
-                visible = sum(1 for i in range(1, 10) if not self.tree.isColumnHidden(i))
-                any_insane = any(self.tree.columnWidth(i) > 1200 for i in range(1, 10))
+                visible = sum(1 for i in range(1, 11) if not self.tree.isColumnHidden(i))
+                any_insane = any(self.tree.columnWidth(i) > 1200 for i in range(1, 11))
                 if visible < 3 or any_insane:
                     self._settings.remove('tracks_columns_hidden')
-                    for i in range(1, 10):
+                    for i in range(1, 11):
                         self.tree.setColumnHidden(i, False)
                         self.tree.header().resizeSection(i, self.col_min_widths.get(i, 80))
                     self.tree.setColumnHidden(2, True)
@@ -2319,7 +2412,7 @@ class TracksBrowser(QWidget):
     
     def _last_visible_col(self):
         """Return the logical index of the last visible interactive column (the stretch column)."""
-        for i in range(9, 0, -1):
+        for i in range(10, 0, -1):
             if not self.tree.isColumnHidden(i):
                 return i
         return -1
@@ -2341,10 +2434,10 @@ class TracksBrowser(QWidget):
         if getattr(self, 'is_album_mode', False): return
         viewport_w = self.tree.viewport().width()
         self._col_resize_guard = True
-        for col in range(1, 10):
+        for col in range(1, 11):
             if self.tree.isColumnHidden(col): continue
             used_by_others = self.tree.columnWidth(0)
-            for other in range(1, 10):
+            for other in range(1, 11):
                 if other == col or self.tree.isColumnHidden(other): continue
                 used_by_others += self.col_min_widths.get(other, 60)
             max_w = viewport_w - used_by_others
@@ -2391,7 +2484,7 @@ class TracksBrowser(QWidget):
         values = self._col_filter_values.get(col, [])
         active = self._col_filters.get(col, set())
         hdr = self.tree.header()
-        popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, hdr.filter_off_icon, parent=self)
+        popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, accent_color=getattr(self, 'current_accent', '#cccccc'), parent=self)
         popup.filters_applied.connect(self._apply_col_filter)
         popup.sort_requested.connect(self._on_sort_from_popup)
         popup.move(global_rect.bottomLeft())
@@ -2430,7 +2523,10 @@ class TracksBrowser(QWidget):
                                else Qt.SortOrder.AscendingOrder)
         else:
             self.sort_col = col
-            self.sort_order = Qt.SortOrder.AscendingOrder
+            # PLAYS and LENGTH default to descending on first click
+            DESC_FIRST_COLS = {8, 9}
+            self.sort_order = (Qt.SortOrder.DescendingOrder if col in DESC_FIRST_COLS
+                               else Qt.SortOrder.AscendingOrder)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
         self.save_sort_state()
         self.load_from_db(reset=True)
@@ -2444,7 +2540,7 @@ class TracksBrowser(QWidget):
         self.load_from_db(reset=True)
 
     def _visible_cols(self):
-        return [i for i in range(1, 10) if not self.tree.isColumnHidden(i)]
+        return [i for i in range(1, 11) if not self.tree.isColumnHidden(i)]
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2524,6 +2620,7 @@ class TracksBrowser(QWidget):
         elif col == 7: field = "starred" 
         elif col == 8: field = "playCount"
         elif col == 9: field = "duration"
+        elif col == 10: field = "trackNumber"
         else: field = "title"
         
         return f"{field} {order}"
@@ -2557,8 +2654,7 @@ class TracksBrowser(QWidget):
             self.tree.showColumn(9) # LENGTH
             
             header = self.tree.header()
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-            self.tree.setColumnWidth(0, 45)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
             header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
             header.setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed)
@@ -3130,7 +3226,7 @@ class TracksBrowser(QWidget):
         QTreeWidget::item:selected {{ background: rgba(255,255,255,0.1); color: {color_hex}; }} 
         QTreeWidget::item:hover {{ background: rgba(255,255,255,0.05); color: {color_hex}; }}
         
-        QHeaderView::section {{ background: transparent; color: #888; border: none; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 5px; padding-right: 5px; font-weight: bold; text-transform: uppercase; font-size: 11px; }} 
+        QHeaderView::section {{ background: transparent; color: #888; border: none; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 5px; font-weight: bold; text-transform: uppercase; font-size: 11px; }} 
         QHeaderView::section:first {{ padding-right: 5px; }} 
         QHeaderView::section:first:hover {{ background: transparent; }} 
         QHeaderView::section:first:pressed {{ background: transparent; }}

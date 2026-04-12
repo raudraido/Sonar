@@ -855,7 +855,7 @@ class SubsonicClient:
             'albumId': s.get('albumId'), 
             'created': s.get('created'), 
             'album_artist': s.get('albumArtist') or s.get('album_artist'), 
-            'trackNumber': int(s.get('track', 0) or 0),
+            'trackNumber': int(s.get('track') or s.get('trackNumber') or 0),
             'discNumber': int(s.get('discNumber', 1) or 1),
             'duration': dur_str,
             'duration_ms': sec * 1000,
