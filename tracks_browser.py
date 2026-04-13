@@ -345,6 +345,18 @@ class FilterValuesWorker(QThread):
 
 # --- SMART DELEGATES ---
 
+class _CheckableListWidget(QListWidget):
+    """QListWidget that toggles checkboxes on any click within the row (text or checkbox area)."""
+    def mousePressEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            new = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+            item.setCheckState(new)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class ColumnFilterPopup(QFrame):
     """Excel-style column filter popup: sort rows + search box + multi-select checklist."""
     filters_applied = pyqtSignal(int, set)  # col, selected values
@@ -461,7 +473,7 @@ class ColumnFilterPopup(QFrame):
         self.search_box.returnPressed.connect(self._apply)
         layout.addWidget(self.search_box)
 
-        self.list_widget = QListWidget()
+        self.list_widget = _CheckableListWidget()
         self.list_widget.setFixedHeight(200)
         layout.addWidget(self.list_widget)
 
@@ -515,7 +527,6 @@ class ColumnFilterPopup(QFrame):
 
         self.list_widget.blockSignals(False)
         self.list_widget.itemChanged.connect(self._on_item_changed)
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
 
     def _on_item_changed(self, changed_item):
         self.list_widget.blockSignals(True)
@@ -535,11 +546,6 @@ class ColumnFilterPopup(QFrame):
             )
         self.list_widget.blockSignals(False)
         self._update_warning()
-
-    def _on_item_clicked(self, item):
-        # Toggle check state when clicking anywhere on the row, not just the checkbox
-        new_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
-        item.setCheckState(new_state)
 
     def _update_warning(self):
         if self.col not in self.ID_FILTER_COLS:
@@ -978,18 +984,16 @@ class LinkDelegate(QStyledItemDelegate):
         is_over_text = (start_x <= mouse_x <= end_x)
 
         if event.type() == QEvent.Type.MouseMove:
-            if is_over_text:
-                if self.hovered_index != index:
-                    self.hovered_index = index
-                    self.parent().viewport().update()
-                    return True
-            else:
-                if self.hovered_index == index:
-                    self.hovered_index = None
-                    self.parent().viewport().update()
-                    return True
-                    
+            new = index if is_over_text else None
+            if self.hovered_index != new:
+                self.hovered_index = new
+                self.parent().viewport().update()
+            if option.widget:
+                option.widget.setCursor(Qt.CursorShape.PointingHandCursor if is_over_text else Qt.CursorShape.ArrowCursor)
+            return True
+
         elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() != Qt.MouseButton.LeftButton: return False
             if is_over_text and self.hovered_index == index:
                 self.clicked.emit(index)
                 return True
@@ -1138,6 +1142,7 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
                 self.parent().viewport().update()
             return True
         elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() != Qt.MouseButton.LeftButton: return False
             if hit_artist:
                 self.artist_clicked.emit(hit_artist.strip())
                 return True
@@ -1146,102 +1151,112 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
 # --- DELEGATE 3: MULTI-GENRE (For Genre Column) ---
 
 class MultiGenreDelegate(QStyledItemDelegate):
-    """Delegate for displaying multiple genres with separators, now using strict 3-line wrapping and vertical centering"""
-    
+    """Genre column delegate: per-token hover highlight + click-to-filter."""
+    genre_filter_requested = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.master_color = QColor("#cccccc")
-        # Use same separators as artist delegate
         self.split_regex = re.compile(r'( /// | • | / |, )')
-    
+        self.current_hover = (None, None)  # (QModelIndex, genre_str)
+
     def set_master_color(self, color):
-        """Update the master color for this delegate"""
         self.master_color = QColor(color)
-    
+
+    def clear_hover(self):
+        if self.current_hover != (None, None):
+            self.current_hover = (None, None)
+            self.parent().viewport().update()
+
+    def _parse_tokens(self, text):
+        if not text: return []
+        parts = self.split_regex.split(text)
+        return [(p, i % 2 == 0) for i, p in enumerate(parts) if p]
+
     def paint(self, painter, option, index):
         if not index.isValid():
             return
-        
+
         opts = QStyleOptionViewItem(option)
         self.initStyleOption(opts, index)
         opts.state &= ~QStyle.StateFlag.State_HasFocus
-        
-        # Draw background
+
         style = opts.widget.style() if opts.widget else QApplication.style()
         style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opts, painter, opts.widget)
-        
+
         text = index.data(Qt.ItemDataRole.DisplayRole)
         if not text:
             return
-            
+
         is_selected = (opts.state & QStyle.StateFlag.State_Selected)
         is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-        
-        if is_selected or is_row_hover:
-            base_color = self.master_color
-        else:
-            base_color = QColor("#cccccc")
-            
+        base_color = self.master_color if (is_selected or is_row_hover) else QColor("#cccccc")
+
+        hovered_idx, hovered_genre = self.current_hover
         painter.save()
-        
-        
-        draw_rect = opts.rect.adjusted(5, 0, -5, 0)
-        
-    
-        from PyQt6.QtGui import QTextLayout
-        text_layout = QTextLayout(text, painter.font())
-        text_layout.beginLayout()
-        
-        lines_data = []
-        while True:
-            line = text_layout.createLine()
-            if not line.isValid(): break
-            line.setLineWidth(draw_rect.width())
-            lines_data.append((line.textStart(), line.textLength()))
-        text_layout.endLayout()
-        
+
+        rect = opts.rect
         fm = painter.fontMetrics()
-        max_lines = getattr(self, 'max_lines', 3)
-        display_lines = []
-        
-        for i in range(min(len(lines_data), max_lines)):
-            start, length = lines_data[i]
-            line_str = text[start:start+length].strip()
-            
-            # If this is the final allowed line, but the text keeps going, elide it perfectly!
-            if i == max_lines - 1 and len(lines_data) > max_lines:
-                remainder = text[start:].strip()
-                line_str = fm.elidedText(remainder, Qt.TextElideMode.ElideRight, draw_rect.width())
-                
-            display_lines.append(line_str)
-            
-        line_spacing = fm.lineSpacing()
-        total_height = len(display_lines) * line_spacing
-        
-        
-        start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2 + fm.ascent()
-        
-        for i, line_str in enumerate(display_lines):
-            # Split the line to color the separators gray
-            parts = self.split_regex.split(line_str)
-            current_x = draw_rect.left()
-            
-            for part in parts:
-                if not part: continue
-                
-                
-                if self.split_regex.fullmatch(part):
-                    painter.setPen(QColor("#777"))
-                else:
-                    painter.setPen(base_color)
-                    
-                painter.drawText(int(current_x), int(start_y + i * line_spacing), part)
-                current_x += fm.horizontalAdvance(part)
-                
+        x = rect.left() + 5
+
+        for part, is_genre in self._parse_tokens(text):
+            width = fm.horizontalAdvance(part)
+            if x + width > rect.right() - 5:
+                part = fm.elidedText(part, Qt.TextElideMode.ElideRight, rect.right() - 5 - x)
+                width = fm.horizontalAdvance(part)
+
+            is_hovering = is_genre and index == hovered_idx and hovered_genre == part
+            painter.setPen(QColor("#777") if not is_genre else base_color)
+            f = painter.font()
+            f.setUnderline(is_hovering)
+            painter.setFont(f)
+            painter.drawText(QRect(int(x), rect.top(), int(width), rect.height()),
+                             Qt.AlignmentFlag.AlignVCenter, part)
+            x += width
+            if x >= rect.right() - 5:
+                break
+
         painter.restore()
-    
+
     def editorEvent(self, event, model, option, index):
-        """Handle events - genres are non-clickable so just return False"""
+        if event.type() == QEvent.Type.MouseMove and (event.buttons() & Qt.MouseButton.LeftButton):
+            return False
+        if event.type() not in [QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease]:
+            return False
+
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not text: return False
+
+        rect = option.rect
+        fm = option.fontMetrics
+        x = rect.left() + 5
+        hit_genre = None
+
+        for part, is_genre in self._parse_tokens(text):
+            width = fm.horizontalAdvance(part)
+            token_rect = QRect(int(x), rect.top(), int(width), rect.height())
+            if token_rect.contains(event.position().toPoint()):
+                if is_genre:
+                    hit_genre = part
+                break
+            x += width
+            if x > rect.right() - 5:
+                break
+
+        if event.type() == QEvent.Type.MouseMove:
+            new_hover = (index, hit_genre) if hit_genre else (None, None)
+            if self.current_hover != new_hover:
+                self.current_hover = new_hover
+                self.parent().viewport().update()
+            if option.widget:
+                option.widget.setCursor(Qt.CursorShape.PointingHandCursor if hit_genre else Qt.CursorShape.ArrowCursor)
+            return True
+
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() != Qt.MouseButton.LeftButton: return False
+            if hit_genre:
+                self.genre_filter_requested.emit(hit_genre.strip())
+                return True
         return False
 
 # --- DELEGATE 4: COMBINED TRACK (Cover + Title + Artist) ---
@@ -1583,6 +1598,7 @@ class CombinedTrackDelegate(QStyledItemDelegate):
             return True
             
         elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() != Qt.MouseButton.LeftButton: return False
             if hovered_token:
                 self.artist_clicked.emit(hovered_token)
                 return True
@@ -1732,14 +1748,18 @@ class TracksBrowser(QWidget):
         filter_btns_layout.addWidget(self.play_filtered_btn)
         filter_btns_layout.addWidget(self.clear_filters_btn)
 
-        # Insert refresh_btn into search_container layout right after burger_btn
-        sc_layout = self.search_container.layout()
-        sc_layout.addWidget(self.refresh_btn)
+        right_group = QWidget()
+        right_group.setStyleSheet("background: transparent; border: none;")
+        right_group_layout = QHBoxLayout(right_group)
+        right_group_layout.setContentsMargins(0, 0, 0, 0)
+        right_group_layout.setSpacing(0)
+        right_group_layout.addWidget(self.search_container)
+        right_group_layout.addWidget(self.refresh_btn)
 
         header_layout.addWidget(self.status_label)
         header_layout.addWidget(filter_btns)
         header_layout.addStretch()
-        header_layout.addWidget(self.search_container, 0, Qt.AlignmentFlag.AlignRight)
+        header_layout.addWidget(right_group, 0, Qt.AlignmentFlag.AlignRight)
 
         self.main_layout.addWidget(header_container)
 
@@ -1829,7 +1849,12 @@ class TracksBrowser(QWidget):
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
         
         self.genre_delegate = MultiGenreDelegate(self.tree)
+        self.genre_delegate.genre_filter_requested.connect(lambda g: self._apply_col_filter(6, {g}))
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
+
+        self.year_delegate = LinkDelegate(self.tree)
+        self.year_delegate.clicked.connect(lambda idx: self._apply_col_filter(5, {idx.data()}))
+        self.tree.setItemDelegateForColumn(5, self.year_delegate)
         
         self.tree.viewport().installEventFilter(self)
         self.tree.installEventFilter(self) # 🟢 Steal keystrokes from the tree!
@@ -1939,11 +1964,10 @@ class TracksBrowser(QWidget):
         except: pass
         try: self.client._api_cache.cache.clear()
         except: pass
-        self._col_filter_values = {}
-        self._col_id_map = {}
+        self._col_filter_values = {}  # invalidate popup cache; keep _col_id_map so active filters still resolve
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setToolTip("Refresh library from server")
-        self.load_from_db(reset=True, invalidate_filter_cache=True)
+        self.load_from_db(reset=True)
     
     # --- BURGER MENU: COLUMN VISIBILITY ---
     
@@ -2142,6 +2166,7 @@ class TracksBrowser(QWidget):
         self.tree.setItemDelegateForColumn(1, self.combined_delegate)
         self.tree.setItemDelegateForColumn(3, self.artist_delegate)
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
+        self.tree.setItemDelegateForColumn(5, self.year_delegate)
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
         
         self.total_items = total_items
@@ -2625,6 +2650,21 @@ class TracksBrowser(QWidget):
         self._update_clear_filters_btn()
         self.load_from_db(reset=True)
 
+    def _filter_by_album(self, album_name, album_id):
+        """Apply album column filter, seeding the ID map from the track data directly."""
+        if 4 not in self._col_id_map:
+            self._col_id_map[4] = {}
+        self._col_id_map[4][album_name] = album_id
+        self._apply_col_filter(4, {album_name})
+
+    def _filter_by_artist(self, artist_name, artist_id=None):
+        """Apply artist column filter, seeding the ID map from the track data if needed."""
+        if 3 not in self._col_id_map:
+            self._col_id_map[3] = {}
+        if artist_id and artist_name not in self._col_id_map[3]:
+            self._col_id_map[3][artist_name] = artist_id
+        self._apply_col_filter(3, {artist_name})
+
     def _update_clear_filters_btn(self):
         if not hasattr(self, 'clear_filters_btn'):
             return
@@ -2990,6 +3030,8 @@ class TracksBrowser(QWidget):
             if index.isValid() and index.column() != 4: self.album_delegate.clear_hover()
             if index.isValid() and index.column() != 3: self.artist_delegate.clear_hover()
             if index.isValid() and index.column() != 1: self.combined_delegate.clear_hover()
+            if index.isValid() and index.column() != 5: self.year_delegate.clear_hover()
+            if index.isValid() and index.column() != 6: self.genre_delegate.clear_hover()
         
         return super().eventFilter(obj, event)
     
@@ -3047,12 +3089,22 @@ class TracksBrowser(QWidget):
             if index.isValid():
                 cursor_pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
                 if self.artist_delegate.is_over_text(index, cursor_pos): return  
-        elif column == 4:  
+        elif column == 4:
             index = self.tree.currentIndex()
             if index.isValid():
                 cursor_pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
-                if self.album_delegate.is_over_text(index, cursor_pos): return 
-        
+                if self.album_delegate.is_over_text(index, cursor_pos): return
+        elif column == 5:
+            index = self.tree.currentIndex()
+            if index.isValid():
+                cursor_pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
+                if self.year_delegate.is_over_text(index, cursor_pos): return
+        elif column == 6:
+            index = self.tree.currentIndex()
+            if index.isValid():
+                cursor_pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
+                if self.genre_delegate.current_hover[1] is not None: return
+
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data and data['type'] == 'track':
             self.play_track.emit(data['data'])
@@ -3163,8 +3215,29 @@ class TracksBrowser(QWidget):
             menu.addSeparator()
         # 🟢 END NEW
 
+        if not is_multi and not getattr(self, 'album_mode_id', None):
+            album_name = first_track.get('album', '')
+            album_id   = first_track.get('albumId') or first_track.get('parent')
+            primary_artist_id = first_track.get('artist_id') or first_track.get('artistId')
+            artists = [p.strip() for p in re.split(
+                r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
+                first_track.get('artist', '')) if p.strip()]
+
+            has_filter_items = bool(album_name and album_id) or bool(artists)
+            if has_filter_items:
+                menu.addSeparator()
+            if album_name and album_id:
+                menu.addAction(f"Filter by Album: {album_name}").triggered.connect(
+                    lambda: self._filter_by_album(album_name, album_id)
+                )
+            for i, artist in enumerate(artists):
+                aid = primary_artist_id if i == 0 else None
+                menu.addAction(f"Filter by Artist: {artist}").triggered.connect(
+                    lambda checked=False, a=artist, aid=aid: self._filter_by_artist(a, aid)
+                )
+
         goto_menu = menu.addMenu("Go to")
-        if is_multi: goto_menu.setEnabled(False) 
+        if is_multi: goto_menu.setEnabled(False)
         else:
             album_data = {'id': first_track.get('albumId') or first_track.get('parent'), 'title': first_track.get('album', 'Unknown'), 'artist': first_track.get('artist'), 'coverArt': first_track.get('coverArt')}
             if album_data['id']: goto_menu.addAction(f"Album: {album_data['title']}").triggered.connect(lambda: self.switch_to_album_tab.emit(album_data))
@@ -3334,6 +3407,7 @@ class TracksBrowser(QWidget):
             if hasattr(self, 'combined_delegate'): self.combined_delegate.set_master_color(color)
             if hasattr(self, 'artist_delegate'): self.artist_delegate.set_master_color(color)
             if hasattr(self, 'album_delegate'): self.album_delegate.set_master_color(color)
+            if hasattr(self, 'year_delegate'): self.year_delegate.set_master_color(color)
             if hasattr(self, 'genre_delegate'): self.genre_delegate.set_master_color(color)
             
             # 2. Safely Update Components & Force Hide if needed

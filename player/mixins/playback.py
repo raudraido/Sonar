@@ -124,30 +124,54 @@ class PlaybackMixin:
         if hasattr(self, '_now_playing_panel'):
             self._now_playing_panel.update_status()
 
+    _BATCH_CHUNK = 100   # items inserted per frame
+
     def add_batch_to_ui(self, batch):
-        self.tree.setUpdatesEnabled(False)
+        offset = self.tree.topLevelItemCount()
         cover_ids = []
 
-        for track in batch:
+        # 1. Normalise all tracks and populate playlist_data synchronously
+        #    so playback can start before the tree is fully painted.
+        all_items = []
+        for i, track in enumerate(batch):
             self._normalise_duration(track)
             self.playlist_data.append(track)
-
             item = self._build_tree_item(track)
-            item.setText(0, str(self.tree.topLevelItemCount() + 1))
+            item.setText(0, str(offset + i + 1))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
-            self.tree.addTopLevelItem(item)
-
+            all_items.append(item)
             cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
             if cid:
                 cover_ids.append(cid)
 
-        if hasattr(self, 'playlist_cover_worker'):
-            self.playlist_cover_worker.queue_covers(cover_ids)
+        # 2. Insert first chunk synchronously so the user sees tracks immediately.
+        self.tree.setUpdatesEnabled(False)
+        self.tree.addTopLevelItems(all_items[:self._BATCH_CHUNK])
         self.tree.setUpdatesEnabled(True)
         self.update_indicator(scroll_to_current=False)
         self.update_window_title()
         if hasattr(self, '_now_playing_panel'):
             self._now_playing_panel.update_status()
+
+        # 3. Drip-feed remaining chunks without blocking the event loop.
+        remaining = all_items[self._BATCH_CHUNK:]
+        if remaining:
+            self._insert_remaining_chunks(remaining, cover_ids)
+        elif hasattr(self, 'playlist_cover_worker'):
+            self.playlist_cover_worker.queue_covers(cover_ids)
+
+    def _insert_remaining_chunks(self, items, cover_ids, start=0):
+        chunk = items[start:start + self._BATCH_CHUNK]
+        if not chunk:
+            if hasattr(self, 'playlist_cover_worker'):
+                self.playlist_cover_worker.queue_covers(cover_ids)
+            if hasattr(self, '_now_playing_panel'):
+                self._now_playing_panel.update_status()
+            return
+        self.tree.setUpdatesEnabled(False)
+        self.tree.addTopLevelItems(chunk)
+        self.tree.setUpdatesEnabled(True)
+        QTimer.singleShot(0, lambda: self._insert_remaining_chunks(items, cover_ids, start + self._BATCH_CHUNK))
     
     def play_whole_album(self, data):
         if isinstance(data, list):
