@@ -690,7 +690,7 @@ class SmartSortHeader(QHeaderView):
     filter_clicked = pyqtSignal(int, QRect)  # col, icon rect in global coords
     sort_clicked   = pyqtSignal(int)          # col — for sort-only columns
 
-    SORT_COLS = {1, 2, 8, 9, 10}  # TRACK, TITLE, PLAYS, LENGTH, NO. — show sort icon, not filter
+    SORT_COLS = {1, 2, 8, 9, 10, 11}  # TRACK, TITLE, PLAYS, LENGTH, NO., DATE ADDED — show sort icon, not filter
 
     FILTER_ICON_SIZE = 14
 
@@ -1422,11 +1422,11 @@ class CombinedTrackDelegate(QStyledItemDelegate):
 
         # --- 1. FONTS & TEXT SETUP ---
         title_font = QFont(opts.font)
-        title_font.setPointSize(11)
+        title_font.setPointSize(10)
         title_font.setBold(True)
         
         artist_font = QFont(opts.font)
-        artist_font.setPointSize(10)
+        artist_font.setPointSize(9)
 
         fm_title = QFontMetrics(title_font)
         fm_artist = QFontMetrics(artist_font)
@@ -1895,7 +1895,7 @@ class TracksBrowser(QWidget):
      
         
         
-        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO."])
+        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO.", "DATE ADDED"])
         self.tree.headerItem().setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
@@ -1919,13 +1919,13 @@ class TracksBrowser(QWidget):
 
         # Col 0 (#): auto-size to fit content
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        # Cols 1-10: all freely interactive
-        for i in range(1, 11):
+        # Cols 1-11: all freely interactive
+        for i in range(1, 12):
             self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60, 10: 40}
+        self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60, 10: 40, 11: 80}
         # These columns never grow beyond their default on window resize (user can still drag them)
-        self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75, 10: 60}
+        self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75, 10: 60, 11: 110}
 
         self.tree.setColumnWidth(1, 350) # TRACK (Combined)
         self.tree.setColumnWidth(2, 200) # TITLE
@@ -1937,6 +1937,7 @@ class TracksBrowser(QWidget):
         self.tree.setColumnWidth(8, 70)  # PLAYS
         self.tree.setColumnWidth(9, 75)  # LENGTH
         self.tree.setColumnWidth(10, 55) # NO.
+        self.tree.setColumnWidth(11, 95) # DATE ADDED
 
         self._col_resize_guard = False
         self.tree.header().sectionResized.connect(self._on_section_resized)
@@ -2091,7 +2092,7 @@ class TracksBrowser(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #222; color: #ddd; border: 1px solid #444; } QMenu::item { padding: 6px 25px; } QMenu::item:selected { background-color: #333; }")
         
-        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO."]
+        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO.", "DATE ADDED"]
         
         for i, name in enumerate(headers):
             action = QAction(name, menu)
@@ -2278,7 +2279,7 @@ class TracksBrowser(QWidget):
         self.tree.setUpdatesEnabled(False)
         self.tree.clear()
         
-        for i in range(11): self.tree.setItemDelegateForColumn(i, None)
+        for i in range(12): self.tree.setItemDelegateForColumn(i, None)
         self.tree.setItemDelegateForColumn(1, self.combined_delegate)
         self.tree.setItemDelegateForColumn(3, self.artist_delegate)
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
@@ -2378,12 +2379,12 @@ class TracksBrowser(QWidget):
             self.skeleton_delegate = SkeletonDelegate(self.tree)
             
         # 🟢 Skip column 0 so it uses the standard text renderer for the numbers!
-        for i in range(1, 11):
+        for i in range(1, 12):
             self.tree.setItemDelegateForColumn(i, self.skeleton_delegate)
-            
+
         offset = (self.current_page - 1) * self.page_size
         for i in range(15):
-            item = QTreeWidgetItem([""] * 10)
+            item = QTreeWidgetItem([""] * 12)
             if not getattr(self, 'album_mode_id', None):
                 item.setText(0, str(offset + i + 1))
                 item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
@@ -2491,6 +2492,24 @@ class TracksBrowser(QWidget):
         item.setText(10, str(track_num) if track_num else '')
         item.setTextAlignment(10, Qt.AlignmentFlag.AlignCenter)
 
+        created_raw = t.get('created') or ''
+        if created_raw:
+            try:
+                from datetime import datetime
+                import platform
+                dt = datetime.fromisoformat(created_raw.replace('Z', '+00:00'))
+                fmt = '%#d %b %Y' if platform.system() == 'Windows' else '%-d %b %Y'
+                date_str = dt.strftime(fmt)
+            except Exception:
+                try:
+                    date_str = created_raw[:10]  # fallback: YYYY-MM-DD
+                except Exception:
+                    date_str = ''
+        else:
+            date_str = ''
+        item.setText(11, date_str)
+        item.setData(11, Qt.ItemDataRole.UserRole, created_raw)  # store raw ISO for sort
+
         # Store a reference to the original dict — avoid dict(t) copy overhead.
         # Overwrite 'starred' in-place so toggle logic stays consistent.
         t['starred'] = is_fav
@@ -2519,10 +2538,8 @@ class TracksBrowser(QWidget):
         default_color = QColor("#ddd")
         transparent = QColor(0, 0, 0, 0)
         
-        normal_font = QFont("sans-serif", 11)
+        normal_font = QFont("sans-serif", 10)
         normal_font.setBold(False)
-        bold_font_large = QFont("sans-serif", 16); bold_font_large.setBold(True)
-        bold_font_medium = QFont("sans-serif", 13); bold_font_medium.setBold(True)
         
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
@@ -2553,12 +2570,10 @@ class TracksBrowser(QWidget):
                     item.setText(0, orig_num)
                     self._pi_movie.stop()
                 
-                item.setFont(0, bold_font_large)
                 for col in range(self.tree.columnCount()):
                     item.setBackground(col, highlight_bg)
                     if col != 7: # Skip Heart column
                         item.setForeground(col, rgb)
-                        if col > 0: item.setFont(col, bold_font_medium)
             else:
                 if self.tree.itemWidget(item, 0):
                     self.tree.removeItemWidget(item, 0)
@@ -2583,7 +2598,7 @@ class TracksBrowser(QWidget):
     def save_column_state(self):
         hdr = self.tree.header()
         state = {}
-        for i in range(11):
+        for i in range(12):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
                 'width': self.tree.columnWidth(i),
@@ -2603,7 +2618,7 @@ class TracksBrowser(QWidget):
                 # First pass: hidden + width
                 for col_str, val in state.items():
                     col_idx = int(col_str)
-                    if col_idx >= 11: continue
+                    if col_idx >= 12: continue
                     if isinstance(val, dict):
                         self.tree.setColumnHidden(col_idx, val.get('hidden', False))
                         w = val.get('width', 0)
@@ -2617,43 +2632,46 @@ class TracksBrowser(QWidget):
                          if isinstance(val, dict) and 'visual' in val and int(col_str) > 0]
                 order.sort(key=lambda x: x[1])  # sort by saved visual index
                 for logical, target_visual in order:
-                    if logical >= 11: continue
+                    if logical >= 12: continue
                     current_visual = hdr.visualIndex(logical)
                     if current_visual != target_visual:
                         hdr.moveSection(current_visual, target_visual)
                 # Sanity check: corrupt state if <3 columns visible OR any single
                 # column is wider than 1200px (pushed everything off-screen)
-                visible = sum(1 for i in range(1, 11) if not self.tree.isColumnHidden(i))
-                any_insane = any(self.tree.columnWidth(i) > 1200 for i in range(1, 11))
+                visible = sum(1 for i in range(1, 12) if not self.tree.isColumnHidden(i))
+                any_insane = any(self.tree.columnWidth(i) > 1200 for i in range(1, 12))
                 if visible < 3 or any_insane:
                     self._settings.remove('tracks_columns_hidden')
-                    for i in range(1, 11):
+                    for i in range(1, 12):
                         self.tree.setColumnHidden(i, False)
                         self.tree.header().resizeSection(i, self.col_min_widths.get(i, 80))
                     self.tree.setColumnHidden(2, True)
                     self.tree.setColumnHidden(3, True)
+                    self.tree.setColumnHidden(11, True)
                 self._col_resize_guard = False
             else:
                 self._col_resize_guard = True
                 self.tree.setColumnHidden(2, True)
                 self.tree.setColumnHidden(3, True)
+                self.tree.setColumnHidden(11, True)
                 self._col_resize_guard = False
         except:
             self._col_resize_guard = True
             self.tree.setColumnHidden(2, True)
             self.tree.setColumnHidden(3, True)
+            self.tree.setColumnHidden(11, True)
             self._col_resize_guard = False
     
     
     def _last_visible_col(self):
         """Return the logical index of the last visible interactive column (the stretch column)."""
-        for i in range(10, 0, -1):
+        for i in range(11, 0, -1):
             if not self.tree.isColumnHidden(i):
                 return i
         return -1
 
     def _on_section_resized(self, logical_index, old_size, new_size):
-        """Enforce minimum widths while dragging."""
+        """Enforce minimum widths while dragging, then persist the new size."""
         if getattr(self, '_col_resize_guard', False): return
         if getattr(self, 'is_album_mode', False): return
         if logical_index not in self.col_min_widths: return
@@ -2663,16 +2681,17 @@ class TracksBrowser(QWidget):
             self._col_resize_guard = True
             self.tree.header().resizeSection(logical_index, min_w)
             self._col_resize_guard = False
+        self.save_column_state()
 
     def _clamp_columns(self):
         """After drag ends: shrink any column that pushed others below their minimum."""
         if getattr(self, 'is_album_mode', False): return
         viewport_w = self.tree.viewport().width()
         self._col_resize_guard = True
-        for col in range(1, 11):
+        for col in range(1, 12):
             if self.tree.isColumnHidden(col): continue
             used_by_others = self.tree.columnWidth(0)
-            for other in range(1, 11):
+            for other in range(1, 12):
                 if other == col or self.tree.isColumnHidden(other): continue
                 used_by_others += self.col_min_widths.get(other, 60)
             max_w = viewport_w - used_by_others
@@ -2860,8 +2879,8 @@ class TracksBrowser(QWidget):
                                else Qt.SortOrder.AscendingOrder)
         else:
             self.sort_col = col
-            # PLAYS and LENGTH default to descending on first click
-            DESC_FIRST_COLS = {8, 9}
+            # PLAYS, LENGTH and DATE ADDED default to descending on first click
+            DESC_FIRST_COLS = {8, 9, 11}
             self.sort_order = (Qt.SortOrder.DescendingOrder if col in DESC_FIRST_COLS
                                else Qt.SortOrder.AscendingOrder)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
@@ -2877,7 +2896,7 @@ class TracksBrowser(QWidget):
         self.load_from_db(reset=True)
 
     def _visible_cols(self):
-        return [i for i in range(1, 11) if not self.tree.isColumnHidden(i)]
+        return [i for i in range(1, 12) if not self.tree.isColumnHidden(i)]
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2958,6 +2977,7 @@ class TracksBrowser(QWidget):
         elif col == 8: field = "playCount"
         elif col == 9: field = "duration"
         elif col == 10: field = "trackNumber"
+        elif col == 11: field = "createdAt"
         else: field = "title"
         
         return f"{field} {order}"
@@ -3619,7 +3639,7 @@ class TracksBrowser(QWidget):
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
         
         /* 🟢 THE FIX: Alpha injected into QTreeWidget background! */
-        QTreeWidget {{ background: rgba(12, 12, 12, {alpha}); border: none; font-size: 12pt; outline: none; }} 
+        QTreeWidget {{ background: rgba(12, 12, 12, {alpha}); border: none; font-size: 10pt; outline: none; }} 
         QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border-top: 1px solid rgba(255,255,255,0.05); border-bottom: none; color: #ddd; }}
         QTreeWidget::item:selected {{ background: rgba(255,255,255,0.1); color: {color_hex}; }} 
         QTreeWidget::item:hover {{ background: rgba(255,255,255,0.05); color: {color_hex}; }}
