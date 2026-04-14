@@ -48,8 +48,11 @@ class PlaybackMixin:
             is_fav = bool(raw_state)
         fav_str = "♥" if is_fav else "♡"
 
+        raw_track_no = track_data.get('trackNumber') or track_data.get('track') or ''
+        track_no_str = str(raw_track_no) if raw_track_no else ''
+
         item = QTreeWidgetItem()
-        # col 0 = track number (set by caller)
+        # col 0 = queue position (set by caller)
         item.setText(1, title_str)
         item.setText(2, title_str)   # hidden sort column
         item.setText(3, artist_str)
@@ -59,10 +62,12 @@ class PlaybackMixin:
         item.setText(7, fav_str)
         item.setText(8, plays_str)
         item.setText(9, dur_str)
+        item.setText(10, track_no_str)
 
-        item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
-        item.setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
-        item.setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
+        item.setTextAlignment(0,  Qt.AlignmentFlag.AlignCenter)
+        item.setTextAlignment(7,  Qt.AlignmentFlag.AlignCenter)
+        item.setTextAlignment(9,  Qt.AlignmentFlag.AlignCenter)
+        item.setTextAlignment(10, Qt.AlignmentFlag.AlignCenter)
 
         fav_color = QColor("#E91E63") if is_fav else QColor("#555555")
         item.setForeground(7, fav_color)

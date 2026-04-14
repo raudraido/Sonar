@@ -14,7 +14,8 @@ import json
 
 from PyQt6.QtWidgets import (
     QTreeWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QMenu, QAbstractItemView, QHeaderView, QApplication, QFrame
+    QLabel, QMenu, QAbstractItemView, QHeaderView, QApplication, QFrame,
+    QStyleOptionHeader, QStyle,
 )
 
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QRect, QPoint, QTimer, QSettings
@@ -43,12 +44,109 @@ COL_GENRE  = 6
 COL_FAV    = 7
 COL_PLAYS  = 8
 COL_LENGTH = 9
-NUM_COLS   = 10
+COL_NO     = 10
+NUM_COLS   = 11
 
-HEADERS = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH"]
+HEADERS = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO."]
 
-# Default hidden (only TRACK, ALBUM, ♥, LENGTH are shown by default)
-DEFAULT_HIDDEN = {COL_TITLE, COL_ARTIST, COL_YEAR, COL_GENRE, COL_PLAYS}
+# Default hidden
+DEFAULT_HIDDEN = {COL_TITLE, COL_ARTIST, COL_YEAR, COL_GENRE, COL_PLAYS, COL_NO}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  NowPlayingHeader  –  custom header that draws sort arrow next to text
+# ─────────────────────────────────────────────────────────────────────────────
+
+class NowPlayingHeader(QHeaderView):
+    ICON_SIZE    = 14
+    ICON_SPACING = 4
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._hovered_col = -1
+        self.viewport().setMouseTracking(True)
+
+        try:
+            from albums_browser import resource_path
+            self._up_icon   = QIcon(resource_path("img/filter_up.png"))
+            self._down_icon = QIcon(resource_path("img/filter_down.png"))
+        except Exception:
+            self._up_icon = self._down_icon = None
+
+    def mouseMoveEvent(self, event):
+        col = self.logicalIndexAt(event.pos())
+        hovered = col if col != COL_NUM else -1
+        if hovered != self._hovered_col:
+            self._hovered_col = hovered
+            self.viewport().update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._hovered_col != -1:
+            self._hovered_col = -1
+            self.viewport().update()
+        super().leaveEvent(event)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+
+        # Draw standard background / frame
+        opt = QStyleOptionHeader()
+        self.initStyleOption(opt)
+        opt.rect    = rect
+        opt.section = logicalIndex
+        opt.sortIndicator = QStyleOptionHeader.SortIndicator.None_   # suppress native arrow
+        opt.text = ""
+        self.style().drawControl(QStyle.ControlElement.CE_Header, opt, painter, self)
+
+        label = self.model().headerData(logicalIndex, Qt.Orientation.Horizontal,
+                                        Qt.ItemDataRole.DisplayRole) or ""
+        painter.setFont(self.font())
+        fm   = painter.fontMetrics()
+        sz   = self.ICON_SIZE
+        gap  = self.ICON_SPACING
+
+        show_icon = logicalIndex != COL_NUM
+        text_w    = fm.horizontalAdvance(label)
+        content_w = text_w + (gap + sz if show_icon else 0)
+
+        # Centre-aligned columns
+        if logicalIndex in (COL_NUM, COL_FAV, COL_LENGTH, COL_NO):
+            start_x = rect.left() + (rect.width() - content_w) // 2
+        else:
+            start_x = rect.left() + 5
+
+        is_sorted  = show_icon and self.sortIndicatorSection() == logicalIndex
+        is_hovered = show_icon and logicalIndex == self._hovered_col
+
+        # Hover highlight
+        if is_hovered:
+            painter.fillRect(rect, QColor(255, 255, 255, 18))
+
+        # Text
+        painter.setPen(QColor("#888"))
+        painter.drawText(QRect(int(start_x), rect.top(), text_w + 4, rect.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+        # Icon: show when hovered or this column is sorted
+        if show_icon and (is_hovered or is_sorted) and self._up_icon:
+            desc = (self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder)
+            icon = self._down_icon if (is_sorted and desc) else self._up_icon
+            tint = QColor("#ffffff") if (is_hovered or is_sorted) else QColor("#555555")
+            px   = icon.pixmap(sz, sz)
+            tinted = QPixmap(px.size())
+            tinted.fill(Qt.GlobalColor.transparent)
+            p2 = QPainter(tinted)
+            p2.drawPixmap(0, 0, px)
+            p2.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p2.fillRect(tinted.rect(), tint)
+            p2.end()
+            fx = int(start_x + text_w + gap)
+            fy = rect.center().y() - sz // 2
+            painter.drawPixmap(fx, fy, tinted)
+
+        painter.restore()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +161,7 @@ class PlaylistTree(QTreeWidget):
 
     def __init__(self):
         super().__init__()
+        self.setHeader(NowPlayingHeader(self))
         self.setMouseTracking(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setColumnCount(NUM_COLS)
@@ -80,6 +179,7 @@ class PlaylistTree(QTreeWidget):
         self.headerItem().setTextAlignment(COL_NUM,    Qt.AlignmentFlag.AlignCenter)
         self.headerItem().setTextAlignment(COL_FAV,    Qt.AlignmentFlag.AlignCenter)
         self.headerItem().setTextAlignment(COL_LENGTH, Qt.AlignmentFlag.AlignCenter)
+        self.headerItem().setTextAlignment(COL_NO,     Qt.AlignmentFlag.AlignCenter)
 
         h = self.header()
         h.setStretchLastSection(False)
@@ -93,6 +193,7 @@ class PlaylistTree(QTreeWidget):
         h.setSectionResizeMode(COL_FAV,    QHeaderView.ResizeMode.Fixed)
         h.setSectionResizeMode(COL_PLAYS,  QHeaderView.ResizeMode.Interactive)
         h.setSectionResizeMode(COL_LENGTH, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(COL_NO,     QHeaderView.ResizeMode.Fixed)
 
         self.setColumnWidth(COL_NUM,    50)
         self.setColumnWidth(COL_TITLE,  200)
@@ -102,6 +203,7 @@ class PlaylistTree(QTreeWidget):
         self.setColumnWidth(COL_FAV,    50)
         self.setColumnWidth(COL_PLAYS,  70)
         self.setColumnWidth(COL_LENGTH, 75)
+        self.setColumnWidth(COL_NO,     55)
 
         # Drag-drop (internal move for playlist reordering)
         self.setDragEnabled(True)
@@ -282,6 +384,13 @@ class NowPlayingPanel(QWidget):
         self.tree = PlaylistTree()
         root.addWidget(self.tree)
 
+        # ── Sort state ────────────────────────────────────────────────────────
+        self._sort_col   = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
+        hdr = self.tree.header()
+        hdr.setSectionsClickable(True)
+        hdr.sectionClicked.connect(self._on_header_clicked)
+
         # 5) Attach delegates
         self.combined_delegate = CombinedTrackDelegate(self.tree)
         self.combined_delegate.is_album_mode = True
@@ -415,6 +524,59 @@ class NowPlayingPanel(QWidget):
         except Exception: pass
 
     # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _on_header_clicked(self, col: int):
+        if col == COL_NUM:
+            return
+        if self._sort_col == col:
+            self._sort_order = (
+                Qt.SortOrder.DescendingOrder
+                if self._sort_order == Qt.SortOrder.AscendingOrder
+                else Qt.SortOrder.AscendingOrder
+            )
+        else:
+            self._sort_col   = col
+            self._sort_order = Qt.SortOrder.AscendingOrder
+        self.tree.header().setSortIndicator(self._sort_col, self._sort_order)
+        self._sort_queue(self._sort_col, self._sort_order)
+
+    def _sort_queue(self, col: int, order: Qt.SortOrder):
+        n = self.tree.topLevelItemCount()
+        if n < 2:
+            return
+
+        # Take items from the end (O(1) each) to avoid O(n²) shifting
+        items = [self.tree.takeTopLevelItem(n - 1 - i) for i in range(n)]
+        items.reverse()
+
+        desc = (order == Qt.SortOrder.DescendingOrder)
+
+        def _key(item):
+            text = item.text(col)
+            if col == COL_LENGTH:           # "M:SS" → total seconds
+                try:
+                    m, s = text.split(':')
+                    return int(m) * 60 + int(s)
+                except Exception:
+                    return 0
+            if col in (COL_PLAYS, COL_YEAR, COL_NO):  # pure numeric
+                try:
+                    return int(text) if text else 0
+                except Exception:
+                    return 0
+            if col == COL_FAV:              # ♥ before ♡
+                return 0 if text == '♥' else 1
+            return text.lower()
+
+        items.sort(key=_key, reverse=desc)
+
+        self.tree.setUpdatesEnabled(False)
+        self.tree.addTopLevelItems(items)
+        for i, item in enumerate(items):
+            item.setText(COL_NUM, str(i + 1))
+        self.tree.setUpdatesEnabled(True)
+
+        self.tree.orderChanged.emit()   # syncs playlist_data + current_index in PlaybackMixin
 
     def _on_search_changed(self, text: str):
         self._current_query = text.strip().lower()

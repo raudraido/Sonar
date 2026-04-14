@@ -352,6 +352,7 @@ class _CheckableListWidget(QListWidget):
         if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
             new = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
             item.setCheckState(new)
+            self.itemClicked.emit(item)  # needed so _on_list_item_clicked fires
             event.accept()
             return
         super().mousePressEvent(event)
@@ -369,6 +370,7 @@ class ColumnFilterPopup(QFrame):
     def __init__(self, col, values, active_values, up_icon, down_icon, accent_color="#cccccc", parent=None):
         super().__init__(parent, Qt.WindowType.Popup)
         self.col = col
+        self.active_values = set(active_values) if active_values else set()
         self.all_values = sorted(values, key=lambda v: str(v).lower())
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(f"""
@@ -515,6 +517,16 @@ class ColumnFilterPopup(QFrame):
         sa.setFont(font)
         self.list_widget.addItem(sa)
 
+        # "Add current selection to filter" — styled like Select All, hidden until needed
+        add_item = QListWidgetItem(self.ADD_TO_FILTER_TEXT)
+        add_item.setFlags(add_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        add_item.setCheckState(Qt.CheckState.Unchecked)
+        f2 = add_item.font()
+        f2.setBold(True)
+        add_item.setFont(f2)
+        self.list_widget.addItem(add_item)
+        add_item.setHidden(True)  # must be AFTER addItem, otherwise Qt ignores it
+
         for v in self.all_values:
             item = QListWidgetItem(str(v))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -527,25 +539,34 @@ class ColumnFilterPopup(QFrame):
 
         self.list_widget.blockSignals(False)
         self.list_widget.itemChanged.connect(self._on_item_changed)
+        self.list_widget.itemClicked.connect(self._on_list_item_clicked)
 
     def _on_item_changed(self, changed_item):
+        # Ignore the "Add to filter" item — handled separately via click
+        if changed_item.text() == self.ADD_TO_FILTER_TEXT:
+            return
         self.list_widget.blockSignals(True)
         if changed_item.text() == self.SELECT_ALL_TEXT:
-            # Propagate to all value rows
             state = changed_item.checkState()
             for i in range(1, self.list_widget.count()):
-                self.list_widget.item(i).setCheckState(state)
+                it = self.list_widget.item(i)
+                if it.text() != self.ADD_TO_FILTER_TEXT and (it.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                    it.setCheckState(state)
         else:
-            # Sync "Select All" state
             all_checked = all(
                 self.list_widget.item(i).checkState() == Qt.CheckState.Checked
                 for i in range(1, self.list_widget.count())
+                if self.list_widget.item(i).text() != self.ADD_TO_FILTER_TEXT
+                and (self.list_widget.item(i).flags() & Qt.ItemFlag.ItemIsUserCheckable)
             )
             self.list_widget.item(0).setCheckState(
                 Qt.CheckState.Checked if all_checked else Qt.CheckState.Unchecked
             )
         self.list_widget.blockSignals(False)
         self._update_warning()
+
+    def _on_list_item_clicked(self, item):
+        pass  # handled in _apply
 
     def _update_warning(self):
         if self.col not in self.ID_FILTER_COLS:
@@ -566,41 +587,93 @@ class ColumnFilterPopup(QFrame):
             self.warning_label.show()
         self.adjustSize()
 
+    ADD_TO_FILTER_TEXT = "(Add current selection to filter)"
+
     def _filter_list(self, text):
         q = text.lower()
-        # Always show "Select All"
-        self.list_widget.item(0).setHidden(False)
+        self.list_widget.item(0).setHidden(False)  # always show "Select All"
+
+        # First pass: show/hide value items, detect if any visible result is outside active filter
+        has_new = False
         for i in range(1, self.list_widget.count()):
             item = self.list_widget.item(i)
+            if item.text() == self.ADD_TO_FILTER_TEXT:
+                continue
             if q:
-                # Search overrides everything — show all matches
-                item.setHidden(q not in item.text().lower())
+                hidden = q not in item.text().lower()
+                item.setHidden(hidden)
+                if not hidden:
+                    # Pre-check visible results so user sees them selected
+                    self.list_widget.blockSignals(True)
+                    item.setCheckState(Qt.CheckState.Checked)
+                    self.list_widget.blockSignals(False)
+                    if item.text() not in self.active_values:
+                        has_new = True
             else:
-                # No search: restore initial visibility (hide unchecked if filter active)
                 unchecked = item.checkState() == Qt.CheckState.Unchecked
                 item.setHidden(self._has_active_filter and unchecked)
 
+        # "Add to filter" visible ONLY when: filter is active AND user typed a query AND
+        # at least one visible result is not already in the active filter
+        show_add = self._has_active_filter and bool(q) and has_new
+        for i in range(1, self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.text() == self.ADD_TO_FILTER_TEXT:
+                item.setHidden(not show_add)
+                if show_add:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                break
+                break
 
     def _apply(self):
         q = self.search_box.text().strip()
-        if q:
-            # Use all visible (search-matching) values as the filter
+
+        # Check if "Add to filter" is checked — merge mode
+        add_checked = False
+        for i in range(1, self.list_widget.count()):
+            it = self.list_widget.item(i)
+            if it.text() == self.ADD_TO_FILTER_TEXT:
+                add_checked = it.checkState() == Qt.CheckState.Checked
+                break
+
+        if add_checked:
+            new_values = set(
+                self.list_widget.item(i).text()
+                for i in range(1, self.list_widget.count())
+                if not self.list_widget.item(i).isHidden()
+                and self.list_widget.item(i).text() != self.ADD_TO_FILTER_TEXT
+            )
+            checked = self.active_values | new_values
+        elif q:
             checked = set(
                 self.list_widget.item(i).text()
                 for i in range(1, self.list_widget.count())
                 if not self.list_widget.item(i).isHidden()
+                and self.list_widget.item(i).text() != self.ADD_TO_FILTER_TEXT
             )
         else:
-            # Use checked items (skip "Select All" at index 0)
             checked = set(
                 self.list_widget.item(i).text()
                 for i in range(1, self.list_widget.count())
                 if self.list_widget.item(i).checkState() == Qt.CheckState.Checked
+                and self.list_widget.item(i).text() != self.ADD_TO_FILTER_TEXT
             )
-        # If everything is checked = no filter
-        if len(checked) == len(self.all_values):
-            checked = set()
+            if len(checked) == len(self.all_values):
+                checked = set()
+
         self.filters_applied.emit(self.col, checked)
+        self.close()
+
+    def _add_to_filter(self):
+        """Merge all visible search results into the existing active filter."""
+        new_values = set(
+            self.list_widget.item(i).text()
+            for i in range(1, self.list_widget.count())
+            if not self.list_widget.item(i).isHidden()
+            and self.list_widget.item(i).text() != self.ADD_TO_FILTER_TEXT
+        )
+        merged = self.active_values | new_values
+        self.filters_applied.emit(self.col, merged)
         self.close()
 
     def _sort(self, order):
@@ -1195,28 +1268,56 @@ class MultiGenreDelegate(QStyledItemDelegate):
         hovered_idx, hovered_genre = self.current_hover
         painter.save()
 
-        rect = opts.rect
+        draw_rect = opts.rect.adjusted(5, 0, -5, 0)
         fm = painter.fontMetrics()
-        x = rect.left() + 5
+        max_lines = getattr(self, 'max_lines', 3)
 
-        for part, is_genre in self._parse_tokens(text):
-            width = fm.horizontalAdvance(part)
-            if x + width > rect.right() - 5:
-                part = fm.elidedText(part, Qt.TextElideMode.ElideRight, rect.right() - 5 - x)
+        display_lines = self._layout_lines(text, painter.font(), draw_rect.width(), max_lines, fm)
+
+        line_spacing = fm.lineSpacing()
+        total_height = len(display_lines) * line_spacing
+        start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2 + fm.ascent()
+
+        for line_idx, line_str in enumerate(display_lines):
+            y = int(start_y + line_idx * line_spacing)
+            x = draw_rect.left()
+            for part in self.split_regex.split(line_str):
+                if not part:
+                    continue
+                is_sep = bool(self.split_regex.fullmatch(part))
                 width = fm.horizontalAdvance(part)
-
-            is_hovering = is_genre and index == hovered_idx and hovered_genre == part
-            painter.setPen(QColor("#777") if not is_genre else base_color)
-            f = painter.font()
-            f.setUnderline(is_hovering)
-            painter.setFont(f)
-            painter.drawText(QRect(int(x), rect.top(), int(width), rect.height()),
-                             Qt.AlignmentFlag.AlignVCenter, part)
-            x += width
-            if x >= rect.right() - 5:
-                break
+                is_hovering = (not is_sep) and index == hovered_idx and hovered_genre == part.strip()
+                painter.setPen(QColor("#777") if is_sep else base_color)
+                f = painter.font()
+                f.setUnderline(is_hovering)
+                painter.setFont(f)
+                painter.drawText(int(x), y, part)
+                x += width
 
         painter.restore()
+
+    def _layout_lines(self, text, font, width, max_lines, fm):
+        """Return up to max_lines display strings, wrapping at width, eliding the last if needed."""
+        from PyQt6.QtGui import QTextLayout
+        tl = QTextLayout(text, font)
+        tl.beginLayout()
+        lines_data = []
+        while True:
+            line = tl.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(width)
+            lines_data.append((line.textStart(), line.textLength()))
+        tl.endLayout()
+
+        display = []
+        for i in range(min(len(lines_data), max_lines)):
+            start, length = lines_data[i]
+            line_str = text[start:start + length].strip()
+            if i == max_lines - 1 and len(lines_data) > max_lines:
+                line_str = fm.elidedText(text[start:].strip(), Qt.TextElideMode.ElideRight, width)
+            display.append(line_str)
+        return display
 
     def editorEvent(self, event, model, option, index):
         if event.type() == QEvent.Type.MouseMove and (event.buttons() & Qt.MouseButton.LeftButton):
@@ -1225,23 +1326,10 @@ class MultiGenreDelegate(QStyledItemDelegate):
             return False
 
         text = index.data(Qt.ItemDataRole.DisplayRole)
-        if not text: return False
+        if not text:
+            return False
 
-        rect = option.rect
-        fm = option.fontMetrics
-        x = rect.left() + 5
-        hit_genre = None
-
-        for part, is_genre in self._parse_tokens(text):
-            width = fm.horizontalAdvance(part)
-            token_rect = QRect(int(x), rect.top(), int(width), rect.height())
-            if token_rect.contains(event.position().toPoint()):
-                if is_genre:
-                    hit_genre = part
-                break
-            x += width
-            if x > rect.right() - 5:
-                break
+        hit_genre = self._hit_test(text, event.position().toPoint(), option)
 
         if event.type() == QEvent.Type.MouseMove:
             new_hover = (index, hit_genre) if hit_genre else (None, None)
@@ -1253,11 +1341,39 @@ class MultiGenreDelegate(QStyledItemDelegate):
             return True
 
         elif event.type() == QEvent.Type.MouseButtonRelease:
-            if event.button() != Qt.MouseButton.LeftButton: return False
+            if event.button() != Qt.MouseButton.LeftButton:
+                return False
             if hit_genre:
                 self.genre_filter_requested.emit(hit_genre.strip())
                 return True
         return False
+
+    def _hit_test(self, text, pos, option):
+        """Return the genre token string under pos, or None."""
+        draw_rect = option.rect.adjusted(5, 0, -5, 0)
+        fm = option.fontMetrics
+        max_lines = getattr(self, 'max_lines', 3)
+        display_lines = self._layout_lines(text, option.font, draw_rect.width(), max_lines, fm)
+
+        line_spacing = fm.lineSpacing()
+        total_height = len(display_lines) * line_spacing
+        start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2
+
+        for line_idx, line_str in enumerate(display_lines):
+            y_top = int(start_y + line_idx * line_spacing)
+            if not (y_top <= pos.y() < y_top + line_spacing):
+                continue
+            x = draw_rect.left()
+            for part in self.split_regex.split(line_str):
+                if not part:
+                    continue
+                width = fm.horizontalAdvance(part)
+                is_sep = bool(self.split_regex.fullmatch(part))
+                if QRect(int(x), y_top, int(width), line_spacing).contains(pos):
+                    return None if is_sep else part.strip()
+                x += width
+            return None
+        return None
 
 # --- DELEGATE 4: COMBINED TRACK (Cover + Title + Artist) ---
 
