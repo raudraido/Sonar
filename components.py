@@ -537,7 +537,7 @@ class TrackInfoDialog(QDialog):
         if main_win:
             max_h = main_win.height() - margin * 2
             content_h = self._rows_content.sizeHint().height()
-            dialog_h = min(content_h + 62, max_h)
+            dialog_h = min(content_h + 80, max_h)
             self.setFixedHeight(dialog_h)
 
         if main_win:
@@ -555,10 +555,13 @@ class TrackInfoDialog(QDialog):
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
-            QTimer.singleShot(150, self._maybe_close)
+            if not getattr(self, '_suppress_close', False):
+                QTimer.singleShot(150, self._maybe_close)
         super().changeEvent(event)
 
     def _maybe_close(self):
+        if getattr(self, '_suppress_close', False):
+            return
         from PyQt6.QtWidgets import QApplication
         active = QApplication.activeWindow()
         if active is not None and active is not self:
@@ -614,6 +617,7 @@ class TrackInfoDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(f"""
             QScrollArea {{ background: transparent; }}
             QScrollBar:vertical {{ background: #1a1a1a; width: 6px; border-radius: 3px; }}
@@ -767,7 +771,11 @@ class TrackInfoDialog(QDialog):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             lbl.setOpenExternalLinks(False)
             lbl.linkHovered.connect(lambda href: lbl.setText(make_html(href)))
-            lbl.linkActivated.connect(lambda href: callback(href))
+            def _on_link_activated(href, _cb=callback):
+                self._suppress_close = True
+                _cb(href)
+                QTimer.singleShot(500, lambda: setattr(self, '_suppress_close', False))
+            lbl.linkActivated.connect(_on_link_activated)
             lbl.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             lbl.setText(text or '—')
@@ -829,15 +837,18 @@ class TrackInfoDialog(QDialog):
         icons_row.setSpacing(4)
         icons_row.setContentsMargins(0, 0, 0, 0)
         self._current_path = path
-        self._copy_btn = icon_btn("copy-path.png", "Copy path",
-                                   lambda: QGuiApplication.clipboard().setText(self._current_path))
-        def _open_folder():
-            p = self._current_path
-            if p and os.path.isabs(p):
-                QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(p)))
-        self._open_btn = icon_btn("open-path.png", "Open containing folder", _open_folder)
+
+        def _copy_path():
+            QGuiApplication.clipboard().setText(self._current_path)
+            self._copy_btn.setIcon(load_white_icon("yes.png"))
+            self._copy_btn.setToolTip("Copied!")
+            QTimer.singleShot(1500, lambda: (
+                self._copy_btn.setIcon(load_white_icon("copy-path.png")),
+                self._copy_btn.setToolTip("Copy path"),
+            ))
+
+        self._copy_btn = icon_btn("copy-path.png", "Copy path", _copy_path)
         icons_row.addWidget(self._copy_btn)
-        icons_row.addWidget(self._open_btn)
         icons_row.addStretch()
         left_lay.addLayout(icons_row)
         outer.addWidget(left)

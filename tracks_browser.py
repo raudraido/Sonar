@@ -1072,6 +1072,64 @@ class LinkDelegate(QStyledItemDelegate):
                 return True
         return False
 
+# --- DELEGATE 1b: PLAIN WRAP (non-interactive multi-line text) ---
+
+class PlainWrapDelegate(QStyledItemDelegate):
+    """Plain text delegate that wraps up to 3 lines — no hover, no click."""
+
+    def paint(self, painter, option, index):
+        if not index.isValid(): return
+        opts = QStyleOptionViewItem(option)
+        self.initStyleOption(opts, index)
+        opts.state &= ~QStyle.StateFlag.State_HasFocus
+        style = opts.widget.style() if opts.widget else QApplication.style()
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opts, painter, opts.widget)
+
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not text: return
+
+        is_selected = bool(opts.state & QStyle.StateFlag.State_Selected)
+        is_row_hover = bool(opts.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        if is_selected or is_row_hover:
+            painter.setPen(QColor("#cccccc"))
+        else:
+            painter.setPen(QColor("#cccccc"))
+
+        draw_rect = opts.rect.adjusted(5, 0, -5, 0)
+        from PyQt6.QtGui import QTextLayout
+        text_layout = QTextLayout(text, painter.font())
+        text_layout.beginLayout()
+        lines_data = []
+        while True:
+            line = text_layout.createLine()
+            if not line.isValid(): break
+            line.setLineWidth(draw_rect.width())
+            lines_data.append((line.textStart(), line.textLength()))
+        text_layout.endLayout()
+
+        fm = painter.fontMetrics()
+        max_lines = 3
+        display_lines = []
+        for i in range(min(len(lines_data), max_lines)):
+            start, length = lines_data[i]
+            line_str = text[start:start + length].strip()
+            if i == max_lines - 1 and len(lines_data) > max_lines:
+                line_str = fm.elidedText(text[start:].strip(), Qt.TextElideMode.ElideRight, draw_rect.width())
+            display_lines.append(line_str)
+
+        line_spacing = fm.lineSpacing()
+        total_height = len(display_lines) * line_spacing
+        start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2 + fm.ascent()
+        for i, line_str in enumerate(display_lines):
+            painter.drawText(draw_rect.left(), int(start_y + i * line_spacing), line_str)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        hint = super().sizeHint(option, index)
+        return hint
+
+
 # --- DELEGATE 2: MULTI-LINK (For Artists) ---
 
 class MultiLinkArtistDelegate(QStyledItemDelegate):
@@ -1969,6 +2027,9 @@ class TracksBrowser(QWidget):
         self.genre_delegate.genre_filter_requested.connect(lambda g: self._apply_col_filter(6, {g}))
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
 
+        self.date_added_delegate = PlainWrapDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
+
         self.year_delegate = LinkDelegate(self.tree)
         self.year_delegate.clicked.connect(lambda idx: self._apply_col_filter(5, {idx.data()}))
         self.tree.setItemDelegateForColumn(5, self.year_delegate)
@@ -2110,10 +2171,12 @@ class TracksBrowser(QWidget):
         if hasattr(self, 'footer'): self.footer.hide()
         if hasattr(self, 'search_container'): self.search_container.hide()
         if hasattr(self, 'status_label'): self.status_label.hide()
-        if hasattr(self, 'search_container'): 
+        if hasattr(self, 'search_container'):
             self.search_container.show()
             self.search_container.hide_burger()
-        
+        if hasattr(self, 'refresh_btn'):
+            self.refresh_btn.hide()
+
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionsClickable(False)
         self.tree.header().setSortIndicatorShown(False)
@@ -2285,6 +2348,7 @@ class TracksBrowser(QWidget):
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
         self.tree.setItemDelegateForColumn(5, self.year_delegate)
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
+        self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
         
         self.total_items = total_items
         self.total_pages = total_pages

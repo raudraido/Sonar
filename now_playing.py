@@ -390,6 +390,7 @@ class NowPlayingPanel(QWidget):
         hdr = self.tree.header()
         hdr.setSectionsClickable(True)
         hdr.sectionClicked.connect(self._on_header_clicked)
+        hdr.sectionResized.connect(lambda _l, _o, _n: self.save_column_state())
 
         # 5) Attach delegates
         self.combined_delegate = CombinedTrackDelegate(self.tree)
@@ -507,17 +508,26 @@ class NowPlayingPanel(QWidget):
             raw = settings.value('now_playing_columns_hidden')
             if raw:
                 state = json.loads(raw)
-                for col_str, hidden in state.items():
+                for col_str, val in state.items():
                     col = int(col_str)
-                    if col < NUM_COLS:
-                        self.tree.setColumnHidden(col, hidden)
+                    if col >= NUM_COLS:
+                        continue
+                    if isinstance(val, dict):
+                        self.tree.setColumnHidden(col, val.get('hidden', False))
+                        w = val.get('width', 0)
+                        if w > 0:
+                            self.tree.header().resizeSection(col, w)
+                    else:
+                        self.tree.setColumnHidden(col, val)
                 return
         except Exception: pass
         for col in DEFAULT_HIDDEN:
             self.tree.setColumnHidden(col, True)
 
     def save_column_state(self):
-        state = {str(i): self.tree.isColumnHidden(i) for i in range(NUM_COLS)}
+        state = {str(i): {'hidden': self.tree.isColumnHidden(i),
+                          'width': self.tree.columnWidth(i)}
+                 for i in range(NUM_COLS)}
         try:
             settings = QSettings("Sonar", "Sonar")
             settings.setValue('now_playing_columns_hidden', json.dumps(state))

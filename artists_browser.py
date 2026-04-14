@@ -1195,7 +1195,7 @@ class ArtistRichDetailView(QWidget):
         
         self.img_label = QLabel()
         self.img_label.setFixedSize(220, 220)
-        self.img_label.setStyleSheet("background: #333; border-radius: 110px; border: 2px solid #444;") 
+        self.img_label.setStyleSheet("background: #333; border-radius: 110px; border: 2px solid #444;")
         self.img_label.setScaledContents(True)
         
         info_col = QWidget()
@@ -1734,19 +1734,23 @@ class ArtistRichDetailView(QWidget):
         size = 220
         circle_pix = QPixmap(size, size)
         circle_pix.fill(QColor(0, 0, 0, 0))
-        
+
         painter = QPainter(circle_pix)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addEllipse(0, 0, size, size)
         painter.setClipPath(path)
-        
-        scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-        x = (scaled.width() - size) // 2
-        y = (scaled.height() - size) // 2
-        
-        painter.drawPixmap(-x, -y, scaled)
-        
+
+        if pixmap and not pixmap.isNull():
+            scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            x = (scaled.width() - size) // 2
+            y = (scaled.height() - size) // 2
+            painter.drawPixmap(-x, -y, scaled)
+        else:
+            painter.setBrush(QColor("#333333"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(0, 0, size, size)
+
         painter.end()
         self.img_label.setPixmap(circle_pix)
 
@@ -1888,28 +1892,40 @@ class ArtistRichDetailView(QWidget):
             if child.widget():
                 child.widget().deleteLater()
 
+    # Max albums per QML widget — keeps each texture well under GPU limits
+    _QML_CHUNK = 80
+
     def add_section(self, title, albums, cover_worker, pending_items):
         if not albums: return
 
         sorted_albums = sorted(albums, key=lambda x: (int(x.get('playCount', 0)), str(x.get('year', '0000'))), reverse=True)
 
-        row = QMLAlbumSectionWidget(title, len(sorted_albums), sorted_albums)
-        row.set_accent_color(self.current_accent)
-        row.album_clicked.connect(self.album_clicked.emit)
-        row.play_album.connect(self.play_album.emit)
-        row.artist_name_clicked.connect(lambda name: self.artist_clicked.emit({'name': name, 'id': None}))
-        row.qml_widget.installEventFilter(self)
-        self.sections_layout.addWidget(row)
+        # Split into chunks to avoid exceeding GPU texture size limits
+        chunk_size = self._QML_CHUNK
+        chunks = [sorted_albums[i:i + chunk_size] for i in range(0, len(sorted_albums), chunk_size)]
 
-        # Queue covers and track which section owns them
-        for album in row.album_model.albums:
-            cid = album.get('cover_id') or ''
-            if cid:
-                self.pending_qml_sections.setdefault(cid, []).append(row)
-                if cover_worker:
-                    cover_worker.queue_cover(cid)
+        for chunk_idx, chunk in enumerate(chunks):
+            # Only first chunk gets the section title + total count badge
+            chunk_title = title if chunk_idx == 0 else ""
+            chunk_count = len(sorted_albums) if chunk_idx == 0 else 0
 
-        if self.sections_layout.count() == 1:
+            row = QMLAlbumSectionWidget(chunk_title, chunk_count, chunk)
+            row.set_accent_color(self.current_accent)
+            row.album_clicked.connect(self.album_clicked.emit)
+            row.play_album.connect(self.play_album.emit)
+            row.artist_name_clicked.connect(lambda name: self.artist_clicked.emit({'name': name, 'id': None}))
+            row.qml_widget.installEventFilter(self)
+            self.sections_layout.addWidget(row)
+
+            # Queue covers and track which section owns them
+            for album in row.album_model.albums:
+                cid = album.get('cover_id') or ''
+                if cid:
+                    self.pending_qml_sections.setdefault(cid, []).append(row)
+                    if cover_worker:
+                        cover_worker.queue_cover(cid)
+
+        if self.sections_layout.count() <= len(chunks):
             QTimer.singleShot(100, self.auto_focus)
         
     def _get_qml_sections(self):
@@ -2020,8 +2036,8 @@ class ArtistRichDetailView(QWidget):
         self.clear_sections()
 
         if not getattr(self, '_header_already_loaded', False):
-            self.img_label.setPixmap(QPixmap()) 
             self.img_label.setStyleSheet("background: #333; border-radius: 110px;")
+            self.set_header_image(None)
         self._header_already_loaded = False  
         self._exact_artist_image = False     
 
