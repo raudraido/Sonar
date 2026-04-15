@@ -18,6 +18,8 @@ from player.widgets import SettingsWindow
 class PersistenceMixin:
     def save_playlist(self):
         try:
+            self.settings.setValue('window_width',  str(self.width()))
+            self.settings.setValue('window_height', str(self.height()))
             self.settings.setValue('current_playlist', json.dumps(self.playlist_data))
             self.settings.setValue('saved_current_index', str(self.current_index))
             self.settings.setValue('saved_position', str(self.seek_bar.position_ms))
@@ -34,6 +36,20 @@ class PersistenceMixin:
         except Exception as e: print(f"Playlist Save Error: {e}")
 
     def load_playlist(self):
+        try:
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            if screen:
+                available = screen.availableGeometry()
+                saved_w = int(self.settings.value('window_width',  0) or 0)
+                saved_h = int(self.settings.value('window_height', 0) or 0)
+                if saved_w > 0 and saved_h > 0:
+                    w = min(saved_w, available.width())
+                    h = min(saved_h, available.height())
+                    self.resize(w, h)
+        except Exception as e:
+            print(f"Window size restore error: {e}")
+
         try:
             saved_json = self.settings.value('current_playlist')
             

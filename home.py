@@ -122,6 +122,8 @@ class HomeAlbumRowWidget(QWidget):
     play_album     = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
     load_more_requested = pyqtSignal(int)  # emits current offset
+    focus_next     = pyqtSignal(int)  # carries current column index
+    focus_prev     = pyqtSignal(int)
 
     # (min container width, number of columns) — same thresholds as Feishin
     _BREAKPOINTS = [(1440, 8), (1280, 7), (1152, 6), (960, 5),
@@ -377,6 +379,49 @@ class HomeAlbumRowWidget(QWidget):
             self.album_clicked.emit(album)
 
     def eventFilter(self, source, event):
+        if source is self.list_widget:
+            if event.type() == QEvent.Type.FocusOut:
+                self.list_widget.clearSelection()
+                self.list_widget.setCurrentRow(-1)
+                return False
+            if event.type() == QEvent.Type.FocusIn:
+                if self.list_widget.count() > 0 and self.list_widget.currentRow() < 0:
+                    self.list_widget.setCurrentRow(0)  # fallback when no index carried over
+                return False
+
+        if source is self.list_widget and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Down or (key == Qt.Key.Key_Tab and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
+                self.focus_next.emit(self.list_widget.currentRow())
+                return True
+            if key == Qt.Key.Key_Up or (key == Qt.Key.Key_Tab and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                self.focus_prev.emit(self.list_widget.currentRow())
+                return True
+            if key == Qt.Key.Key_Left:
+                if self.list_widget.currentRow() <= 0:
+                    self._page_left()
+                    if self.list_widget.count() > 0:
+                        self.list_widget.setCurrentRow(self.list_widget.count() - 1)
+                    return True
+                return False  # let QListWidget handle movement within page
+            if key == Qt.Key.Key_Right:
+                if self.list_widget.currentRow() >= self.list_widget.count() - 1:
+                    self._page_right()
+                    if self.list_widget.count() > 0:
+                        self.list_widget.setCurrentRow(0)
+                    return True
+                return False  # let QListWidget handle movement within page
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                item = self.list_widget.currentItem()
+                if item:
+                    album = item.data(Qt.ItemDataRole.UserRole)
+                    if album:
+                        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                            self.play_album.emit(album)
+                        else:
+                            self._on_activated(item)
+                return True
+
         if source is self.list_widget.viewport():
             etype = event.type()
 
@@ -530,6 +575,16 @@ class HomeView(QWidget):
 
         self.content_layout.addStretch()
 
+        # Keyboard cross-row navigation
+        rows = [self.recent_row, self.random_row, self.most_played_row]
+        for i, row in enumerate(rows):
+            if i < len(rows) - 1:
+                nxt = rows[i + 1]
+                row.focus_next.connect(lambda idx, r=nxt: self._focus_row(r, idx))
+            if i > 0:
+                prv = rows[i - 1]
+                row.focus_prev.connect(lambda idx, r=prv: self._focus_row(r, idx))
+
         self.set_accent_color("#888888", 0.3)
 
         if self.client:
@@ -607,6 +662,14 @@ class HomeView(QWidget):
 
     def focus_first_grid(self):
         self.recent_row.list_widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _focus_row(self, row, col_idx=0):
+        lw = row.list_widget
+        lw.setFocus(Qt.FocusReason.OtherFocusReason)
+        target = min(col_idx, lw.count() - 1) if lw.count() > 0 else -1
+        if target >= 0:
+            lw.setCurrentRow(target)
+        self.scroll.ensureWidgetVisible(row, 0, 20)
 
     # ── Recently Added refresh ────────────────────────────────────────────
 

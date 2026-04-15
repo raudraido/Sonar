@@ -95,6 +95,20 @@ class _TooltipLabel(_QFrame):
         self.raise_()
 
 
+_NAV_KEYS = {
+    Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down,
+    Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter,
+}
+
+class _KeyRepeatFilter(_QObject):
+    """Globally suppress auto-repeat for navigation keys."""
+    def eventFilter(self, obj, event):
+        if event.type() == _QEvent2.Type.KeyPress and event.isAutoRepeat():
+            if event.key() in _NAV_KEYS:
+                return True  # consume, do not forward
+        return False
+
+
 class _TooltipFilter(_QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,8 +159,11 @@ class SonarPlayer(
 
     def __init__(self, client):
         super().__init__()
-        # Install custom tooltip renderer (Qt stylesheet/palette ignored on this platform)
-        QApplication.instance().installEventFilter(_TooltipFilter(QApplication.instance()))
+        # Install app-level event filters (keep refs to prevent GC)
+        self._tooltip_filter = _TooltipFilter(QApplication.instance())
+        QApplication.instance().installEventFilter(self._tooltip_filter)
+        self._key_repeat_filter = _KeyRepeatFilter(QApplication.instance())
+        QApplication.instance().installEventFilter(self._key_repeat_filter)
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
         self.setWindowTitle("Sonar")
