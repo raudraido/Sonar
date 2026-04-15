@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QMenu, QStyleOptionViewItem, QAbstractItemView,
                              QLineEdit, QToolButton, QScrollArea) 
 
-from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer, 
-                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt)
+from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer,
+                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics, 
                          QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
                          QTextDocument, QAbstractTextDocumentLayout, QPalette)
@@ -459,80 +459,171 @@ class GridCoverWorker(QThread):
 class GridItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.master_color = QColor("#1db954") # Default color fallback
-        
+        self.master_color = QColor("#1db954")
+        self.hovered_artist_row = -1
+
+        # Animation state
+        self._hovered_row   = -1
+        self._hover_progress = 0.0   # 0.0 = not hovered, 1.0 = fully hovered
+        self._play_progress  = 0.0   # 0.0 = play btn not hovered, 1.0 = fully hovered
+
+        self._hover_anim = QVariantAnimation()
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._hover_anim.valueChanged.connect(self._on_hover_value)
+
+        self._play_anim = QVariantAnimation()
+        self._play_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._play_anim.valueChanged.connect(self._on_play_value)
+
     def set_master_color(self, color):
         self.master_color = QColor(color)
+
+    def set_hovered_artist_row(self, row):
+        self.hovered_artist_row = row
+
+    # ── Animation helpers ─────────────────────────────────────────────────
+
+    def _on_hover_value(self, value):
+        self._hover_progress = value
+        self._request_repaint()
+
+    def _on_play_value(self, value):
+        self._play_progress = value
+        self._request_repaint()
+
+    def _request_repaint(self):
+        lw = self.parent()
+        if lw and hasattr(lw, 'viewport'):
+            lw.viewport().update()
+
+    def _animate(self, anim, current, target, full_duration=150):
+        anim.stop()
+        distance = abs(target - current)
+        if distance < 0.001:
+            return
+        anim.setDuration(max(1, int(full_duration * distance)))
+        anim.setStartValue(float(current))
+        anim.setEndValue(float(target))
+        anim.start()
+
+    def set_hovered_row(self, row):
+        if row == self._hovered_row:
+            return
+        self._hovered_row = row
+        if row >= 0:
+            # Snap any leftover progress from a previous item to 0 instantly,
+            # then animate the new item in from 0.
+            self._hover_progress = 0.0
+            self._play_progress  = 0.0
+            self._play_anim.stop()
+            self._animate(self._hover_anim, 0.0, 1.0)
+        else:
+            self._animate(self._hover_anim, self._hover_progress, 0.0)
+            self._animate(self._play_anim,  self._play_progress,  0.0)
+
+    def set_play_hovered(self, is_hovered):
+        target = 1.0 if is_hovered else 0.0
+        self._animate(self._play_anim, self._play_progress, target)
+
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paint(self, painter, option, index):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         rect = option.rect
-        icon_width = rect.width() - 20 
-        icon_height = icon_width 
-        icon_x = rect.x() + 10
-        icon_rect = QRect(icon_x, rect.y() + 10, icon_width, icon_height)
-        
+        icon_width  = rect.width() - 20
+        icon_height = icon_width
+        icon_x      = rect.x() + 10
+        icon_rect   = QRect(icon_x, rect.y() + 10, icon_width, icon_height)
+
         path = QPainterPath()
         path.addRoundedRect(icon_rect.x(), icon_rect.y(), icon_rect.width(), icon_rect.height(), 10, 10)
-        
+
+        # ── Cover image ───────────────────────────────────────────────────
         painter.save()
         painter.setClipPath(path)
         icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon and not icon.isNull(): 
+        if icon and not icon.isNull():
             pix = icon.pixmap(icon_width, icon_height)
             px = icon_rect.x() + (icon_width - pix.width()) // 2
             py = icon_rect.y() + (icon_height - pix.height()) // 2
             painter.drawPixmap(px, py, pix)
-        
-        is_hovered = option.state & QStyle.StateFlag.State_MouseOver
-        is_selected = option.state & QStyle.StateFlag.State_Selected
-        
-        if is_hovered or is_selected:
-            painter.setBrush(QColor(0, 0, 0, 120))
-            
-            painter.setPen(QPen(self.master_color, 4)) 
-            painter.drawPath(path) 
-        painter.restore()
 
-        if is_hovered or is_selected:
-            center = icon_rect.center()
+        # Determine animation progress for this item
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_this_hovered = (index.row() == self._hovered_row)
+        hover_p = self._hover_progress if is_this_hovered else (1.0 if is_selected else 0.0)
+        play_p  = self._play_progress  if is_this_hovered else 0.0
+
+        # Dark overlay: opacity 0 → 0.4  (QML: color "#000", opacity 0→0.4)
+        if hover_p > 0:
+            painter.setBrush(QColor(0, 0, 0, int(hover_p * 102)))
+            painter.setPen(QPen(self.master_color, 4))
+            painter.drawPath(path)
+        painter.restore()  # remove clip
+
+        # ── Play button: scale 0.8→1.0, opacity 0→0.8 (+0.2 when on btn) ─
+        if hover_p > 0:
+            center    = icon_rect.center()
             play_size = min(60, icon_width // 2)
-            play_rect = QRect(0, 0, play_size, play_size); play_rect.moveCenter(center)
-            
-            
+            scale     = 0.8 + play_p * 0.2          # matches QML scale behaviour
+            scaled_sz = max(4, int(play_size * scale))
+            play_rect = QRect(0, 0, scaled_sz, scaled_sz)
+            play_rect.moveCenter(center)
+
+            play_opacity = hover_p * 0.8 + play_p * 0.2   # 0→0.8, then 0.8→1.0
+            painter.setOpacity(play_opacity)
             painter.setBrush(self.master_color)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(play_rect)
-            
-            tri_size = play_size // 3
-            p1 = QPoint(center.x() - tri_size // 3, center.y() - tri_size // 2)
-            p2 = QPoint(center.x() - tri_size // 3, center.y() + tri_size // 2)
-            p3 = QPoint(center.x() + tri_size // 2 + 2, center.y())
-            
-            painter.setBrush(QColor("#111111")) 
-            painter.drawPolygon(QPolygon([p1, p2, p3]))
 
+            tri_size = scaled_sz // 3
+            cx, cy = center.x(), center.y()
+            p1 = QPoint(cx - tri_size // 3, cy - tri_size // 2)
+            p2 = QPoint(cx - tri_size // 3, cy + tri_size // 2)
+            p3 = QPoint(cx + tri_size // 2 + 2, cy)
+            painter.setBrush(QColor("#111111"))
+            painter.drawPolygon(QPolygon([p1, p2, p3]))
+            painter.setOpacity(1.0)
+
+        # ── Text ──────────────────────────────────────────────────────────
         data = index.data(Qt.ItemDataRole.UserRole)
         if data:
-            title = data.get('title') or data.get('name') or "Unknown"
+            title  = data.get('title') or data.get('name') or "Unknown"
             artist = data.get('artist', '')
-            year = str(data.get('year', ''))
+            year   = str(data.get('year', ''))
 
-            text_width = rect.width() - 20; text_x = rect.x() + 10; current_y = icon_rect.bottom() + 10
-            
-           
-            text_color = self.master_color.name() if (is_selected or is_hovered) else "#eeeeee"
-            
-            painter.setPen(QColor(text_color))
+            text_width = rect.width() - 20
+            text_x     = rect.x() + 10
+            current_y  = icon_rect.bottom() + 10
+
+            # Title: interpolate #eee → accent colour (instant in QML, smooth here)
+            mc = self.master_color
+            r  = int(238 + (mc.red()   - 238) * hover_p)
+            g  = int(238 + (mc.green() - 238) * hover_p)
+            b  = int(238 + (mc.blue()  - 238) * hover_p)
+            painter.setPen(QColor(r, g, b))
             font = painter.font(); font.setBold(True); font.setPointSize(10); painter.setFont(font)
             fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, 20), Qt.AlignmentFlag.AlignLeft, fm.elidedText(title, Qt.TextElideMode.ElideRight, text_width))
-            
-            current_y += 20 
-            painter.setPen(QColor("#cccccc")); font.setBold(False); font.setPointSize(9); painter.setFont(font); fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, 20), Qt.AlignmentFlag.AlignLeft, fm.elidedText(artist, Qt.TextElideMode.ElideRight, text_width))
+            painter.drawText(QRect(text_x, current_y, text_width, 20),
+                             Qt.AlignmentFlag.AlignLeft,
+                             fm.elidedText(title, Qt.TextElideMode.ElideRight, text_width))
+
+            current_y += 20
+            font.setBold(False); font.setPointSize(9)
+            artist_hovered = (index.row() == self.hovered_artist_row)
+            if artist_hovered:
+                font.setUnderline(True)
+                painter.setPen(QColor(self.master_color))
+            else:
+                font.setUnderline(False)
+                painter.setPen(QColor("#cccccc"))
+            painter.setFont(font); fm = QFontMetrics(font)
+            painter.drawText(QRect(text_x, current_y, text_width, 20),
+                             Qt.AlignmentFlag.AlignLeft,
+                             fm.elidedText(artist, Qt.TextElideMode.ElideRight, text_width))
+            font.setUnderline(False); painter.setFont(font)
             
             current_y += 18
             painter.setPen(QColor("#999999"))
