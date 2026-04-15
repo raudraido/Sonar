@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QScrollArea, QPushButton,
                              QListWidget, QListWidgetItem, QAbstractItemView,
-                             QAbstractButton)
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen
+                             QAbstractButton, QFrame, QGraphicsOpacityEffect,
+                             QApplication)
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect, QSettings
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor
 
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
 from tracks_browser import MiddleClickScroller
@@ -114,6 +115,48 @@ class _ArrowButton(QAbstractButton):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Drag-grip handle (appears on title row hover)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _GripHandle(QWidget):
+    drag_initiated = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 20)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self._color = QColor("#444")
+        self._press_pos = None
+
+    def set_color(self, color):
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(self._color)
+        p.setPen(Qt.PenStyle.NoPen)
+        for row in range(3):
+            for col in range(2):
+                p.drawEllipse(3 + col * 7, 4 + row * 6, 4, 4)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.position().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if self._press_pos is not None:
+            if (event.position().toPoint() - self._press_pos).manhattanLength() > 6:
+                self._press_pos = None
+                self.drag_initiated.emit()
+
+    def mouseReleaseEvent(self, event):
+        self._press_pos = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Horizontal album row
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -124,6 +167,7 @@ class HomeAlbumRowWidget(QWidget):
     load_more_requested = pyqtSignal(int)  # emits current offset
     focus_next     = pyqtSignal(int)  # carries current column index
     focus_prev     = pyqtSignal(int)
+    drag_requested = pyqtSignal(object)  # emits self
 
     # (min container width, number of columns) — same thresholds as Feishin
     _BREAKPOINTS = [(1440, 8), (1280, 7), (1152, 6), (960, 5),
@@ -150,11 +194,22 @@ class HomeAlbumRowWidget(QWidget):
         title_layout.setContentsMargins(0, 0, 10, 0)
         title_layout.setSpacing(8)
 
+        self._grip = _GripHandle()
+        self._grip.setVisible(False)
+        self._grip.drag_initiated.connect(lambda: self.drag_requested.emit(self))
+        title_layout.addWidget(self._grip)
+
         self.lbl_title = QLabel(title)
         self.lbl_title.setStyleSheet(
             "color: #eee; font-size: 15px; font-weight: bold; background: transparent;")
         title_layout.addWidget(self.lbl_title)
         title_layout.addStretch()
+
+        # Timer to guard against false Leave events when entering child widgets
+        self._grip_timer = QTimer(self)
+        self._grip_timer.setSingleShot(True)
+        self._grip_timer.setInterval(80)
+        self._grip_timer.timeout.connect(self._hide_grip_if_outside)
 
         self.btn_refresh = None
         if with_refresh:
@@ -246,11 +301,26 @@ class HomeAlbumRowWidget(QWidget):
             if icid == cid:
                 item.setIcon(self._make_icon(cid, cw))
 
+    def enterEvent(self, event):
+        self._grip_timer.stop()
+        self._grip.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._grip_timer.start()
+        super().leaveEvent(event)
+
+    def _hide_grip_if_outside(self):
+        pos = self.mapFromGlobal(QCursor.pos())
+        if not self.rect().contains(pos):
+            self._grip.setVisible(False)
+
     def set_accent_color(self, color):
         self._accent = color
         self.delegate.set_master_color(color)
         self._btn_left.set_color(color)
         self._btn_right.set_color(color)
+        self._grip.set_color(color)
         self.list_widget.viewport().update()
 
     # ── Resize ────────────────────────────────────────────────────────────
@@ -575,15 +645,15 @@ class HomeView(QWidget):
 
         self.content_layout.addStretch()
 
-        # Keyboard cross-row navigation
-        rows = [self.recent_row, self.random_row, self.most_played_row]
-        for i, row in enumerate(rows):
-            if i < len(rows) - 1:
-                nxt = rows[i + 1]
-                row.focus_next.connect(lambda idx, r=nxt: self._focus_row(r, idx))
-            if i > 0:
-                prv = rows[i - 1]
-                row.focus_prev.connect(lambda idx, r=prv: self._focus_row(r, idx))
+        self._row_order = [self.recent_row, self.random_row, self.most_played_row]
+        self._dragging_row = None
+
+        # Wire drag signals
+        for row in self._row_order:
+            row.drag_requested.connect(self._on_row_drag_requested)
+
+        self._rewire_keyboard_nav()
+        self._load_row_order()
 
         self.set_accent_color("#888888", 0.3)
 
@@ -659,6 +729,108 @@ class HomeView(QWidget):
         self.recent_row.apply_cover(cover_id, image_data)
         self.random_row.apply_cover(cover_id, image_data)
         self.most_played_row.apply_cover(cover_id, image_data)
+
+    # ── Row order / drag ─────────────────────────────────────────────────
+
+    def _rewire_keyboard_nav(self):
+        for row in (self.recent_row, self.random_row, self.most_played_row):
+            try: row.focus_next.disconnect()
+            except Exception: pass
+            try: row.focus_prev.disconnect()
+            except Exception: pass
+        rows = self._row_order
+        for i, row in enumerate(rows):
+            if i < len(rows) - 1:
+                nxt = rows[i + 1]
+                row.focus_next.connect(lambda idx, r=nxt: self._focus_row(r, idx))
+            if i > 0:
+                prv = rows[i - 1]
+                row.focus_prev.connect(lambda idx, r=prv: self._focus_row(r, idx))
+
+    def _apply_row_order(self):
+        for row in self._row_order:
+            self.content_layout.removeWidget(row)
+        for i, row in enumerate(self._row_order):
+            self.content_layout.insertWidget(i, row)
+        self._rewire_keyboard_nav()
+
+    def _save_row_order(self):
+        key_map = {self.recent_row: 'recent', self.random_row: 'random',
+                   self.most_played_row: 'most_played'}
+        order = ','.join(key_map[r] for r in self._row_order)
+        QSettings("Sonar", "Sonar").setValue('home_row_order', order)
+
+    def _load_row_order(self):
+        saved = QSettings("Sonar", "Sonar").value('home_row_order', '')
+        key_map = {'recent': self.recent_row, 'random': self.random_row,
+                   'most_played': self.most_played_row}
+        if saved:
+            keys = [k for k in saved.split(',') if k in key_map]
+            if len(keys) == 3:
+                self._row_order = [key_map[k] for k in keys]
+                self._apply_row_order()
+
+    def _on_row_drag_requested(self, row):
+        self._dragging_row = row
+        self._drag_insert_idx = self._row_order.index(row)
+
+        # Dim dragged row
+        eff = QGraphicsOpacityEffect()
+        eff.setOpacity(0.35)
+        row.setGraphicsEffect(eff)
+
+        # Drop indicator line
+        self._drop_indicator = QFrame(self.content_widget)
+        self._drop_indicator.setFixedHeight(3)
+        self._drop_indicator.resize(self.content_widget.width(), 3)
+        self._drop_indicator.setStyleSheet(
+            f"background: {self.current_accent}; border-radius: 1px;")
+        self._drop_indicator.raise_()
+        self._drop_indicator.show()
+
+        QApplication.instance().installEventFilter(self)
+        QApplication.setOverrideCursor(Qt.CursorShape.SizeVerCursor)
+
+    def _on_drag_move(self, global_pos):
+        local_y = self.content_widget.mapFromGlobal(global_pos).y()
+        rows = self._row_order
+        insert_idx = len(rows)
+        for i, row in enumerate(rows):
+            mid = row.geometry().top() + row.geometry().height() // 2
+            if local_y < mid:
+                insert_idx = i
+                break
+        self._drag_insert_idx = insert_idx
+
+        if insert_idx == 0:
+            ind_y = rows[0].geometry().top() - 2
+        elif insert_idx >= len(rows):
+            ind_y = rows[-1].geometry().bottom() + 1
+        else:
+            ind_y = (rows[insert_idx - 1].geometry().bottom()
+                     + rows[insert_idx].geometry().top()) // 2
+        self._drop_indicator.move(0, ind_y)
+
+    def _on_drag_end(self):
+        if self._dragging_row is None:
+            return
+        QApplication.instance().removeEventFilter(self)
+        QApplication.restoreOverrideCursor()
+
+        self._dragging_row.setGraphicsEffect(None)
+        self._drop_indicator.deleteLater()
+        self._drop_indicator = None
+
+        old_idx = self._row_order.index(self._dragging_row)
+        new_idx = self._drag_insert_idx
+        if new_idx > old_idx:
+            new_idx -= 1
+        if old_idx != new_idx:
+            self._row_order.insert(new_idx, self._row_order.pop(old_idx))
+            self._apply_row_order()
+            self._save_row_order()
+
+        self._dragging_row = None
 
     def focus_first_grid(self):
         self.recent_row.list_widget.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -780,6 +952,16 @@ class HomeView(QWidget):
         return QIcon(pix)
 
     def eventFilter(self, source, event):
+        # ── Drag tracking ────────────────────────────────────────────────
+        if self._dragging_row is not None:
+            if event.type() == QEvent.Type.MouseMove:
+                self._on_drag_move(event.globalPosition().toPoint())
+            elif (event.type() == QEvent.Type.MouseButtonRelease
+                  and event.button() == Qt.MouseButton.LeftButton):
+                self._on_drag_end()
+            return False
+
+        # ── Refresh button hover ─────────────────────────────────────────
         if hasattr(self, 'recent_row'):
             for row in (self.recent_row, self.random_row):
                 btn = row.btn_refresh
