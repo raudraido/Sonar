@@ -11,7 +11,7 @@ import re
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
     QSlider, QPushButton, QColorDialog, QCheckBox, QApplication,
-    QMessageBox, QScrollArea, QFrame, QGridLayout
+    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog
 )
 from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, pyqtSignal, QSettings, QProcess
 from PyQt6.QtGui import (
@@ -389,6 +389,29 @@ class SettingsWindow(QWidget):
         self.color_btn.setStyleSheet(f"background: {self.parent.master_color}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
         layout.addWidget(self.color_btn)
 
+        # --- STATIC BACKGROUND IMAGE ---
+        bg_img_label = QLabel("Static Background Image:")
+        bg_img_label.setStyleSheet("color: #aaa; margin-top: 4px;")
+        layout.addWidget(bg_img_label)
+
+        bg_row = QHBoxLayout()
+        self.bg_img_btn = QPushButton("Choose Image…")
+        self.bg_img_btn.clicked.connect(self.pick_static_bg)
+        self.bg_img_btn.setStyleSheet("padding: 8px 14px; border-radius: 6px; background: #2a2a2a; color: #ddd;")
+        bg_row.addWidget(self.bg_img_btn)
+
+        self.bg_img_clear = QPushButton("Clear")
+        self.bg_img_clear.clicked.connect(self.clear_static_bg)
+        self.bg_img_clear.setStyleSheet("padding: 8px 14px; border-radius: 6px; background: #2a2a2a; color: #888;")
+        self.bg_img_clear.setVisible(bool(getattr(self.parent, 'static_bg_path', None)))
+        bg_row.addWidget(self.bg_img_clear)
+        layout.addLayout(bg_row)
+
+        current_path = getattr(self.parent, 'static_bg_path', None)
+        self.bg_img_name = QLabel(os.path.basename(current_path) if current_path else "None")
+        self.bg_img_name.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.bg_img_name)
+
         layout.addWidget(QLabel("Background:"))
         self.blur_label = QLabel(f"Blur Radius: {self.parent.visual_settings['blur']}px")
         
@@ -528,6 +551,33 @@ class SettingsWindow(QWidget):
         if hasattr(self.parent, 'visualizer'):
             self.parent.visualizer.speed = self.vis_speed_slider.value() / 100.0
             self.parent.visualizer.gain = float(self.vis_gain_slider.value())
+
+    def pick_static_bg(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Background Image", "",
+            "Images (*.jpg *.jpeg *.png *.webp *.bmp)"
+        )
+        if not path:
+            return
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        if size_mb > 2:
+            QMessageBox.warning(self, "File Too Large",
+                f"Image must be under 2 MB (selected file is {size_mb:.1f} MB).")
+            return
+        self.parent.static_bg_path = path
+        self.bg_img_name.setText(os.path.basename(path))
+        self.bg_img_clear.setVisible(True)
+        if hasattr(self.parent, 'apply_static_background'):
+            self.parent.apply_static_background()
+
+    def clear_static_bg(self):
+        self.parent.static_bg_path = None
+        self.bg_img_name.setText("None")
+        self.bg_img_clear.setVisible(False)
+        # Trigger a normal background refresh from current track
+        if hasattr(self.parent, 'visual_update_timer'):
+            self.parent._last_rendered_cid = None
+            self.parent.visual_update_timer.start(100)
 
     def pick_global_color(self):
         self.dynamic_check.setChecked(False) 

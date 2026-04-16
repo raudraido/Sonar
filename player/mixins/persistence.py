@@ -30,6 +30,10 @@ class PersistenceMixin:
             
             if hasattr(self, '_splitter'):
                 self.settings.setValue('splitter_state', self._splitter.saveState().toHex().data().decode())
+            if getattr(self, 'static_bg_path', None):
+                self.settings.setValue('static_bg_path', self.static_bg_path)
+            else:
+                self.settings.remove('static_bg_path')
             if hasattr(self, 'album_browser') and hasattr(self.album_browser, 'get_state'):
                 self.settings.setValue('album_state', json.dumps(self.album_browser.get_state()))
             if hasattr(self, 'artist_browser') and hasattr(self.artist_browser, 'get_state'):

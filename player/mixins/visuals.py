@@ -73,17 +73,18 @@ class VisualsMixin:
         else:
             self.now_playing_widget.set_cover(None)
 
-        if not blurred_qimg.isNull():
-            bg_pix = QPixmap.fromImage(blurred_qimg)
-            self.bg_label.setPixmap(bg_pix)
-        else:
-            self.bg_label.setPixmap(QPixmap())
+        if not getattr(self, 'static_bg_path', None):
+            if not blurred_qimg.isNull():
+                bg_pix = QPixmap.fromImage(blurred_qimg)
+                self.bg_label.setPixmap(bg_pix)
+            else:
+                self.bg_label.setPixmap(QPixmap())
 
         if hasattr(self, 'art_container'):
             self.art_container.scaled_cache = {}
 
         # Start the crossfade: fade bg_label in over the old frame in bg_label_old
-        if hasattr(self, 'fade_anim'):
+        if not getattr(self, 'static_bg_path', None) and hasattr(self, 'fade_anim'):
             if self.fade_anim.state() == QPropertyAnimation.State.Running:
                 self.fade_anim.stop()
             # Recreate the effect each time — Qt deletes the C++ object when
@@ -110,6 +111,28 @@ class VisualsMixin:
 
     def apply_cover_art(self, data):
         self.update_background_threaded(None, raw_data_override=data)
+
+    def apply_static_background(self):
+        """Render the static bg image through BlurWorker and lock it in."""
+        path = getattr(self, 'static_bg_path', None)
+        if not path or not os.path.exists(path):
+            return
+        worker = BlurWorker(
+            path,
+            self.visual_settings['blur'],
+            self.visual_settings['overlay'],
+            self.master_color,
+            calc_color=False,
+            target_size=self.size(),
+        )
+        def _apply(blurred_qimg, *_):
+            if not blurred_qimg.isNull():
+                self.bg_label_old.setPixmap(QPixmap())
+                self.bg_label.setPixmap(QPixmap.fromImage(blurred_qimg))
+                self.bg_label.setGraphicsEffect(None)
+        worker.finished.connect(_apply)
+        worker.start()
+        self._static_bg_worker = worker  # keep reference
 
     def _perform_heavy_visual_update(self):
         """Called by timer when user has stopped skipping tracks."""
@@ -377,6 +400,9 @@ class VisualsMixin:
 
     def refresh_visuals(self):
         self.refresh_ui_styles()
+        if getattr(self, 'static_bg_path', None):
+            self.apply_static_background()
+            return
         track_path = None
         if 0 <= self.current_index < len(self.playlist_data): track_path = self.playlist_data[self.current_index].get('path')
         self.update_background_threaded(track_path, raw_data_override=self.current_raw_art)

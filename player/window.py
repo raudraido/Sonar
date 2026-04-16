@@ -230,6 +230,7 @@ class SonarPlayer(
         # --- DEFAULT VISUAL STYLE / COLOR ---
         self.master_color = "#fafafada"
         self.dynamic_color = True
+        self.static_bg_path = self.settings.value('static_bg_path') or None
         
         default_vis = {'blur': 15, 'overlay': 0.3, 'bg_alpha': 0.55, 'footer_alpha': 0.85}
         saved_vis = self.settings.value('visual_settings')
@@ -322,6 +323,8 @@ class SonarPlayer(
 
         QTimer.singleShot(100, self.test_navidrome_fetch)
         QTimer.singleShot(0, self.reposition_nav_buttons)
+        if self.static_bg_path:
+            QTimer.singleShot(50, self.apply_static_background)
 
         # --- Background downloader for playlist covers ---
         self.playlist_cover_worker = PlaylistCoverWorker(None)
