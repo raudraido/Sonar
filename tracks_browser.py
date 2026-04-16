@@ -1077,6 +1077,13 @@ class LinkDelegate(QStyledItemDelegate):
 class PlainWrapDelegate(QStyledItemDelegate):
     """Plain text delegate that wraps up to 3 lines — no hover, no click."""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.master_color = QColor("#cccccc")
+
+    def set_master_color(self, color):
+        self.master_color = QColor(color)
+
     def paint(self, painter, option, index):
         if not index.isValid(): return
         opts = QStyleOptionViewItem(option)
@@ -1092,7 +1099,7 @@ class PlainWrapDelegate(QStyledItemDelegate):
         is_row_hover = bool(opts.state & QStyle.StateFlag.State_MouseOver)
         painter.save()
         if is_selected or is_row_hover:
-            painter.setPen(QColor("#cccccc"))
+            painter.setPen(self.master_color)
         else:
             painter.setPen(QColor("#cccccc"))
 
@@ -3067,7 +3074,7 @@ class TracksBrowser(QWidget):
         self.tree.header().album_mode = enabled
         if enabled:
             # Hide redundant columns
-            for col in [2, 3, 4, 5, 6, 8, 10]:
+            for col in [2, 3, 4, 5, 6, 8, 10, 11]:
                 self.tree.hideColumn(col)
 
             self.tree.showColumn(0) # #
@@ -3609,6 +3616,7 @@ class TracksBrowser(QWidget):
             if hasattr(self, 'album_delegate'): self.album_delegate.set_master_color(color)
             if hasattr(self, 'year_delegate'): self.year_delegate.set_master_color(color)
             if hasattr(self, 'genre_delegate'): self.genre_delegate.set_master_color(color)
+            if hasattr(self, 'date_added_delegate'): self.date_added_delegate.set_master_color(color)
             
             # 2. Safely Update Components & Force Hide if needed
             in_album = getattr(self, 'album_mode_id', None) is not None
