@@ -888,7 +888,34 @@ class TrackInfoDialog(QDialog):
             self._current_path = full_path
             self._path_lbl.setText(full_path)
 
+        # Rebuild clickable link labels with fresh text
+        for field, text, cb in (
+            ('Artists',      raw.get('artist', ''),                                          self.on_artist_click),
+            ('Album artist', raw.get('albumArtist', '') or raw.get('album_artist', ''),      self.on_artist_click),
+            ('Album',        raw.get('album', ''),                                           self.on_album_click),
+        ):
+            lbl = self._value_labels.get(field)
+            if lbl is None:
+                continue
+            new_lbl = self._build_link_label(
+                text or '',
+                separator=' • ' if field != 'Album' else None,
+                callback=cb,
+                fallback_style="color: #ddd; font-size: 13px; background: transparent;",
+            )
+            parent_lay = lbl.parentWidget().layout() if lbl.parentWidget() else None
+            if parent_lay:
+                idx = parent_lay.indexOf(lbl)
+                if idx >= 0:
+                    parent_lay.removeWidget(lbl)
+                    lbl.deleteLater()
+                    parent_lay.insertWidget(idx, new_lbl, 1)
+                    self._value_labels[field] = new_lbl
+
         updates = {
+            'Title':           raw.get('title', ''),
+            'Release year':    str(raw.get('year', '') or ''),
+            'Genres':          raw.get('genre', ''),
             'Codec':           raw.get('suffix', ''),
             'Bitrate':         (str(raw.get('bitRate', '')) + ' kbps') if raw.get('bitRate') else '',
             'Sample rate':     str(raw.get('samplingRate', '') or ''),

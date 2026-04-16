@@ -2588,6 +2588,24 @@ class TracksBrowser(QWidget):
         
         return item
     
+    def refresh_track_item(self, track_id, fresh):
+        """Find the tree item for track_id and update its text columns with fresh metadata."""
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            d = item.data(0, Qt.ItemDataRole.UserRole)
+            if not d or d.get('type') != 'track':
+                continue
+            t = d.get('data', {})
+            if str(t.get('id', '')) != str(track_id):
+                continue
+            # Update text columns
+            for key, col in (('title', 1), ('title', 2), ('artist', 3), ('album', 4), ('year', 5)):
+                item.setText(col, str(fresh.get(key) or t.get(key) or ''))
+            # Patch stored dict so future reads are correct too
+            t.update({k: fresh.get(k, t.get(k)) for k in ('title', 'artist', 'album', 'year')})
+            break
+        self.tree.viewport().update()
+
     def update_playing_status(self, playing_id, is_playing, color_hex):
         """Highlights the playing track with the animated GIF, matching the Now Playing tab."""
         self.current_playing_id = playing_id

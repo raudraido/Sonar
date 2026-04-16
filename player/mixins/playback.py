@@ -291,8 +291,16 @@ class PlaybackMixin:
                 self.blur_thread.quit()
 
             self.visual_update_timer.start(350)
-            
-            track['debug_t0'] = t0 
+
+            # Silently refresh metadata from Navidrome in case ID3 tags were updated since last load
+            track_id = track.get('id')
+            if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
+                from player.workers import SongRefreshWorker
+                self._song_refresh_worker = SongRefreshWorker(self.navidrome_client, track_id, idx)
+                self._song_refresh_worker.refreshed.connect(self._on_song_refreshed)
+                self._song_refresh_worker.start()
+
+            track['debug_t0'] = t0
             self.playback_manager.play_request(track)
             
             print(f"[TIMING] +{time.time() - t0:.3f}s | Request Sent to Manager")
@@ -871,7 +879,27 @@ class PlaybackMixin:
         self.ghost_label.show()
         local_pos = self.mapFromGlobal(global_pos); self.ghost_label.move(local_pos)
     
-    def move_ghost_drag(self, global_pos): 
+    def move_ghost_drag(self, global_pos):
         local_pos = self.mapFromGlobal(global_pos)
         self.ghost_label.move(local_pos)
+
+    def _on_song_refreshed(self, ridx, fresh):
+        """Called on the main thread when SongRefreshWorker gets fresh metadata."""
+        if ridx >= len(self.playlist_data):
+            return
+        entry = self.playlist_data[ridx]
+        keys = ('title', 'artist', 'album', 'year', 'duration', 'coverArt', 'cover_id')
+        changed = any(entry.get(k) != fresh.get(k) for k in ('title', 'artist', 'album', 'year'))
+        if not changed:
+            return
+        entry.update({k: fresh.get(k, entry.get(k)) for k in keys})
+        if self.current_index == ridx:
+            self.load_current_track_metadata_text_only()
+            self.update_window_title()
+        # Patch any visible album detail track list
+        for attr in ('global_album_view', 'album_browser'):
+            view = getattr(self, attr, None)
+            tl = getattr(view, 'track_list', None)
+            if tl and hasattr(tl, 'refresh_track_item'):
+                tl.refresh_track_item(str(fresh.get('id', '')), fresh)
     

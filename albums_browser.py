@@ -770,7 +770,8 @@ class AlbumDetailView(QWidget):
     shuffle_clicked = pyqtSignal()
     album_favorite_toggled = pyqtSignal(bool)
     artist_clicked = pyqtSignal(str)
-    _meta_ready = pyqtSignal(str, str) 
+    _meta_ready = pyqtSignal(str, str)
+    _reload_tracks = pyqtSignal(str)   # album_id — triggers track list reload on main thread
     def __init__(self, client=None):
         super().__init__()
         self.client = client 
@@ -883,7 +884,8 @@ class AlbumDetailView(QWidget):
         # ─── TRACKS BROWSER ───────────────────────────────────────────────────
         from tracks_browser import TracksBrowser
         self.track_list = TracksBrowser(client)
-        
+        self._reload_tracks.connect(self.track_list.load_album_view)
+
         # Activate the new compact mode for albums!
         if hasattr(self.track_list, 'set_album_mode'):
             self.track_list.set_album_mode(True)
@@ -1117,30 +1119,31 @@ class AlbumDetailView(QWidget):
                     # PHASE 2 & 3: BACKGROUND WIPE & SEAMLESS SWAP
                     # ─────────────────────────────────────────────────────────
                     try:
-                        # 1. Brutal Wipe to force Navidrome to give us fresh data
-                        try: self.client.reset_caches()
+                        # 1. Force scan_status re-fetch so disk cache invalidation works correctly
+                        try: self.client._scan_status_cache = None
                         except: pass
                         try: self.client._api_cache.cache.clear()
                         except: pass
-                        try:
-                            if hasattr(self.client, 'session') and hasattr(self.client.session, 'cache'):
-                                self.client.session.cache.clear()
-                        except: pass
-                        try:
-                            for attr_name in dir(self.client):
-                                attr = getattr(self.client, attr_name)
-                                if callable(attr) and hasattr(attr, 'cache_clear'): attr.cache_clear()
-                        except: pass
-                        
-                        # 2. Fetch fresh tracks and recalculate
-                        raw_fresh = self.client.get_album_tracks(_album_id)
+
+                        # 2. Fetch fresh tracks (force_refresh bypasses disk cache)
+                        raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
                         if not raw_fresh: return
                         
                         fresh_detected, fresh_meta = compute_meta(raw_fresh)
                         
-                        # 3. THE SWAP: If a track was added/removed, or duration changed, redraw the UI!
+                        # 3. THE SWAP: update header if summary changed
                         if fresh_meta != cached_meta or fresh_detected != cached_detected:
                             self._meta_ready.emit(fresh_detected, fresh_meta)
+
+                        # 4. If any track's title or artist changed, reload the track list
+                        cached_map = {str(t.get('id')): t for t in (raw_cached or [])}
+                        tracks_changed = any(
+                            cached_map.get(str(t.get('id')), {}).get('title') != t.get('title') or
+                            cached_map.get(str(t.get('id')), {}).get('artist') != t.get('artist')
+                            for t in raw_fresh
+                        )
+                        if tracks_changed:
+                            self._reload_tracks.emit(_album_id)
                             
                     except Exception as e:
                         print(f"[AlbumDetailView] Silent background sync failed: {e}")

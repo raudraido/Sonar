@@ -572,3 +572,22 @@ class CrossPlatformMediaKeyListener(QThread):
         self.quit()
         self.wait()
 
+
+class SongRefreshWorker(QThread):
+    """Fetches fresh song metadata from Navidrome and emits if anything changed."""
+    refreshed = pyqtSignal(int, dict)   # (playlist_index, fresh_data)
+
+    def __init__(self, client, track_id, playlist_index):
+        super().__init__()
+        self.client = client
+        self.track_id = track_id
+        self.playlist_index = playlist_index
+
+    def run(self):
+        try:
+            fresh = self.client.get_song(self.track_id)
+            if fresh:
+                self.refreshed.emit(self.playlist_index, fresh)
+        except Exception as e:
+            print(f"[SongRefreshWorker] {e}")
+
