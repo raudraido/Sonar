@@ -510,7 +510,9 @@ class SpotlightSearch(QWidget):
 
     def _finish_hide(self):
         self.hide()
-        if self.parent_window: self.parent_window.setFocus()
+        if self.parent_window and not getattr(self, '_entering_view', False):
+            self.parent_window.setFocus()
+        self._entering_view = False
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -638,6 +640,7 @@ class SpotlightSearch(QWidget):
             self._play_item(fake_album_data)
         # Intercept the Enter View click and emit the signal!
         elif action_type == 'enter_view':
+            self._entering_view = True
             self.hide_search()
             self.view_requested.emit(data)
     

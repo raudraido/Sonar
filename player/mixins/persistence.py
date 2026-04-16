@@ -47,6 +47,12 @@ class PersistenceMixin:
                     w = min(saved_w, available.width())
                     h = min(saved_h, available.height())
                     self.resize(w, h)
+                else:
+                    w = self.width()
+                    h = self.height()
+                x = available.x() + (available.width()  - w) // 2
+                y = available.y() + (available.height() - h) // 2
+                self.move(x, y)
         except Exception as e:
             print(f"Window size restore error: {e}")
 

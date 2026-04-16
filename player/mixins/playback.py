@@ -12,6 +12,7 @@ import random
 from PyQt6.QtWidgets import QTreeWidgetItem, QFileDialog, QApplication
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
+from player.workers import MetadataWorker
 
 class PlaybackMixin:
     @staticmethod

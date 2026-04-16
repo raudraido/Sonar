@@ -303,6 +303,51 @@ class LivePageWorker(QThread):
         except Exception as e:
             print(f"[LivePageWorker] Error loading page: {e}")
 
+class CompilationsWorker(QThread):
+    """Fetches compilation albums using Navidrome's native /api/album?compilation=true filter."""
+    results_ready = pyqtSignal(list)
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.is_cancelled = False
+
+    def run(self):
+        try:
+            import requests
+            if not hasattr(self.client, 'native_jwt') or not self.client.native_jwt:
+                if not self.client.authenticate_native():
+                    self.results_ready.emit([])
+                    return
+            headers = {"x-nd-authorization": f"Bearer {self.client.native_jwt}"}
+            params = {
+                "_start": 0,
+                "_end": 100000,
+                "_sort": "name",
+                "_order": "ASC",
+                "compilation": "true",
+            }
+            r = requests.get(f"{self.client.base_url}/api/album", params=params, headers=headers, timeout=15)
+            if r.status_code == 401 and self.client.authenticate_native():
+                headers["x-nd-authorization"] = f"Bearer {self.client.native_jwt}"
+                r = requests.get(f"{self.client.base_url}/api/album", params=params, headers=headers, timeout=15)
+            if self.is_cancelled:
+                return
+            data = r.json()
+            if not isinstance(data, list):
+                self.results_ready.emit([])
+                return
+            # Normalise keys to match what the grid expects
+            albums = []
+            for a in data:
+                a.setdefault('cover_id', a.get('coverArt') or a.get('id'))
+                albums.append(a)
+            self.results_ready.emit(albums)
+        except Exception as e:
+            print(f"[CompilationsWorker] Error: {e}")
+            self.results_ready.emit([])
+
+
 class ServerCountWorker(QThread):
     count_ready = pyqtSignal(int)
 
@@ -1352,6 +1397,7 @@ class LibraryGridBrowser(QWidget):
             'latest': True,
             'alphabetical': True,
             'favorites': True,
+            'compilations': True,
             'song_count': False,
         }
         self.current_sort = 'latest'
@@ -1580,6 +1626,12 @@ class LibraryGridBrowser(QWidget):
         fav_action = QAction(heart_icon, "  Favourites", self)
         fav_action.triggered.connect(lambda: self.toggle_sort_state('favorites'))
         menu.addAction(fav_action)
+
+        # Compilations filter
+        comp_icon = self._get_tinted_icon(resource_path("img/comp.png"))
+        comp_action = QAction(comp_icon, "  Compilations", self)
+        comp_action.triggered.connect(lambda: self.toggle_sort_state('compilations'))
+        menu.addAction(comp_action)
         
         # Show menu below burger button
         button_pos = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
@@ -1643,9 +1695,9 @@ class LibraryGridBrowser(QWidget):
 
     def toggle_sort_state(self, sort_type):
         """Toggle the sort state and update display"""
-        if sort_type == 'favorites':
-            # Favorites is a pure filter — no asc/desc, just activate it
-            self.current_sort = 'favorites'
+        if sort_type in ('favorites', 'compilations'):
+            # Pure filters — no asc/desc, just activate
+            self.current_sort = sort_type
         elif self.current_sort == sort_type:
             # If clicking the currently active sort, flip its direction
             self.sort_states[sort_type] = not self.sort_states[sort_type]
@@ -1672,9 +1724,12 @@ class LibraryGridBrowser(QWidget):
         if not hasattr(self, 'current_sort'):
             return
         
-        # Favorites uses its own icon
+        # Pure-filter sorts use their own icons
         if self.current_sort == 'favorites':
             self.burger_btn.setIcon(self._get_tinted_icon(resource_path("img/heart.png")))
+            return
+        if self.current_sort == 'compilations':
+            self.burger_btn.setIcon(self._get_tinted_icon(resource_path("img/comp.png")))
             return
 
         # Get the current sort state (ascending/descending)
@@ -1734,6 +1789,18 @@ class LibraryGridBrowser(QWidget):
         self.status_label.setText(f"{display_count:,} albums")
         self.populate_grid(albums)
         
+        if hasattr(self, 'qml_view') and self.isVisible():
+            search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
+            if search_input is None or not search_input.hasFocus():
+                self.qml_view.setFocus()
+
+    def _on_compilations_loaded(self, albums):
+        self.album_model.clear()
+        if not albums:
+            self.status_label.setText("0 albums")
+            return
+        self.status_label.setText(f"{len(albums):,} albums")
+        self.populate_grid(albums)
         if hasattr(self, 'qml_view') and self.isVisible():
             search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
             if search_input is None or not search_input.hasFocus():
@@ -1935,6 +2002,7 @@ class LibraryGridBrowser(QWidget):
 
     def check_viewport_qml(self, start_idx, end_idx):
         if self.album_model.rowCount() == 0: return
+        if getattr(self, 'current_sort', 'latest') == 'compilations': return
 
 
 
@@ -2098,12 +2166,20 @@ class LibraryGridBrowser(QWidget):
         self.pending_items.clear()
         self.loaded_chunks = set()
         query = getattr(self, 'current_query', '')
-        
+
         if query:
             worker = LivePageWorker(self.client, sort_type='newest', size=500, offset=0, query=query)
             worker.page_ready.connect(self._on_search_loaded)
             worker.start()
             self.live_worker = worker
+            return
+
+        if getattr(self, 'current_sort', 'latest') == 'compilations':
+            if hasattr(self, '_compilations_worker') and self._compilations_worker.isRunning():
+                self._compilations_worker.is_cancelled = True
+            self._compilations_worker = CompilationsWorker(self.client)
+            self._compilations_worker.results_ready.connect(self._on_compilations_loaded)
+            self._compilations_worker.start()
             return
 
         if not hasattr(self, 'true_server_count') or self.true_server_count == 0:
