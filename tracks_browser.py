@@ -2373,7 +2373,7 @@ class TracksBrowser(QWidget):
             all_discs = set(t.get('discNumber', 1) or t.get('disc_number', 1) for t in tracks)
             show_headers = len(all_discs) > 1
             current_disc = None
-            
+
             for i, t in enumerate(tracks):
                 disc_num = t.get('discNumber', 1) or t.get('disc_number', 1)
                 if show_headers and disc_num != current_disc:
@@ -2383,23 +2383,42 @@ class TracksBrowser(QWidget):
                     f = header.font(0); f.setBold(True); f.setPointSize(11); header.setFont(0, f)
                     header.setForeground(0, QColor("#ffffff")); header.setBackground(0, QColor(0, 0, 0, 80))
                     items_to_add.append(header)
-                    total_calc_h += 30 # Header height
-                
+                    total_calc_h += 30
                 track_num = t.get('trackNumber', i + 1)
                 items_to_add.append(self.create_track_item(t, track_num))
-                total_calc_h += row_px # Track height
-                
-            # 🟢 THE SPEED FIX: Insert all 500 items in exactly 1 operation!
-            self.tree.addTopLevelItems(items_to_add)
-            
-            # 🟢 THE HEIGHT FIX: Apply the calculated height instantly (bypasses slow adjust_height loops)
+                total_calc_h += row_px
+
+            # Show first batch immediately so the view isn't blank
+            BATCH = 50
+            self.tree.addTopLevelItems(items_to_add[:BATCH])
+            self.tree.setUpdatesEnabled(True)
+
+            # Apply final height now (based on full list) so scroll area sizes correctly
             MAX_TREE_H = 800
             capped_h = min(total_calc_h, MAX_TREE_H)
             self.tree.setMinimumHeight(capped_h)
             self.tree.setMaximumHeight(total_calc_h)
-            self.setMinimumHeight(capped_h + 50) 
+            self.setMinimumHeight(capped_h + 50)
             self.setMaximumHeight(total_calc_h + 50)
-            
+
+            # Schedule remaining batches — each fires after Qt returns to event loop
+            remaining = items_to_add[BATCH:]
+            captured_worker = self.live_worker
+
+            def _add_batch(offset):
+                if getattr(captured_worker, 'is_cancelled', True):
+                    return
+                chunk = remaining[offset:offset + BATCH]
+                if chunk:
+                    self.tree.addTopLevelItems(chunk)
+                if offset + BATCH < len(remaining):
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: _add_batch(offset + BATCH))
+
+            if remaining:
+                from PyQt6.QtCore import QTimer as _QT
+                _QT.singleShot(0, lambda: _add_batch(0))
+
         else:
             if hasattr(self, 'status_label'):
                 self.status_label.setText(f"{self.total_items:,} tracks")
@@ -2431,7 +2450,8 @@ class TracksBrowser(QWidget):
         if hasattr(self, 'current_playing_id'):
             self.update_playing_status(getattr(self, 'current_playing_id'), getattr(self, 'is_playing', False), getattr(self, 'playing_color', "#1DB954"))
 
-        self.tree.setUpdatesEnabled(True)
+        if not getattr(self, 'album_mode_id', None):
+            self.tree.setUpdatesEnabled(True)
         self.start_cover_loader(tracks)
 
         # Kick off filter values worker in background after first data load,
