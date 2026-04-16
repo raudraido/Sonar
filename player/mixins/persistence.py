@@ -28,6 +28,8 @@ class PersistenceMixin:
             self.settings.setValue('waveform_mode', self.seek_bar.display_mode)
             
             
+            if hasattr(self, '_splitter'):
+                self.settings.setValue('splitter_state', self._splitter.saveState().toHex().data().decode())
             if hasattr(self, 'album_browser') and hasattr(self.album_browser, 'get_state'):
                 self.settings.setValue('album_state', json.dumps(self.album_browser.get_state()))
             if hasattr(self, 'artist_browser') and hasattr(self.artist_browser, 'get_state'):
@@ -55,6 +57,15 @@ class PersistenceMixin:
                 self.move(x, y)
         except Exception as e:
             print(f"Window size restore error: {e}")
+
+        try:
+            splitter_hex = self.settings.value('splitter_state')
+            if splitter_hex and hasattr(self, '_splitter'):
+                from PyQt6.QtCore import QByteArray, QTimer
+                state = QByteArray.fromHex(splitter_hex.encode())
+                QTimer.singleShot(0, lambda: self._splitter.restoreState(state))
+        except Exception as e:
+            print(f"Splitter restore error: {e}")
 
         try:
             saved_json = self.settings.value('current_playlist')

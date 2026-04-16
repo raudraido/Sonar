@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QStyledItemDelegate, QColorDialog, QMenu,
     QStyle, QCheckBox, QToolTip, QGraphicsColorizeEffect, QLineEdit,
     QGraphicsOpacityEffect, QTabWidget, QListWidgetItem, QSizePolicy,
-    QProgressBar, QDialog, QMessageBox, QComboBox, QApplication
+    QProgressBar, QDialog, QMessageBox, QComboBox, QApplication, QSplitter
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QThread, pyqtSignal, QPropertyAnimation,
@@ -58,8 +58,38 @@ from player.mixins.visuals     import VisualsMixin
 from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
-from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
+from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT, QSplitterHandle as _QSplitterHandle
 from PyQt6.QtCore import Qt as _Qt2
+from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
+
+
+class _GripSplitter(QSplitter):
+    """QSplitter with a subtle line grab handle."""
+    def createHandle(self):
+        return _GripHandle(self.orientation(), self)
+
+
+class _GripHandle(_QSplitterHandle):
+    _LINE_H = 40
+
+    def paintEvent(self, event):
+        p = _QPainter(self)
+        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w // 2, h // 2
+        alpha = 140 if self.underMouse() else 0
+        p.setPen(_Qt2.PenStyle.NoPen)
+        p.setBrush(_QColor(255, 255, 255, alpha))
+        p.drawRoundedRect(cx - 1, cy - self._LINE_H // 2, 2, self._LINE_H, 1, 1)
+        p.end()
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
 
 
 class _TooltipLabel(_QFrame):
@@ -393,11 +423,17 @@ class SonarPlayer(
 
         content = QHBoxLayout()
         content.setContentsMargins(40, 0, 40, 0)
-        content.setSpacing(45)
-        
+        content.setSpacing(0)
+
+        self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setHandleWidth(16)
+        self._splitter.setChildrenCollapsible(False)
+
         # --- LEFT PANEL (Art & Info) ---
-        left_panel = QVBoxLayout()
-        left_panel.addStretch(1) 
+        _left_widget = QWidget()
+        left_panel = QVBoxLayout(_left_widget)
+        left_panel.setContentsMargins(0, 0, 6, 0)
+        left_panel.addStretch(1)
         
         self.art_container = SquareArtContainer(self)
         left_panel.addWidget(self.art_container, 5)
@@ -618,15 +654,20 @@ class SonarPlayer(
         # Initialize History with Home
         self.add_global_nav(self.tabs.indexOf(self.home_tab), 'home')
 
-        # Assemble the 35/65 Split
-        content.addLayout(left_panel, 35)
-        
-        right_panel = QVBoxLayout()
+        # --- RIGHT PANEL (Tabs) ---
+        _right_widget = QWidget()
+        right_panel = QVBoxLayout(_right_widget)
+        right_panel.setContentsMargins(6, 0, 0, 0)
         right_panel.setSpacing(0)
-        right_panel.addWidget(self.tabs) # Put tabs directly in!
-        content.addLayout(right_panel, 65)
-        
-        main_layout.addLayout(content)
+        right_panel.addWidget(self.tabs)
+
+        self._splitter.addWidget(_left_widget)
+        self._splitter.addWidget(_right_widget)
+        self._splitter.setStretchFactor(0, 35)
+        self._splitter.setStretchFactor(1, 65)
+
+        content.addWidget(self._splitter)
+        main_layout.addLayout(content, 1)
         main_layout.addSpacing(35)
 
         # =========================================================
