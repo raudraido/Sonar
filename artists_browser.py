@@ -58,9 +58,66 @@ class ArtistPlayWorker(QThread):
             print(f"Error: {e}")
             self.tracks_ready.emit([])
 
+class _AlbumSkeletonRow(QWidget):
+    """Placeholder row shown while album data is being fetched. Paints shimmer-style ghost cards."""
+
+    def __init__(self, card_count=6, parent=None):
+        super().__init__(parent)
+        self._card_count = card_count
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)  # ~25 fps shimmer
+        self.setFixedHeight(220)
+
+    def _tick(self):
+        self._phase = (self._phase + 0.04) % 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        card_w, card_h = 150, 180
+        spacing = 16
+        y = 20
+
+        import math
+        for i in range(self._card_count):
+            x = spacing + i * (card_w + spacing)
+            # Shimmer brightness offset per card
+            phase = (self._phase + i * 0.15) % 1.0
+            brightness = int(40 + 20 * math.sin(phase * 2 * math.pi))
+
+            # Card background
+            rect = QRectF(x, y, card_w, card_h)
+            p.setBrush(QBrush(QColor(brightness, brightness, brightness)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(rect, 6, 6)
+
+            # Title pill
+            pill = QRectF(x + 8, y + card_h + 6, card_w - 16, 10)
+            p.setBrush(QBrush(QColor(brightness - 8, brightness - 8, brightness - 8)))
+            p.drawRoundedRect(pill, 5, 5)
+
+            # Subtitle pill
+            pill2 = QRectF(x + 8, y + card_h + 22, card_w * 0.6, 8)
+            p.drawRoundedRect(pill2, 4, 4)
+
+        p.end()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+
 class LiveArtistDetailWorker(QThread):
-    # Emits: (info_dict, top_songs_list, main_albums, singles, appears_on)
-    details_ready = pyqtSignal(dict, list, list, list, list)
+    # Progressive signals — each fires as soon as its data arrives
+    albums_ready    = pyqtSignal(dict, list, list)   # info, main_albums, singles
+    top_songs_ready = pyqtSignal(list)               # top_songs
+    appears_ready   = pyqtSignal(list)               # appears_on
+    # Legacy single-shot signal kept for any external callers
+    details_ready   = pyqtSignal(dict, list, list, list, list)
 
     def __init__(self, client, artist_id, artist_name):
         super().__init__()
@@ -70,9 +127,21 @@ class LiveArtistDetailWorker(QThread):
 
     def run(self):
         try:
+            from concurrent.futures import ThreadPoolExecutor
+
             if not self.client: return
 
-            # 1. Resolve ID if missing (for track-only artists)
+            _split_re = re.compile(r'(?: /// | • | / | feat\. | Feat\. | ft\. | Ft\. | vs\. | Vs\. )')
+
+            def _artist_tokens(raw: str) -> set:
+                parts = _split_re.split(raw)
+                return {p.strip().lower() for p in parts if p.strip()}
+
+            def sort_by_year(x):
+                try: return int(x.get('year', 0) or 0)
+                except: return 0
+
+            # ── PHASE 1: resolve ID if missing (fast — usually already set) ──
             if not self.artist_id and self.artist_name:
                 search_results = self.client.search_artist_tracks(self.artist_name)
                 target_name = self.artist_name.lower().strip()
@@ -84,111 +153,112 @@ class LiveArtistDetailWorker(QThread):
                         self.artist_id = aid
                         break
 
-            # 2. Fetch Info & Top Songs
-            info = {}
-            if self.artist_id:
-                info = self.client.get_artist(self.artist_id) or {}
-                # Merge Last.fm biography from getArtistInfo2 if not already present
-                if 'biography' not in info and hasattr(self.client, 'get_artist_info2'):
+            # ── PHASES 2+3+4 in PARALLEL ─────────────────────────────────────
+            # get_artist, get_top_songs, and get_artist_info2 are all independent
+            # network calls — run them concurrently so total wait ≈ slowest one.
+            def _fetch_artist():
+                if self.artist_id:
+                    return self.client.get_artist(self.artist_id) or {}
+                return {}
+
+            def _fetch_top_songs():
+                if self.artist_name:
+                    try: return self.client.get_top_songs(self.artist_name, count=5)
+                    except Exception: pass
+                return []
+
+            def _fetch_info2():
+                if self.artist_id and hasattr(self.client, 'get_artist_info2'):
+                    try: return self.client.get_artist_info2(self.artist_id) or {}
+                    except Exception: pass
+                return {}
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                f_artist = pool.submit(_fetch_artist)
+                f_songs  = pool.submit(_fetch_top_songs)
+                f_info2  = pool.submit(_fetch_info2)
+
+                # Albums: unblock as soon as get_artist returns
+                info = f_artist.result() or {}
+                if not info:
+                    info = {'name': self.artist_name or "Unknown"}
+
+                raw_albums = info.get('album', [])
+                main_albums, singles = [], []
+                own_album_ids = set()
+                target_lower = (self.artist_name or info.get('name', '')).lower().strip()
+
+                for a in raw_albums:
+                    aid_str = str(a.get('id', ''))
+                    if aid_str:
+                        own_album_ids.add(aid_str)
+                    rtypes_raw = a.get('releaseTypes') or []
+                    rtype = ' '.join(rtypes_raw).lower() if isinstance(rtypes_raw, list) else str(rtypes_raw).lower()
+                    if not rtype:
+                        rtype = str(a.get('albumType') or a.get('releaseType') or a.get('type') or '').lower()
+                    if 'single' in rtype or 'ep' in rtype:
+                        singles.append(a)
+                    else:
+                        main_albums.append(a)
+
+                main_albums.sort(key=sort_by_year, reverse=True)
+                singles.sort(key=sort_by_year, reverse=True)
+
+                # Emit albums immediately — UI shows real content, skeleton is replaced
+                self.albums_ready.emit(info, main_albums, singles)
+
+                # Start appears_on search now that we have own_album_ids
+                def _fetch_appears():
+                    result = []
+                    seen = set()
                     try:
-                        extra = self.client.get_artist_info2(self.artist_id) or {}
-                        bio = extra.get('biography') or extra.get('bio') or ''
-                        if bio:
-                            info['biography'] = bio
-                        similar = extra.get('similarArtist') or []
-                        if isinstance(similar, dict):
-                            similar = [similar]
-                        if similar:
-                            info['similar_artists'] = similar
-                    except Exception:
-                        pass
+                        tracks = self.client.search_artist_tracks(self.artist_name) if self.artist_name else []
+                        for t in tracks:
+                            alb_id = str(t.get('albumId') or t.get('album_id') or '')
+                            if not alb_id or alb_id in own_album_ids or alb_id in seen:
+                                continue
+                            track_tokens = _artist_tokens(str(t.get('artist') or ''))
+                            alb_tokens   = _artist_tokens(str(t.get('albumArtist') or t.get('album_artist') or ''))
+                            if target_lower in alb_tokens or target_lower not in track_tokens:
+                                continue
+                            alb_artist_raw = str(t.get('albumArtist') or t.get('album_artist') or '')
+                            seen.add(alb_id)
+                            result.append({
+                                'id': alb_id,
+                                'title': t.get('album') or 'Unknown Album',
+                                'artist': t.get('albumArtist') or t.get('album_artist') or t.get('artist') or 'Unknown Artist',
+                                'albumArtist': alb_artist_raw,
+                                'year': str(t.get('year') or ''),
+                                'coverArt': t.get('coverArt') or alb_id,
+                                'cover_id': t.get('coverArt') or alb_id,
+                            })
+                    except Exception as e:
+                        print(f"[LiveArtistDetailWorker] appears_on failed: {e}")
+                    result.sort(key=sort_by_year, reverse=True)
+                    return result
 
-            if not info:
-                info = {'name': self.artist_name or "Unknown"}
+                f_appears = pool.submit(_fetch_appears)
 
-            top_songs = []
-            if self.artist_name:
-                top_songs = self.client.get_top_songs(self.artist_name, count=5)
+                # Top songs — likely already done by now; emit immediately
+                top_songs = f_songs.result() or []
+                self.top_songs_ready.emit(top_songs)
 
-            # 3. Categorize own albums (getArtist only returns albums where artist IS album artist)
-            raw_albums = info.get('album', [])
-            main_albums, singles = [], []
-            own_album_ids = set()
-            target_lower = (self.artist_name or info.get('name', '')).lower().strip()
+                # Bio + similar artists from Last.fm — patch info and re-emit
+                extra = f_info2.result() or {}
+                bio = extra.get('biography') or extra.get('bio') or ''
+                if bio:
+                    info['biography'] = bio
+                similar = extra.get('similarArtist') or []
+                if isinstance(similar, dict):
+                    similar = [similar]
+                if similar:
+                    info['similar_artists'] = similar
+                if bio or similar:
+                    self.albums_ready.emit(info, main_albums, singles)
 
-            for a in raw_albums:
-                aid_str = str(a.get('id', ''))
-                if aid_str:
-                    own_album_ids.add(aid_str)
-                # Navidrome returns releaseTypes as an array e.g. ["Single"], ["EP"], ["Album"]
-                # Fall back to singular string fields for older servers
-                rtypes_raw = a.get('releaseTypes') or []
-                if isinstance(rtypes_raw, list):
-                    rtype = ' '.join(rtypes_raw).lower()
-                else:
-                    rtype = str(rtypes_raw).lower()
-                if not rtype:
-                    rtype = str(a.get('albumType') or a.get('releaseType') or a.get('type') or '').lower()
-                if 'single' in rtype or 'ep' in rtype:
-                    singles.append(a)
-                else:
-                    main_albums.append(a)
-
-            # 4. Discover "appears on" albums via track search
-            appears_on = []
-            appears_on_ids = set()
-
-            # Splits on common multi-artist separators to get individual artist tokens
-            _split_re = re.compile(r'(?: /// | • | / | feat\. | Feat\. | ft\. | Ft\. | vs\. | Vs\. )')
-
-            def _artist_tokens(raw: str) -> set:
-                """Return a set of lowercased, stripped artist name tokens from a raw field."""
-                parts = _split_re.split(raw)
-                return {p.strip().lower() for p in parts if p.strip()}
-
-            try:
-                all_tracks = self.client.search_artist_tracks(self.artist_name) if self.artist_name else []
-                for t in all_tracks:
-                    alb_id = str(t.get('albumId') or t.get('album_id') or '')
-                    if not alb_id or alb_id in own_album_ids or alb_id in appears_on_ids:
-                        continue
-
-                    track_artist_raw = str(t.get('artist') or '')
-                    alb_artist_raw   = str(t.get('albumArtist') or t.get('album_artist') or '')
-
-                    track_tokens = _artist_tokens(track_artist_raw)
-                    alb_tokens   = _artist_tokens(alb_artist_raw)
-
-                    # Skip if the target IS the album artist — those belong in main_albums/singles
-                    if target_lower in alb_tokens:
-                        continue
-
-                    # Only include if the target appears as an exact artist token on this track
-                    # This prevents "KiNK" matching "The Kinks", "Kinkisin lilli", etc.
-                    if target_lower not in track_tokens:
-                        continue
-
-                    appears_on_ids.add(alb_id)
-                    appears_on.append({
-                        'id': alb_id,
-                        'title': t.get('album') or 'Unknown Album',
-                        'artist': t.get('albumArtist') or t.get('album_artist') or t.get('artist') or 'Unknown Artist',
-                        'albumArtist': alb_artist_raw,
-                        'year': str(t.get('year') or ''),
-                        'coverArt': t.get('coverArt') or alb_id,
-                        'cover_id': t.get('coverArt') or alb_id,
-                    })
-            except Exception as e:
-                print(f"[LiveArtistDetailWorker] appears_on search failed: {e}")
-
-            # Sort all sections by year descending
-            def sort_by_year(x):
-                try: return int(x.get('year', 0) or 0)
-                except: return 0
-
-            main_albums.sort(key=sort_by_year, reverse=True)
-            singles.sort(key=sort_by_year, reverse=True)
-            appears_on.sort(key=sort_by_year, reverse=True)
+                # Appears on — slowest, emit last
+                appears_on = f_appears.result() or []
+                self.appears_ready.emit(appears_on)
 
             self.details_ready.emit(info, top_songs, main_albums, singles, appears_on)
 
@@ -1910,6 +1980,7 @@ class ArtistRichDetailView(QWidget):
             chunk_count = len(sorted_albums) if chunk_idx == 0 else 0
 
             row = QMLAlbumSectionWidget(chunk_title, chunk_count, chunk)
+            row._section_title = title  # used by _remove_section to identify this block
             row.set_accent_color(self.current_accent)
             row.album_clicked.connect(self.album_clicked.emit)
             row.play_album.connect(self.play_album.emit)
@@ -2034,6 +2105,7 @@ class ArtistRichDetailView(QWidget):
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
+        self._show_album_skeleton()
 
         if not getattr(self, '_header_already_loaded', False):
             self.img_label.setStyleSheet("background: #333; border-radius: 110px;")
@@ -2053,63 +2125,117 @@ class ArtistRichDetailView(QWidget):
             except: pass
             self._safe_discard_worker(self.live_detail_worker)
 
+        self._loaded_appears_on  = []
+        self._loaded_album_counts = (-1, -1)
+
         self.live_detail_worker = LiveArtistDetailWorker(
-            self.client, 
-            self.current_artist_id, 
+            self.client,
+            self.current_artist_id,
             self.current_artist_name
         )
-        self.live_detail_worker.details_ready.connect(self._on_details_ready)
+        self.live_detail_worker.albums_ready.connect(self._on_albums_ready)
+        self.live_detail_worker.top_songs_ready.connect(self._on_top_songs_ready)
+        self.live_detail_worker.appears_ready.connect(self._on_appears_ready)
         self.live_detail_worker.start()
 
-    def _on_details_ready(self, info, top_songs, main_albums, singles, appears_on):
-        # 1. Update Bio and Cover
+    def _show_album_skeleton(self):
+        """Show placeholder skeleton cards while the album data is loading."""
+        skeleton = _AlbumSkeletonRow()
+        skeleton._section_title = "_skeleton"
+        self.sections_layout.insertWidget(0, skeleton)
+
+    def _on_albums_ready(self, info, main_albums, singles):
+        """Phase 2 handler — fires as soon as get_artist returns. Shows albums immediately."""
+        self._remove_section("_skeleton")
+        # Cover image
         if info:
-            if 'biography' in info:
-                self.set_bio(info['biography'])
-                
             cover_src = info.get('coverArt') or info.get('id')
             if cover_src:
                 self.current_header_cover_id = str(cover_src)
-                # Only skip the fetch if the grid pre-applied the exact artist image
-                # (_exact_artist_image flag). A placeholder from current_cover_pixmap
-                # should still be replaced by the real artist image.
                 if not getattr(self, '_exact_artist_image', False) and hasattr(self, 'cover_worker'):
                     self.cover_worker.queue_cover(cover_src, priority=True)
-                self._exact_artist_image = False  # consume
+                self._exact_artist_image = False
 
-        # 2. Update Top Songs (Trusting the server now!)
+            # Bio may arrive here on first emit (if already cached) or on second emit after Last.fm
+            if 'biography' in info:
+                self.set_bio(info['biography'])
+
+            # Related artists — may be present on second emit after Last.fm
+            self.set_related_artists(info.get('similar_artists', []))
+
+        total_releases = len(main_albums) + len(singles)
+        appears_count  = len(getattr(self, '_loaded_appears_on', []))
+
+        if total_releases == 0 and appears_count == 0:
+            self.lbl_stats.setText("Loading...")
+        elif total_releases == 0:
+            self.lbl_stats.setText(f"Guest Artist • {appears_count} appearances")
+        else:
+            suffix = f" • {appears_count} appearances" if appears_count else ""
+            self.lbl_stats.setText(f"{total_releases} releases{suffix}")
+
+        # Rebuild album sections (clear old ones first to avoid duplicates on second emit)
+        # Only rebuild if the counts actually changed to avoid visual flicker
+        prev_counts = getattr(self, '_loaded_album_counts', (-1, -1))
+        new_counts  = (len(main_albums), len(singles))
+        if new_counts != prev_counts:
+            self._loaded_album_counts = new_counts
+            # Remove and re-add only the Albums / Singles sections
+            self._remove_section("Albums")
+            self._remove_section("Singles & EPs")
+            worker = getattr(self, 'cover_worker', None)
+            if main_albums: self.add_section("Albums",      main_albums, worker, self.pending_items)
+            if singles:     self.add_section("Singles & EPs", singles,   worker, self.pending_items)
+
+        QTimer.singleShot(100, self.check_viewport)
+        self._try_set_focus()
+
+    def _on_top_songs_ready(self, top_songs):
+        """Phase 3 handler — fires after get_top_songs returns."""
         self.set_top_songs(top_songs)
 
-        # 3. Update Album Sections
-        total_releases = len(main_albums) + len(singles)
-        total_appearances = len(appears_on)
-
-        if total_releases == 0 and total_appearances == 0: 
-            self.lbl_stats.setText("No releases found")
-        elif total_releases == 0 and total_appearances > 0: 
-            self.lbl_stats.setText(f"Guest Artist • {total_appearances} appearances")
-        else: 
-            self.lbl_stats.setText(f"{total_releases} releases • {total_appearances} appearances")
-
+    def _on_appears_ready(self, appears_on):
+        """Phase 5 handler — fires after search_artist_tracks returns (slowest call)."""
+        self._loaded_appears_on = appears_on
         worker = getattr(self, 'cover_worker', None)
-        if main_albums: self.add_section("Albums", main_albums, worker, self.pending_items)
-        if singles: self.add_section("Singles & EPs", singles, worker, self.pending_items)
-        if appears_on: self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
+        self._remove_section("Appears on & Compilations")
+        if appears_on:
+            self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
 
-        # 4. Related Artists
-        self.set_related_artists(info.get('similar_artists', []) if info else [])
+        # Update stats label now that we have the final appearance count
+        total_releases = sum(getattr(self, '_loaded_album_counts', (0, 0)))
+        appears_count  = len(appears_on)
+        if total_releases == 0 and appears_count == 0:
+            self.lbl_stats.setText("No releases found")
+        elif total_releases == 0:
+            self.lbl_stats.setText(f"Guest Artist • {appears_count} appearances")
+        else:
+            suffix = f" • {appears_count} appearances" if appears_count else ""
+            self.lbl_stats.setText(f"{total_releases} releases{suffix}")
 
-        
-        from PyQt6.QtCore import QTimer
         QTimer.singleShot(100, self.check_viewport)
 
-        # Focus jump
+    def _remove_section(self, title):
+        """Remove all section widgets with the given title from sections_layout."""
+        for i in range(self.sections_layout.count() - 1, -1, -1):
+            item = self.sections_layout.itemAt(i)
+            w = item.widget() if item else None
+            if w and getattr(w, '_section_title', None) == title:
+                self.sections_layout.removeWidget(w)
+                w.deleteLater()
+
+    def _try_set_focus(self):
+        """Focus first item in first section if no focus is already set."""
         for i in range(self.sections_layout.count()):
             row = self.sections_layout.itemAt(i).widget()
             if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
                 row.list_widget.setFocus(Qt.FocusReason.ShortcutFocusReason)
                 row.list_widget.setCurrentRow(0)
                 break
+
+    # Legacy handler kept for the details_ready signal (also connected for backwards compat)
+    def _on_details_ready(self, info, top_songs, main_albums, singles, appears_on):
+        pass  # All work now done by the three progressive handlers above
 
     def play_current_artist_tracks(self):
         """Fetches all artist tracks and emits them for playback — no parent relay needed."""

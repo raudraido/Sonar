@@ -3,8 +3,11 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QListWidget, QListWidgetItem, QAbstractItemView,
                              QAbstractButton, QFrame, QGraphicsOpacityEffect,
                              QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect, QSettings
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
+                          QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
+                          QEasingCurve, QPoint)
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
+from PyQt6.QtWidgets import QStyledItemDelegate
 
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
 from tracks_browser import MiddleClickScroller
@@ -16,21 +19,112 @@ from tracks_browser import MiddleClickScroller
 
 _PAGE = 50   # albums per fetch
 
+
+class _ShimmerDelegate(QStyledItemDelegate):
+    """Paints animated shimmer cards for skeleton placeholder items."""
+
+    def __init__(self, viewport):
+        super().__init__(viewport)
+        self._phase    = 0.0
+        self._viewport = viewport
+        self._timer    = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)   # ~25 fps
+
+    def _tick(self):
+        import math
+        self._phase = (self._phase + 0.04) % 1.0
+        self._viewport.update()
+
+    def paint(self, painter, option, index):
+        album = index.data(Qt.ItemDataRole.UserRole)
+        if not (isinstance(album, dict) and album.get('_skeleton')):
+            super().paint(painter, option, index)
+            return
+
+        import math
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        rect     = option.rect
+        padding  = 8
+        w        = rect.width()  - padding * 2
+        card_h   = w             # square card
+        cx, cy   = rect.x() + padding, rect.y() + padding
+
+        phase      = (self._phase + index.row() * 0.18) % 1.0
+        brightness = int(42 + 22 * math.sin(phase * 2 * math.pi))
+        dim        = max(20, brightness - 12)
+
+        # Album art placeholder
+        painter.setBrush(QBrush(QColor(brightness, brightness, brightness)))
+        painter.drawRoundedRect(QRectF(cx, cy, w, card_h), 6, 6)
+
+        # Title pill
+        pill_y = cy + card_h + 7
+        painter.setBrush(QBrush(QColor(dim, dim, dim)))
+        painter.drawRoundedRect(QRectF(cx, pill_y,      w * 0.75, 9),  5, 5)
+        painter.drawRoundedRect(QRectF(cx, pill_y + 15, w * 0.50, 7),  4, 4)
+
+        painter.restore()
+
+    def stop(self):
+        self._timer.stop()
+
 class HomeLoaderWorker(QThread):
-    data_ready = pyqtSignal(list, list, list)
+    # Each section emits independently as soon as its fetch completes
+    recent_ready      = pyqtSignal(list)
+    random_ready      = pyqtSignal(list)
+    most_played_ready = pyqtSignal(list)
+    # Legacy combined signal kept for compatibility
+    data_ready        = pyqtSignal(list, list, list)
 
     def __init__(self, client):
         super().__init__()
         self.client = client
 
     def run(self):
+        from concurrent.futures import ThreadPoolExecutor
+
         try:
             recent = random_mix = most_played = []
-            if self.client:
-                recent      = self.client.get_album_list_sorted(sort_type="newest",   size=_PAGE, offset=0)
-                random_mix  = self.client.get_album_list_sorted(sort_type="random",   size=_PAGE, offset=0)
-                most_played = self.client.get_album_list_sorted(sort_type="frequent", size=_PAGE, offset=0)
-            self.data_ready.emit(recent, random_mix, most_played)
+            if not self.client:
+                self.data_ready.emit([], [], [])
+                return
+
+            def _fetch(sort_type):
+                return self.client.get_album_list_sorted(
+                    sort_type=sort_type, size=_PAGE, offset=0) or []
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                f_recent      = pool.submit(_fetch, "newest")
+                f_random      = pool.submit(_fetch, "random")
+                f_most_played = pool.submit(_fetch, "frequent")
+
+                # Emit each section as soon as its future resolves
+                # (futures resolve roughly in parallel — emit order depends on server speed)
+                from concurrent.futures import as_completed, FIRST_COMPLETED
+                import concurrent.futures
+
+                futures_map = {
+                    f_recent:      ('recent',      self.recent_ready),
+                    f_random:      ('random',      self.random_ready),
+                    f_most_played: ('most_played', self.most_played_ready),
+                }
+                results = {}
+                for future in concurrent.futures.as_completed(futures_map):
+                    key, signal = futures_map[future]
+                    data = future.result() or []
+                    results[key] = data
+                    signal.emit(data)
+
+            self.data_ready.emit(
+                results.get('recent', []),
+                results.get('random', []),
+                results.get('most_played', []),
+            )
+
         except Exception as e:
             print(f"[Home Worker] Error: {e}")
             self.data_ready.emit([], [], [])
@@ -231,8 +325,14 @@ class HomeAlbumRowWidget(QWidget):
 
         layout.addWidget(title_row)
 
-        # ── List widget (no scrollbars — pagination replaces items) ──────
-        self.list_widget = QListWidget()
+        # ── Clip container — list widget lives here as a manual child ───────
+        # Qt clips child widget painting to parent bounds, so list_widget
+        # is invisible when slid outside the carousel during transitions.
+        self._carousel = QWidget()
+        self._carousel.setStyleSheet("background: transparent;")
+        layout.addWidget(self._carousel)
+
+        self.list_widget = QListWidget(self._carousel)
         self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.list_widget.setFlow(QListWidget.Flow.LeftToRight)
         self.list_widget.setMovement(QListWidget.Movement.Static)
@@ -248,19 +348,97 @@ class HomeAlbumRowWidget(QWidget):
             QListWidget::item { background: transparent; }
             QListWidget::item:selected { background: transparent; }
         """)
-
         self.delegate = GridItemDelegate(self.list_widget)
         self.list_widget.setItemDelegate(self.delegate)
-
         self.list_widget.itemDoubleClicked.connect(self._on_activated)
         self.list_widget.installEventFilter(self)
         self.list_widget.viewport().installEventFilter(self)
 
-        layout.addWidget(self.list_widget)
+        self._animating  = False
+        self._anim_group = None
+
+    # ── Internal helpers ──────────────────────────────────────────────────
+
+    def _animate_page(self, direction):
+        """Carousel slide: snapshot old page → move list_widget in from one side → animate."""
+        if self._animating:
+            return
+        self._animating = True
+
+        w    = self._carousel.width()
+        ch   = self.list_widget.height()
+        in_x =  w if direction == 'right' else -w
+        out_x = -w if direction == 'right' else  w
+
+        # 1. Freeze a screenshot of the current page as an overlay label
+        snapshot = self.list_widget.grab()
+        overlay  = QLabel(self._carousel)
+        overlay.setPixmap(snapshot)
+        overlay.setFixedSize(w, ch)
+        overlay.move(0, 0)
+        overlay.show()
+        overlay.raise_()
+
+        # 2. Move list_widget to the incoming side and render new content into it
+        self.list_widget.move(in_x, 0)
+        self._render_page()      # renders self._page into list_widget at (in_x, 0)
+
+        # 3. Animate overlay sliding out, list_widget sliding in — simultaneously
+        anim_out = QPropertyAnimation(overlay, b"pos")
+        anim_out.setDuration(220)
+        anim_out.setStartValue(QPoint(0, 0))
+        anim_out.setEndValue(QPoint(out_x, 0))
+        anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        anim_in = QPropertyAnimation(self.list_widget, b"pos")
+        anim_in.setDuration(220)
+        anim_in.setStartValue(QPoint(in_x, 0))
+        anim_in.setEndValue(QPoint(0, 0))
+        anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._anim_group = QParallelAnimationGroup(self)
+        self._anim_group.addAnimation(anim_out)
+        self._anim_group.addAnimation(anim_in)
+
+        def _on_done():
+            overlay.deleteLater()
+            # Ensure list_widget is exactly at (0, 0) after animation
+            self.list_widget.move(0, 0)
+            self._animating  = False
+            self._anim_group = None
+            self._update_arrows()
+
+        self._anim_group.finished.connect(_on_done)
+        self._anim_group.start()
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    def show_skeleton(self):
+        """Fill the row with animated shimmer placeholder cards while real data loads."""
+        n = max(self._calc_n_cols(), 5)
+        self._all_albums   = [{'_skeleton': True}] * n
+        self._page         = 0
+        self._loading_more = False
+        self._all_loaded   = True   # prevent load_more from firing on skeleton
+        self._offset       = 0
+
+        # Install shimmer delegate (stops and replaces on populate)
+        if not isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
+            self._real_delegate    = self.list_widget.itemDelegate()
+            self._shimmer_delegate = _ShimmerDelegate(self.list_widget.viewport())
+            self.list_widget.setItemDelegate(self._shimmer_delegate)
+
+        self._render_page()
+
     def populate(self, albums):
+        # Stop shimmer and restore the real delegate before filling with real items
+        if isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
+            self._shimmer_delegate.stop()
+            self.list_widget.setItemDelegate(
+                getattr(self, '_real_delegate', None) or self.delegate)
+            self._shimmer_delegate = None
+            self._real_delegate    = None
+
         self._all_albums   = list(albums)
         self._page         = 0
         self._loading_more = False
@@ -297,7 +475,9 @@ class HomeAlbumRowWidget(QWidget):
         for i in range(self.list_widget.count()):
             item  = self.list_widget.item(i)
             album = item.data(Qt.ItemDataRole.UserRole)
-            icid  = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
+            if not album:
+                continue
+            icid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
             if icid == cid:
                 item.setIcon(self._make_icon(cid, cw))
 
@@ -331,7 +511,8 @@ class HomeAlbumRowWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Recalculate which page to be on so the same first album stays visible
+        if self._animating:
+            return
         first_idx = self._page * self._n_cols
         new_n = self._calc_n_cols()
         if new_n != self._n_cols:
@@ -342,14 +523,14 @@ class HomeAlbumRowWidget(QWidget):
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _calc_n_cols(self):
-        w = self.list_widget.viewport().width()
+        w = self._carousel.width() or self.list_widget.viewport().width()
         for threshold, n in self._BREAKPOINTS:
             if w >= threshold:
                 return n
         return 2
 
     def _cell_w(self):
-        vp_w = self.list_widget.viewport().width()
+        vp_w = self._carousel.width() or self.list_widget.viewport().width()
         n    = self._n_cols
         return vp_w // n if vp_w > 0 else 200
 
@@ -369,49 +550,55 @@ class HomeAlbumRowWidget(QWidget):
         cw = self._cell_w()
         if cw <= 0:
             return
-        ch = cw + 50
+        ch  = cw + 50
+        lw  = self.list_widget
+        w   = self._carousel.width() or cw * self._n_cols
 
-        start = self._page * self._n_cols
-        end   = start + self._n_cols
-        page_albums = self._all_albums[start:end]
+        lw.setGridSize(QSize(cw, ch))
+        lw.setIconSize(QSize(cw - 16, cw - 16))
+        # Preserve x position (may be off-screen during carousel animation)
+        lw.setGeometry(lw.x(), 0, w, ch)
 
-        self.list_widget.setGridSize(QSize(cw, ch))
-        self.list_widget.setIconSize(QSize(cw - 16, cw - 16))
-        self.list_widget.setFixedHeight(ch)
+        start       = self._page * self._n_cols
+        page_albums = self._all_albums[start : start + self._n_cols]
 
-        self.list_widget.clear()
+        lw.clear()
         for album in page_albums:
-            cid  = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
             item = QListWidgetItem()
-            item.setIcon(self._make_icon(cid, cw))
-            item.setData(Qt.ItemDataRole.UserRole, album)
+            if album.get('_skeleton'):
+                item.setData(Qt.ItemDataRole.UserRole, album)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            else:
+                cid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
+                item.setIcon(self._make_icon(cid, cw))
+                item.setData(Qt.ItemDataRole.UserRole, album)
             item.setSizeHint(QSize(cw, ch))
-            self.list_widget.addItem(item)
+            lw.addItem(item)
 
-        # Force this widget to hug its content exactly — compute directly
-        # so we never depend on the layout's cached sizeHint
+        # Size the carousel container and row — always safe since we only
+        # change height, not x position of list_widget
+        self._carousel.setFixedHeight(ch)
         title_h = self.layout().itemAt(0).sizeHint().height()
         self.setFixedHeight(title_h + self.layout().spacing() + ch)
 
-        self._update_arrows()
-
-        # Trigger lazy load when reaching the last page
-        last_page = max(0, len(self._all_albums) - 1) // self._n_cols
-        if (not self._all_loaded and not self._loading_more
-                and self._page >= last_page - 1):
-            self._loading_more = True
-            self.load_more_requested.emit(self._offset)
+        if not self._animating:
+            self._update_arrows()
+            last_page = max(0, len(self._all_albums) - 1) // self._n_cols
+            if (not self._all_loaded and not self._loading_more
+                    and self._page >= last_page - 1):
+                self._loading_more = True
+                self.load_more_requested.emit(self._offset)
 
     def _page_left(self):
         if self._page > 0:
             self._page -= 1
-            self._render_page()
+            self._animate_page('left')
 
     def _page_right(self):
         last_page = max(0, len(self._all_albums) - 1) // self._n_cols
         if self._page < last_page:
             self._page += 1
-            self._render_page()
+            self._animate_page('right')
 
     def _update_arrows(self):
         last_page = max(0, len(self._all_albums) - 1) // self._n_cols
@@ -673,15 +860,34 @@ class HomeView(QWidget):
     def load_data(self):
         if getattr(self, 'worker', None) and self.worker.isRunning():
             self._safe_discard_worker(self.worker)
+
+        # Show skeleton placeholders immediately — no blank rows while loading
+        self.recent_row.show_skeleton()
+        self.random_row.show_skeleton()
+        self.most_played_row.show_skeleton()
+
         self.worker = HomeLoaderWorker(self.client)
-        self.worker.data_ready.connect(self.populate_ui)
+        # Wire per-section signals so each row populates as soon as its fetch finishes
+        self.worker.recent_ready.connect(self._on_recent_loaded)
+        self.worker.random_ready.connect(self._on_random_loaded)
+        self.worker.most_played_ready.connect(self._on_most_played_loaded)
         self.worker.start()
 
+    def _on_recent_loaded(self, albums):
+        self.recent_row.populate(albums)
+        self._queue_covers(albums)
+
+    def _on_random_loaded(self, albums):
+        self.random_row.populate(albums)
+        self._queue_covers(albums)
+
+    def _on_most_played_loaded(self, albums):
+        self.most_played_row.populate(albums)
+        self._queue_covers(albums)
+
     def populate_ui(self, recent, random_mix, most_played):
-        self.recent_row.populate(recent)
-        self.random_row.populate(random_mix)
-        self.most_played_row.populate(most_played)
-        self._queue_covers(recent + random_mix + most_played)
+        # Still called via legacy data_ready — no-op now since per-section signals handled it
+        pass
 
     def _queue_covers(self, albums):
         for album in albums:
