@@ -77,6 +77,9 @@ class AudioEngine(QObject):
         self.lib.set_scratch_velocity.argtypes = [ctypes.c_float]
         self.lib.set_scratch_velocity.restype  = None
 
+        self.lib.set_vis_active.argtypes = [ctypes.c_int]
+        self.lib.set_vis_active.restype  = None
+
         self.lib.generate_waveform.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
         self.lib.generate_waveform.restype  = ctypes.c_int
 
@@ -173,18 +176,20 @@ class AudioEngine(QObject):
     def _poll_status(self):
         try:
             pos = self.lib.get_position()
-            self.positionChanged.emit(pos)
 
             if self.lib.check_track_switch() == 1:
                 self.total_ms = self.lib.get_duration()
-                self.durationChanged.emit(int(self.total_ms))
-                self.positionChanged.emit(0)
+                if self._visualizer_active:
+                    self.durationChanged.emit(int(self.total_ms))
+                    self.positionChanged.emit(0)
                 self.mediaSwitched.emit()
 
-            if self.is_playing and self._visualizer_active:
-                self.lib.get_vis_data(self.vis_buffer)
-                self._vis_list = self.vis_buffer[:700]
-                self.visualizerDataReady.emit(self._vis_list)
+            if self._visualizer_active:
+                self.positionChanged.emit(pos)
+                if self.is_playing:
+                    self.lib.get_vis_data(self.vis_buffer)
+                    self._vis_list = self.vis_buffer[:700]
+                    self.visualizerDataReady.emit(self._vis_list)
 
             if time.time() > getattr(self, 'ignore_end_checks_until', 0):
                 if self.total_ms > 0 and pos >= (self.total_ms - 200):
@@ -196,7 +201,9 @@ class AudioEngine(QObject):
 
     def set_visualizer_active(self, enabled: bool):
         self._visualizer_active = enabled
-        self.update_timer.setInterval(16 if enabled else 250)
+        self.update_timer.setInterval(16 if enabled else 1000)
+        if self.lib:
+            self.lib.set_vis_active(1 if enabled else 0)
 
     def queue_next_track(self, file_path: str):
         if self.lib:

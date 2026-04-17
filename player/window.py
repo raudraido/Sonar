@@ -379,7 +379,41 @@ class SonarPlayer(
         self._pi_movie.setScaledSize(QSize(40, 40))
 
         # --- END of INIT ---
-    
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized)
+
+            if hasattr(self, 'audio_engine'):
+                self.audio_engine.set_visualizer_active(not minimized)
+            if hasattr(self, 'visualizer'):
+                self.visualizer.visualizer_enabled = not minimized
+
+            if hasattr(self, 'smooth_timer'):
+                if minimized:
+                    self.smooth_timer.stop()
+                elif getattr(self.audio_engine, 'is_playing', False):
+                    self.smooth_timer.start()
+
+            if hasattr(self, 'seek_bar'):
+                sb = self.seek_bar
+                if minimized:
+                    sb.render_timer.stop()
+                elif getattr(sb, 'display_mode', 1) == 0:
+                    sb.render_timer.start()
+
+            if hasattr(self, 'playing_movie'):
+                if minimized:
+                    self.playing_movie.stop()
+                    if hasattr(self, '_pi_movie'):
+                        self._pi_movie.stop()
+                elif getattr(self.audio_engine, 'is_playing', False):
+                    self.playing_movie.start()
+                    if hasattr(self, '_pi_movie'):
+                        self._pi_movie.start()
+
+        super().changeEvent(event)
+
     def init_ui(self):
                 
         # Initialize the animated playing indicator!

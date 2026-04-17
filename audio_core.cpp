@@ -161,6 +161,7 @@ struct AudioEngine {
     std::atomic<bool> is_scratching{false};
     std::atomic<float> scratch_velocity{0.0f};
     std::atomic<float> scratch_cursor{0.0f};
+    std::atomic<bool> vis_active{true};
 
     float vis_left_buf[65536] = {}; 
     float vis_right_buf[65536] = {};
@@ -259,8 +260,8 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         engine.buffer.read(out, frameCount);
     }
     
-    // FFT Visualizer
-    {
+    // FFT Visualizer — skip entirely when nobody is watching (e.g. minimized)
+    if (engine.vis_active.load(std::memory_order_relaxed)) {
         int frames = (int)frameCount;
         for (int i = 0; i < frames; i++) {
             engine.vis_left_buf[engine.vis_write] = out[i * CHANNELS];
@@ -272,7 +273,7 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         while (read_start < 0) read_start += 65536;
         read_start %= 65536;
         float norm = 1.0f / (VIS_FFT_N / 2);
-        static float left_magnitudes[4096]; 
+        static float left_magnitudes[4096];
 
         for (int i = 0; i < VIS_FFT_N; i++) {
             int src = (read_start + i) % 65536;
@@ -352,8 +353,15 @@ void producer_loop() {
 
         // Stop decoding new audio into the buffer if we are scratching!
         if (engine.playing && !engine.is_seeking && !engine.is_scratching.load()) {
-            if (engine.buffer.available > (engine.buffer.size / CHANNELS) * 0.50) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            size_t avail_frames = engine.buffer.available.load(std::memory_order_relaxed);
+            size_t total_frames = engine.buffer.size / CHANNELS;
+            if (avail_frames > total_frames * 0.80) {
+                // Buffer very full — sleep proportionally longer to avoid busy-spinning
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+            if (avail_frames > total_frames * 0.50) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
 
@@ -706,6 +714,10 @@ extern "C" {
     
     EXPORT void set_scratch_velocity(float vel) {
         engine.scratch_velocity.store(vel);
+    }
+
+    EXPORT void set_vis_active(int active) {
+        engine.vis_active.store(active != 0, std::memory_order_relaxed);
     }
 
     EXPORT void cleanup() { 
