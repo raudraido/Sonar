@@ -406,7 +406,7 @@ class HomeAlbumRowWidget(QWidget):
             self.list_widget.move(0, 0)
             self._animating  = False
             self._anim_group = None
-            self._update_arrows()
+            self._render_page()   # re-check load-more trigger now that _animating is False
 
         self._anim_group.finished.connect(_on_done)
         self._anim_group.start()
