@@ -61,10 +61,19 @@ class ElidedLabel(QLabel):
 
 
 
+class _ArtLabel(QLabel):
+    clicked = pyqtSignal()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class NowPlayingFooterWidget(QWidget):
     artist_clicked = pyqtSignal(str)
     album_clicked = pyqtSignal()
     title_clicked = pyqtSignal()
+    art_clicked = pyqtSignal()
     track_right_clicked = pyqtSignal(object)  # emits the current track dict
 
     def __init__(self, parent=None):
@@ -80,11 +89,13 @@ class NowPlayingFooterWidget(QWidget):
         layout.setSpacing(12)
         
         # 1. Tiny Cover Art
-        self.art_label = QLabel()
+        self.art_label = _ArtLabel()
         self.art_label.setFixedSize(64, 64)
         self.art_label.setStyleSheet("background-color: #222; border-radius: 4px; border: 1px solid #333;")
         self.art_label.setScaledContents(True)
+        self.art_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.art_label.hide()
+        self.art_label.clicked.connect(self.art_clicked)
         
         # 2. Text Info Container
         text_container = QWidget()
@@ -453,7 +464,17 @@ class SettingsWindow(QWidget):
         self.footer_alpha_slider.valueChanged.connect(self.update_labels_only)
         self.footer_alpha_slider.sliderReleased.connect(self.apply_heavy_changes)
         layout.addWidget(self.footer_alpha_slider)
-        
+
+        self.queue_alpha_label = QLabel(f"Queue Opacity: {int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100)}%")
+        layout.addWidget(self.queue_alpha_label)
+
+        self.queue_alpha_slider = QSlider(Qt.Orientation.Horizontal)
+        self.queue_alpha_slider.setRange(0, 100)
+        self.queue_alpha_slider.setValue(int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100))
+        self.queue_alpha_slider.valueChanged.connect(self.update_labels_only)
+        self.queue_alpha_slider.sliderReleased.connect(self.apply_heavy_changes)
+        layout.addWidget(self.queue_alpha_slider)
+
         layout.addSpacing(15)
 
         # --- HOTKEYS SECTION ---
@@ -594,14 +615,16 @@ class SettingsWindow(QWidget):
         self.alpha_label.setText(f"Playlist Opacity: {self.alpha_slider.value()}%")
         
         self.footer_alpha_label.setText(f"Footer Opacity: {self.footer_alpha_slider.value()}%")
+        self.queue_alpha_label.setText(f"Queue Opacity: {self.queue_alpha_slider.value()}%")
     
     def apply_heavy_changes(self):
         self.parent.visual_settings['blur'] = self.blur_slider.value()
         self.parent.visual_settings['overlay'] = self.dark_slider.value() / 100.0
         self.parent.visual_settings['bg_alpha'] = self.alpha_slider.value() / 100.0
         
-        self.parent.visual_settings['footer_alpha'] = self.footer_alpha_slider.value() / 100.0 
-        
+        self.parent.visual_settings['footer_alpha'] = self.footer_alpha_slider.value() / 100.0
+        self.parent.visual_settings['queue_alpha']  = self.queue_alpha_slider.value() / 100.0
+
         if hasattr(self.parent, 'refresh_visuals'): self.parent.refresh_visuals()
 
     def _on_key_captured(self, hid, key):

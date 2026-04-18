@@ -54,6 +54,7 @@ class VisualsMixin:
         if self.dynamic_color:
             self.master_color = dominant_color
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
+            if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.master_color)
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 raw_artist = track.get('artist', 'Unknown')
@@ -251,7 +252,8 @@ class VisualsMixin:
 
         
         footer_alpha = self.visual_settings.get('footer_alpha', 0.85)
-        theme_key = f"{mc}_{alpha}_{footer_alpha}"
+        queue_alpha  = self.visual_settings.get('queue_alpha', 0.96)
+        theme_key = f"{mc}_{alpha}_{footer_alpha}_{queue_alpha}"
         
         if getattr(self, '_last_theme_key', None) == theme_key:
             return 
@@ -376,6 +378,16 @@ class VisualsMixin:
         # Apply the Footer Opacity Dynamically!
         footer_alpha = self.visual_settings.get('footer_alpha', 0.85)
         self.footer_container.setStyleSheet(f"QWidget#FooterBar {{ background-color: rgba(11, 11, 11, {footer_alpha}); border-top: 1px solid rgba(255, 255, 255, 0.1); }}")
+
+        # Apply Queue Panel Opacity
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.setStyleSheet(
+                f'#QueuePanel {{'
+                f'  background: rgba(14,14,14,{queue_alpha});'
+                f'  border: 1px solid rgba(255,255,255,0.10);'
+                f'  border-radius: 10px;'
+                f'}}'
+            )
 
               
         from PyQt6.QtCore import QTimer

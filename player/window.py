@@ -57,6 +57,7 @@ from player.mixins.navigation  import NavigationMixin
 from player.mixins.visuals     import VisualsMixin
 from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
+from queue_panel import QueuePanel
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
 from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT, QSplitterHandle as _QSplitterHandle
 from PyQt6.QtCore import Qt as _Qt2
@@ -232,14 +233,16 @@ class SonarPlayer(
         self.dynamic_color = True
         self.static_bg_path = self.settings.value('static_bg_path') or None
         
-        default_vis = {'blur': 15, 'overlay': 0.3, 'bg_alpha': 0.55, 'footer_alpha': 0.85}
+        default_vis = {'blur': 15, 'overlay': 0.3, 'bg_alpha': 0.55, 'footer_alpha': 0.85, 'queue_alpha': 0.96}
         saved_vis = self.settings.value('visual_settings')
         if saved_vis:
             try:
                 self.visual_settings = json.loads(saved_vis)
-                # Ensure footer_alpha exists for backward compatibility with old saves
+                # Ensure keys exist for backward compatibility with old saves
                 if 'footer_alpha' not in self.visual_settings:
                     self.visual_settings['footer_alpha'] = 0.85
+                if 'queue_alpha' not in self.visual_settings:
+                    self.visual_settings['queue_alpha'] = 0.96
             except:
                 self.visual_settings = default_vis
         else:
@@ -465,6 +468,7 @@ class SonarPlayer(
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
         self._splitter.setHandleWidth(16)
         self._splitter.setChildrenCollapsible(False)
+        # Queue panel (index 2) will be shown/hidden via setVisible, not collapsed
 
         # --- LEFT PANEL (Art & Info) ---
         _left_widget = QWidget()
@@ -821,6 +825,7 @@ class SonarPlayer(
         self.now_playing_widget.album_clicked.connect(self.on_footer_album_click)
         self.now_playing_widget.title_clicked.connect(self.on_footer_title_click)
         self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
+        self.now_playing_widget.art_clicked.connect(self._toggle_queue_panel)
         left_layout.addWidget(self.now_playing_widget)
         
         footer_center = QWidget()
@@ -847,6 +852,18 @@ class SonarPlayer(
         main_footer_layout.addWidget(footer_right, 1)
 
         main_layout.addWidget(self.footer_container)
+
+        # --- FLOATING QUEUE PANEL (overlay, anchored above footer) ---
+        self._queue_panel = QueuePanel(self)
+        self._queue_panel.play_index.connect(self._queue_play_at)
+        self._queue_panel.remove_index.connect(self._queue_remove_at)
+        self._queue_panel.close_requested.connect(self._toggle_queue_panel)
+        self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
+        self._queue_panel.hide()
+        if self.settings.value('queue_panel_visible', 'false') == 'true':
+            QTimer.singleShot(0, lambda: (self._queue_panel.show(),
+                                          self._reposition_queue_panel(),
+                                          self._queue_panel.raise_()))
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
@@ -908,4 +925,68 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
+
+    # ── Queue panel helpers ───────────────────────────────────────────────────
+
+    def _toggle_queue_panel(self):
+        visible = not self._queue_panel.isVisible()
+        if visible:
+            self._queue_panel.show()
+            self._reposition_queue_panel()
+            self._queue_panel.raise_()
+            self._refresh_queue_panel()
+        else:
+            self.settings.setValue('queue_panel_height',
+                                   self._queue_panel.height())
+            self._queue_panel.hide()
+        self.settings.setValue('queue_panel_visible', 'true' if visible else 'false')
+
+    def _reposition_queue_panel(self):
+        if not hasattr(self, '_queue_panel') or not hasattr(self, 'footer_container'):
+            return
+        footer_h = self.footer_container.height()
+        panel_w  = int(self.settings.value('queue_panel_width', 420))
+        panel_h  = int(self.settings.value('queue_panel_height', 420))
+        margin_l = 8   # align with left content margin
+        margin_b = 8    # gap above footer
+        panel_h  = min(panel_h, self.height() - footer_h - margin_b - 40)
+        panel_h  = max(panel_h, 180)
+        x = margin_l
+        y = self.height() - footer_h - margin_b - panel_h
+        self._queue_panel.setGeometry(x, y, panel_w, panel_h)
+
+    def _refresh_queue_panel(self):
+        if not hasattr(self, '_queue_panel'):
+            return
+        color = getattr(self, 'master_color', '#cccccc')
+        self._queue_panel.set_accent_color(color)
+        self._queue_panel.refresh(self.playlist_data, self.current_index)
+
+    def _queue_play_at(self, idx: int):
+        if 0 <= idx < len(self.playlist_data):
+            self.play_song(idx)
+
+    def _queue_remove_at(self, idx: int):
+        if not (0 <= idx < len(self.playlist_data)):
+            return
+        self.history.clear()
+        playing_track = (self.playlist_data[self.current_index]
+                         if 0 <= self.current_index < len(self.playlist_data) else None)
+        self.playlist_data.pop(idx)
+        self.tree.takeTopLevelItem(idx)
+        self.current_index = -1
+        if playing_track:
+            try:
+                self.current_index = self.playlist_data.index(playing_track)
+            except ValueError:
+                self.current_index = -1
+        if self.current_index == -1 and playing_track:
+            self.audio_engine.stop()
+        for i in range(self.tree.topLevelItemCount()):
+            self.tree.topLevelItem(i).setText(0, str(i + 1))
+        self.refresh_ui_styles()
+        self.update_indicator()
+        if hasattr(self, '_now_playing_panel'):
+            self._now_playing_panel.update_status()
+        self._refresh_queue_panel()
 

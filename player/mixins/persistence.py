@@ -184,6 +184,9 @@ class PersistenceMixin:
         except Exception as e:
             print(f"Error restoring previous track state: {e}")
 
+        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
+            self._refresh_queue_panel()
+
     def test_navidrome_fetch(self):
         client = self.navidrome_client
 
@@ -424,7 +427,11 @@ class PersistenceMixin:
         # 4. Keep the sync overlay pinned to the bottom right corner
         if hasattr(self, 'sync_overlay') and self.sync_overlay.isVisible():
             self.sync_overlay.move(self.width() - self.sync_overlay.width() - 30, self.height() - self.sync_overlay.height() - 95)
-            
+
+        # 5. Keep the floating queue panel anchored above footer
+        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
+            self._reposition_queue_panel()
+
         super().resizeEvent(event)
 
     def moveEvent(self, event):
