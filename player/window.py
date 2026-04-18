@@ -441,12 +441,10 @@ class SonarPlayer(
         self.ghost_label.setStyleSheet("background: transparent;")
         
         self.bg_label_old = QLabel(self)
-        self.bg_label_old.setScaledContents(True)
         self.bg_label_old.resize(self.size())
         self.bg_label_old.setStyleSheet("background-color: #080808;")
-        
+
         self.bg_label = QLabel(self)
-        self.bg_label.setScaledContents(True)
         self.bg_label.resize(self.size())
         self.bg_label.setStyleSheet("background-color: transparent;")
         
@@ -462,7 +460,7 @@ class SonarPlayer(
         main_layout.setSpacing(0)
 
         content = QHBoxLayout()
-        content.setContentsMargins(40, 0, 40, 0)
+        content.setContentsMargins(40, 0, 8, 0)
         content.setSpacing(0)
 
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
@@ -474,8 +472,8 @@ class SonarPlayer(
         _left_widget = QWidget()
         left_panel = QVBoxLayout(_left_widget)
         left_panel.setContentsMargins(0, 0, 6, 0)
-        left_panel.addStretch(1)
-        
+        left_panel.addSpacing(8)
+
         self.art_container = SquareArtContainer(self)
         left_panel.addWidget(self.art_container, 5)
         
@@ -709,7 +707,7 @@ class SonarPlayer(
 
         content.addWidget(self._splitter)
         main_layout.addLayout(content, 1)
-        main_layout.addSpacing(35)
+        main_layout.addSpacing(8)
 
         # =========================================================
         # PLAYER CONTROLS & FOOTER

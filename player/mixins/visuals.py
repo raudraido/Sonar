@@ -183,12 +183,15 @@ class VisualsMixin:
         sz = self.size()
         if self.fade_anim.state() == QPropertyAnimation.State.Running:
             return  # don't fight the crossfade animation
+        def _crop_scale(pixmap, sz):
+            scaled = pixmap.scaled(sz, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            cx = (scaled.width() - sz.width()) // 2
+            cy = (scaled.height() - sz.height()) // 2
+            return scaled.copy(cx, cy, sz.width(), sz.height())
         if hasattr(self, 'bg_label_old') and self.bg_label_old.pixmap() and not self.bg_label_old.pixmap().isNull():
-            self.bg_label_old.setPixmap(
-                self.bg_label_old.pixmap().scaled(sz, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            self.bg_label_old.setPixmap(_crop_scale(self.bg_label_old.pixmap(), sz))
         if hasattr(self, 'bg_label') and self.bg_label.pixmap() and not self.bg_label.pixmap().isNull():
-            self.bg_label.setPixmap(
-                self.bg_label.pixmap().scaled(sz, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            self.bg_label.setPixmap(_crop_scale(self.bg_label.pixmap(), sz))
 
     def refresh_ui_styles(self, scroll_to_current=True):
         mc = self.master_color

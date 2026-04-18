@@ -308,7 +308,10 @@ class BlurWorker(QThread):
                 
                 qimg = QImage(final.tobytes(), final.size[0], final.size[1], QImage.Format.Format_RGB888).copy()
                 if self.target_size and not qimg.isNull():
-                    qimg = qimg.scaled(self.target_size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    scaled = qimg.scaled(self.target_size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                    cx = (scaled.width() - self.target_size.width()) // 2
+                    cy = (scaled.height() - self.target_size.height()) // 2
+                    qimg = scaled.copy(cx, cy, self.target_size.width(), self.target_size.height())
                 
                 # 🟢 Emit BOTH pre-scaled images!
                 self.finished.emit(qimg, cover_qimg, raw_art, dominant_hex)
