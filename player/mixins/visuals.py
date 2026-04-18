@@ -124,13 +124,14 @@ class VisualsMixin:
             self.visual_settings['overlay'],
             self.master_color,
             calc_color=False,
-            target_size=self.size(),
         )
         def _apply(blurred_qimg, *_):
             if not blurred_qimg.isNull():
                 self.bg_label_old.setPixmap(QPixmap())
                 self.bg_label.setPixmap(QPixmap.fromImage(blurred_qimg))
                 self.bg_label.setGraphicsEffect(None)
+                # Scale the 200×200 blur up to actual window size
+                self._apply_bg_scale()
         worker.finished.connect(_apply)
         worker.start()
         self._static_bg_worker = worker  # keep reference

@@ -3438,7 +3438,6 @@ class ArtistGridBrowser(QWidget):
         return {
             'sort': getattr(self, 'current_sort', 'most_played'),
             'sort_states': getattr(self, 'sort_states', {}),
-            'query': getattr(self, 'current_query', '')
         }
 
     def restore_state(self, state):

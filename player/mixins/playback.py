@@ -460,6 +460,8 @@ class PlaybackMixin:
             
             self.visual_update_timer.start(350)
             self.preload_next()
+            if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
+                self._refresh_queue_panel()
     
     def preload_next(self):
         """

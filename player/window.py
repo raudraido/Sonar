@@ -441,10 +441,12 @@ class SonarPlayer(
         self.ghost_label.setStyleSheet("background: transparent;")
         
         self.bg_label_old = QLabel(self)
+        self.bg_label_old.setScaledContents(True)
         self.bg_label_old.resize(self.size())
         self.bg_label_old.setStyleSheet("background-color: #080808;")
 
         self.bg_label = QLabel(self)
+        self.bg_label.setScaledContents(True)
         self.bg_label.resize(self.size())
         self.bg_label.setStyleSheet("background-color: transparent;")
         
@@ -472,7 +474,7 @@ class SonarPlayer(
         _left_widget = QWidget()
         left_panel = QVBoxLayout(_left_widget)
         left_panel.setContentsMargins(0, 0, 6, 0)
-        left_panel.addSpacing(8)
+        left_panel.addSpacing(36)
 
         self.art_container = SquareArtContainer(self)
         left_panel.addWidget(self.art_container, 5)
@@ -483,9 +485,7 @@ class SonarPlayer(
         vis_wrapper = QWidget()
         vis_layout = QHBoxLayout(vis_wrapper)
         vis_layout.setContentsMargins(0, 0, 0, 0)
-        vis_layout.addStretch(1) 
         vis_layout.addWidget(self.visualizer)
-        vis_layout.addStretch(1) 
         
         left_panel.addWidget(vis_wrapper, 2)
         

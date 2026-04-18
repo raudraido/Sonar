@@ -28,7 +28,7 @@ class ElidedLabel(QLabel):
         super().__init__(text, parent)
         self._full_text = text
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.setCursor(Qt.CursorShape.PointingHandCursor) 
+        self.setMouseTracking(True)
 
     def setText(self, text):
         self._full_text = text
@@ -46,16 +46,31 @@ class ElidedLabel(QLabel):
         elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, width)
         super().setText(elided)
 
+    def _text_w(self):
+        return QFontMetrics(self.font()).horizontalAdvance(super().text())
+
     def enterEvent(self, event):
-        self.setStyleSheet("color: white; background: transparent; text-decoration: underline;")
+        from PyQt6.QtGui import QCursor
+        if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
+            self.setStyleSheet("color: white; background: transparent; text-decoration: underline;")
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self.setStyleSheet("color: white; background: transparent; text-decoration: none;")
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if event.pos().x() <= self._text_w():
+            self.setStyleSheet("color: white; background: transparent; text-decoration: underline;")
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setStyleSheet("color: white; background: transparent; text-decoration: none;")
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and event.pos().x() <= self._text_w():
             self.clicked.emit()
         super().mousePressEvent(event)
 
@@ -63,6 +78,44 @@ class ElidedLabel(QLabel):
 
 class _ArtLabel(QLabel):
     clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hovered = False
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._hovered:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # dim overlay
+        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
+        # upward arrow centred near the top
+        cx = self.width() / 2
+        cy = self.height() / 2 - 4
+        aw, ah = 10, 7
+        path = QPainterPath()
+        path.moveTo(cx,        cy - ah)
+        path.lineTo(cx + aw,   cy + ah)
+        path.lineTo(cx - aw,   cy + ah)
+        path.closeSubpath()
+        p.setBrush(QColor(255, 255, 255, 220))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawPath(path)
+        p.end()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
@@ -186,24 +239,36 @@ class FooterClickableLabel(QLabel):
 
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.full_text = text
+        self.setMouseTracking(True)
         self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
+    def _text_w(self):
+        return QFontMetrics(self.font()).horizontalAdvance(self.text())
+
     def enterEvent(self, event):
-        # Hover: White color + Underline
-        self.setStyleSheet("font-size: 13px; color: #fff; background: transparent; text-decoration: underline;")
+        from PyQt6.QtGui import QCursor
+        if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
+            self.setStyleSheet("font-size: 13px; color: #fff; background: transparent; text-decoration: underline;")
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        # Leave: Gray color + No underline
         self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if event.pos().x() <= self._text_w():
+            self.setStyleSheet("font-size: 13px; color: #fff; background: transparent; text-decoration: underline;")
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            # Emit text so we know who was clicked
+        if event.button() == Qt.MouseButton.LeftButton and event.pos().x() <= self._text_w():
             self.clicked.emit(self.text())
 
 
@@ -731,14 +796,13 @@ class SquareArtContainer(QWidget):
         super().__init__()
         self.main_window = main_window
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumSize(150, 150) # Prevents collapsing to 0
+        self.setMinimumSize(100, 100) # Prevents collapsing to 0
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # 🟢 THE FIX: Strictly lock the visualizer's width to match the square
         if hasattr(self.main_window, 'visualizer'):
             side = min(self.width(), self.height())
-            self.main_window.visualizer.setMinimumWidth(side)
             self.main_window.visualizer.setMaximumWidth(side)
 
     def paintEvent(self, event):
