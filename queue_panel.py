@@ -20,6 +20,7 @@ def _split_artist(artist: str):
 
 ROW_H = 53
 NUM_W = 32
+FAV_W = 28
 DUR_W = 50
 
 
@@ -185,9 +186,19 @@ class _QueueDelegate(QStyledItemDelegate):
         painter.drawText(dur_rect,
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, dur)
 
+        # Favorite heart
+        raw_starred = data.get('starred', False)
+        is_fav = raw_starred.lower() in ('true', '1') if isinstance(raw_starred, str) else bool(raw_starred)
+        heart_pix = panel._heart_filled_pix if is_fav else panel._heart_empty_pix
+        if not heart_pix.isNull():
+            fav_cx = r.right() - DUR_W - FAV_W - 8 + FAV_W // 2
+            fav_cy = r.top() + r.height() // 2
+            pw, ph = heart_pix.width(), heart_pix.height()
+            painter.drawPixmap(fav_cx - pw // 2, fav_cy - ph // 2, heart_pix)
+
         # Text column
         text_x = r.left() + NUM_W + 10
-        text_w = r.width() - NUM_W - DUR_W - 28
+        text_w = r.width() - NUM_W - FAV_W - DUR_W - 28
 
         # Title
         f_title = QFont()
@@ -237,10 +248,12 @@ class _QueueDelegate(QStyledItemDelegate):
 # ── Main panel widget ─────────────────────────────────────────────────────────
 
 class QueuePanel(QWidget):
-    play_index      = pyqtSignal(int)
-    remove_index    = pyqtSignal(int)
-    close_requested = pyqtSignal()
-    artist_clicked  = pyqtSignal(str)
+    play_index       = pyqtSignal(int)
+    play_next_index  = pyqtSignal(int)
+    remove_index     = pyqtSignal(int)
+    close_requested  = pyqtSignal()
+    artist_clicked   = pyqtSignal(str)
+    favorite_toggled = pyqtSignal(int)   # playlist index
 
     _MIN_H = 180
     _MAX_H = 900
@@ -250,6 +263,8 @@ class QueuePanel(QWidget):
         self._accent_color   = '#cccccc'
         self._settings       = QSettings()
         self._hover_artist   = None  # (row, part_text) currently hovered
+        self._heart_filled_pix = self._make_heart_pix("img/heart_filled.png", "#E91E63")
+        self._heart_empty_pix  = self._make_heart_pix("img/heart.png", "#555555")
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName('QueuePanel')
@@ -357,10 +372,39 @@ class QueuePanel(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _make_heart_pix(path: str, color: str):
+        from PyQt6.QtGui import QPixmap, QPainter as _P
+        base = QPixmap(path)
+        if base.isNull():
+            return QPixmap()
+        base = base.scaled(QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        pix = QPixmap(base.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        p = _P(pix)
+        p.drawPixmap(0, 0, base)
+        p.setCompositionMode(_P.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(pix.rect(), QColor(color))
+        p.end()
+        return pix
+
     def set_accent_color(self, color: str):
         self._accent_color = color
         self._update_list_style()
         self._list.viewport().update()
+
+    def toggle_favorite_at(self, idx: int):
+        item = self._list.item(idx)
+        if not item:
+            return
+        d = item.data(Qt.ItemDataRole.UserRole)
+        if d:
+            raw = d.get('starred', False)
+            current = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+            d['starred'] = not current
+            item.setData(Qt.ItemDataRole.UserRole, d)
+            self._list.viewport().update()
 
     def _update_list_style(self):
         c = self._accent_color
@@ -468,6 +512,14 @@ class QueuePanel(QWidget):
                 if event.button() == Qt.MouseButton.LeftButton:
                     pos  = event.position().toPoint()
                     item = self._list.itemAt(pos)
+                    if item:
+                        r = self._list.visualItemRect(item)
+                        fav_x = r.right() - DUR_W - FAV_W - 8
+                        if QRect(fav_x, r.top(), FAV_W, r.height()).contains(pos):
+                            idx = self._list.row(item)
+                            self.toggle_favorite_at(idx)
+                            self.favorite_toggled.emit(idx)
+                            return True
                     if item and self._artist_rect_at(item).contains(pos):
                         data   = item.data(Qt.ItemDataRole.UserRole)
                         artist = data.get('artist', '') if data else ''
@@ -480,7 +532,7 @@ class QueuePanel(QWidget):
     def _artist_rect_at(self, item: QListWidgetItem) -> QRect:
         r      = self._list.visualItemRect(item)
         text_x = NUM_W + 10
-        text_w = self._list.viewport().width() - NUM_W - DUR_W - 28
+        text_w = self._list.viewport().width() - NUM_W - FAV_W - DUR_W - 28
         return QRect(text_x, r.top() + 28, text_w, 20)
 
     def _artist_part_at(self, item: QListWidgetItem, click_x: int, artist: str) -> str:
@@ -502,14 +554,122 @@ class QueuePanel(QWidget):
         item = self._list.itemAt(pos)
         if not item:
             return
-        idx  = self._list.row(item)
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            'QMenu { background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 4px; }'
-            'QMenu::item { padding: 6px 18px; }'
-            'QMenu::item:selected { background: #2a2a2a; }'
+        idx   = self._list.row(item)
+        data  = item.data(Qt.ItemDataRole.UserRole) or {}
+        track = {k: v for k, v in data.items() if not k.startswith('_')}
+
+        MENU_CSS = (
+            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
+            "QMenu::item { padding: 6px 25px; }"
+            "QMenu::item:selected { background-color: #333; }"
+            "QMenu::item:disabled { color: #555; }"
+            "QMenu::separator { height: 1px; background: #444; margin: 5px 0; }"
         )
-        act = QAction('Remove from queue', self)
-        act.triggered.connect(lambda: self.remove_index.emit(idx))
-        menu.addAction(act)
+        menu = QMenu(self)
+        menu.setStyleSheet(MENU_CSS)
+
+        # Play / queue actions
+        act_play = menu.addAction("Play Now")
+        act_next = menu.addAction("Play Next")
+        menu.addSeparator()
+
+        # Favorite
+        is_fav_raw = track.get('starred', False)
+        is_fav = is_fav_raw.lower() in ('true', '1') if isinstance(is_fav_raw, str) else bool(is_fav_raw)
+        act_fav = menu.addAction("Unlove (♥)" if is_fav else "Love (♡)")
+        menu.addSeparator()
+
+        # Add to Playlist submenu
+        main = self.parent()
+        track_id = str(track.get('id', ''))
+        if track_id and main:
+            add_menu = QMenu("Add to Playlist", menu)
+            add_menu.setStyleSheet(MENU_CSS)
+            act_new_pl = QAction("+ New Playlist...", add_menu)
+            act_new_pl.triggered.connect(lambda: self._add_to_new_playlist(main, [track_id]))
+            add_menu.addAction(act_new_pl)
+            playlists = []
+            if hasattr(main, 'playlists_browser'):
+                playlists = main.playlists_browser.all_playlists or []
+            if playlists:
+                add_menu.addSeparator()
+                for pl in playlists:
+                    pl_id = pl.get('id')
+                    if not pl_id:
+                        continue
+                    label = f"{pl.get('name', 'Unnamed')}  ({pl.get('songCount', '')})" if pl.get('songCount', '') != '' else pl.get('name', 'Unnamed')
+                    a = QAction(label, add_menu)
+                    a.triggered.connect(lambda checked=False, pid=pl_id, pn=pl.get('name', ''): self._add_to_existing_playlist(main, pid, pn, [track_id]))
+                    add_menu.addAction(a)
+            menu.addMenu(add_menu)
+            menu.addSeparator()
+
+        # Go to submenu
+        goto_menu = menu.addMenu("Go to")
+        goto_menu.setStyleSheet(MENU_CSS)
+        album_id = track.get('albumId') or track.get('parent')
+        album_title = track.get('album', 'Unknown')
+        if album_id and main:
+            album_data = {'id': album_id, 'title': album_title, 'artist': track.get('artist'), 'coverArt': track.get('coverArt')}
+            goto_menu.addAction(f"Album: {album_title}").triggered.connect(
+                lambda: main.navigate_to_album(album_data))
+        goto_menu.addSeparator()
+        import re as _re
+        artists = [p.strip() for p in _re.split(
+            r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
+            track.get('artist', '')) if p.strip()]
+        for art in artists:
+            goto_menu.addAction(f"Artist: {art}").triggered.connect(
+                lambda checked=False, a=art: (self.artist_clicked.emit(a)))
+
+        menu.addSeparator()
+        act_info = menu.addAction("Get Info")
+        menu.addSeparator()
+        act_remove = menu.addAction("Remove from Queue")
+
+        # Connect actions
+        act_play.triggered.connect(lambda: self.play_index.emit(idx))
+        act_next.triggered.connect(lambda: self.play_next_index.emit(idx))
+        act_fav.triggered.connect(lambda: (self.toggle_favorite_at(idx), self.favorite_toggled.emit(idx)))
+        tb = getattr(main, 'tracks_browser', None) if main else None
+        act_info.triggered.connect(lambda: tb and tb._show_track_info(track))
+        if not tb:
+            act_info.setEnabled(False)
+        act_remove.triggered.connect(lambda: self.remove_index.emit(idx))
+
         menu.exec(self._list.viewport().mapToGlobal(pos))
+
+    def _add_to_new_playlist(self, main, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client:
+            return
+        from components import NewPlaylistDialog
+        from PyQt6.QtWidgets import QDialog
+        accent = getattr(main, 'master_color', '#1DB954')
+        dialog = NewPlaylistDialog(self, accent_color=accent)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name = dialog.get_name()
+            if not name:
+                return
+            is_public = dialog.is_public()
+            import threading
+            def _worker():
+                try:
+                    new_id = client.create_playlist(name, public=is_public)
+                    if new_id:
+                        client.add_tracks_to_playlist(new_id, track_ids)
+                except Exception as e:
+                    print(f"Queue: create playlist failed: {e}")
+            threading.Thread(target=_worker, daemon=True).start()
+
+    def _add_to_existing_playlist(self, main, pl_id, pl_name, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client:
+            return
+        import threading
+        def _worker():
+            try:
+                client.add_tracks_to_playlist(pl_id, track_ids)
+            except Exception as e:
+                print(f"Queue: add to playlist failed: {e}")
+        threading.Thread(target=_worker, daemon=True).start()

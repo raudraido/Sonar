@@ -64,6 +64,130 @@ from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
 
 
+class _SectionWidget(QWidget):
+    """Left-panel section — hide/unhide button fades in on hover, exact scrubber pattern."""
+
+    def __init__(self, content, key, main_window, parent=None):
+        super().__init__(parent)
+        self._content = content
+        self._key = key
+        self._main = main_window
+
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
+        lo.addWidget(content)
+
+        self._btn = QPushButton(self)
+        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._btn.setIconSize(QSize(16, 16))
+        self._btn.setFixedSize(28, 28)
+        self._btn.clicked.connect(self._toggle)
+        self._btn.installEventFilter(self)
+
+        # Build dim (#515151) and bright (#ffffff) variants for both icons
+        def _tint(path, color):
+            raw = QPixmap(resource_path(path))
+            if raw.isNull():
+                return QIcon()
+            out = QPixmap(raw.size())
+            out.fill(Qt.GlobalColor.transparent)
+            p = _QPainter(out)
+            p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+            p.drawPixmap(0, 0, raw)
+            p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(out.rect(), QColor(color))
+            p.end()
+            return QIcon(out)
+
+        self._hide_dim    = _tint("img/hide.png",   "#515151")
+        self._hide_bright = _tint("img/hide.png",   "#ffffff")
+        self._show_dim    = _tint("img/unhide.png", "#515151")
+        self._show_bright = _tint("img/unhide.png", "#ffffff")
+
+        self._btn.setIcon(self._hide_dim)
+        self._btn.setToolTip("Hide")
+        self._toggle_opacity = None
+        self._hover_anim = None
+        self._init_opacity_effect()
+        self._btn.hide()
+
+    def _current_dim(self):
+        return self._hide_dim if self._content.isVisible() else self._show_dim
+
+    def _current_bright(self):
+        return self._hide_bright if self._content.isVisible() else self._show_bright
+
+    def set_master_color(self, mc):
+        r, g, b = QColor(mc).red(), QColor(mc).green(), QColor(mc).blue()
+        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
+        self._btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba({r},{g},{b},0.1);
+                border: 2px solid rgb({dr},{dg},{db});
+                border-radius: 14px; outline: none;
+            }}
+            QPushButton:hover {{
+                background-color: rgba({r},{g},{b},0.4);
+                border: 2px solid rgb({r},{g},{b});
+            }}
+            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
+        """)
+
+    def _init_opacity_effect(self):
+        self._btn.show()
+        self._toggle_opacity = QGraphicsOpacityEffect(self._btn)
+        self._toggle_opacity.setOpacity(0.0)
+        self._btn.setGraphicsEffect(self._toggle_opacity)
+        self._hover_anim = QPropertyAnimation(self._toggle_opacity, b"opacity")
+        self._hover_anim.setDuration(250)
+        self._hover_anim.finished.connect(self._on_anim_finished)
+
+    def _on_anim_finished(self):
+        if self._toggle_opacity and self._toggle_opacity.opacity() == 0.0:
+            self._btn.setGraphicsEffect(None)
+            self._btn.hide()
+            self._toggle_opacity = None
+            self._hover_anim = None
+
+    def eventFilter(self, obj, event):
+        if obj is self._btn:
+            if event.type() == QEvent.Type.Enter:
+                self._btn.setIcon(self._current_bright())
+            elif event.type() == QEvent.Type.Leave:
+                self._btn.setIcon(self._current_dim())
+        return super().eventFilter(obj, event)
+
+    def enterEvent(self, event):
+        if self._toggle_opacity is None:
+            self._init_opacity_effect()
+        self._hover_anim.stop()
+        self._hover_anim.setEndValue(1.0)
+        self._hover_anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self._toggle_opacity is None:
+            super().leaveEvent(event)
+            return
+        self._hover_anim.stop()
+        self._hover_anim.setEndValue(0.0)
+        self._hover_anim.start()
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._btn.move(self.width() - self._btn.width() - 10, 5)
+
+    def _toggle(self):
+        vis = not self._content.isVisible()
+        self._content.setVisible(vis)
+        self._btn.setIcon(self._current_dim())
+        self._btn.setToolTip("Hide" if vis else "Unhide")
+        self._main.settings.setValue(f'section_{self._key}_visible', int(vis))
+
+
 class _GripSplitter(QSplitter):
     """QSplitter with a subtle line grab handle."""
     def createHandle(self):
@@ -470,36 +594,36 @@ class SonarPlayer(
         self._splitter.setChildrenCollapsible(False)
         # Queue panel (index 2) will be shown/hidden via setVisible, not collapsed
 
-        # --- LEFT PANEL (Art & Info) ---
+        # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
         _left_widget = QWidget()
         left_panel = QVBoxLayout(_left_widget)
         left_panel.setContentsMargins(0, 0, 6, 0)
+        left_panel.setSpacing(0)
         left_panel.addSpacing(36)
 
+        # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
-        left_panel.addWidget(self.art_container, 5)
-        
+        self._art_section = _SectionWidget(self.art_container, 'art', self)
+        left_panel.addWidget(self._art_section, 2)
+
+        # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
         self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        
-        vis_wrapper = QWidget()
-        vis_layout = QHBoxLayout(vis_wrapper)
-        vis_layout.setContentsMargins(0, 0, 0, 0)
-        vis_layout.addWidget(self.visualizer)
-        
-        left_panel.addWidget(vis_wrapper, 2)
-        
+        self._vis_section = _SectionWidget(self.visualizer, 'vis', self)
+        left_panel.addWidget(self._vis_section, 1)
+
+        # Section 3: Track info (25%)
         text_info_container = QWidget()
         text_info_layout = QVBoxLayout(text_info_container)
         text_info_layout.setContentsMargins(0, 15, 0, 0)
-        text_info_layout.setSpacing(2)
+        text_info_layout.setSpacing(6)
 
         self.track_title = QLabel("")
         self.track_title.setWordWrap(True)
         self.track_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.track_title.setStyleSheet("font-size: 28px; font-weight: bold; color: white;")
         text_info_layout.addWidget(self.track_title)
-        
+
         self.track_artist = QLabel("")
         self.track_artist.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.track_artist.setStyleSheet("font-size: 18px; color: #888;")
@@ -517,9 +641,15 @@ class SonarPlayer(
         self.heart_btn.setStyleSheet("background: transparent; border: none;")
         self.heart_btn.clicked.connect(self._toggle_now_playing_favorite)
         text_info_layout.addWidget(self.heart_btn)
+        text_info_layout.addStretch(1)
 
-        left_panel.addWidget(text_info_container, 0)
-        left_panel.addStretch(1)
+        self._info_section = _SectionWidget(text_info_container, 'info', self)
+        left_panel.addWidget(self._info_section, 1)
+
+        # Restore section visibility (deferred so layout has computed heights first)
+        for sec, key in [(self._art_section, 'art'), (self._vis_section, 'vis'), (self._info_section, 'info')]:
+            if not int(self.settings.value(f'section_{key}_visible', 1)):
+                QTimer.singleShot(0, sec._toggle)
         
         # --- RIGHT PANEL (Tabs & Search) ---
 
@@ -854,9 +984,11 @@ class SonarPlayer(
         # --- FLOATING QUEUE PANEL (overlay, anchored above footer) ---
         self._queue_panel = QueuePanel(self)
         self._queue_panel.play_index.connect(self._queue_play_at)
+        self._queue_panel.play_next_index.connect(self._queue_play_next_at)
         self._queue_panel.remove_index.connect(self._queue_remove_at)
         self._queue_panel.close_requested.connect(self._toggle_queue_panel)
         self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
+        self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
         self._queue_panel.hide()
         if self.settings.value('queue_panel_visible', 'false') == 'true':
             QTimer.singleShot(0, lambda: (self._queue_panel.show(),
@@ -947,7 +1079,10 @@ class SonarPlayer(
         panel_h  = int(self.settings.value('queue_panel_height', 420))
         margin_l = 8   # align with left content margin
         margin_b = 8    # gap above footer
-        panel_h  = min(panel_h, self.height() - footer_h - margin_b - 40)
+        margin_t = 8    # gap below top edge
+        max_h = self.height() - footer_h - margin_b - margin_t
+        self._queue_panel._MAX_H = max_h
+        panel_h  = min(panel_h, max_h)
         panel_h  = max(panel_h, 180)
         x = margin_l
         y = self.height() - footer_h - margin_b - panel_h
@@ -963,6 +1098,48 @@ class SonarPlayer(
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):
             self.play_song(idx)
+
+    def _queue_play_next_at(self, idx: int):
+        if not (0 <= idx < len(self.playlist_data)):
+            return
+        current_track = (self.playlist_data[self.current_index]
+                         if 0 <= self.current_index < len(self.playlist_data) else None)
+        track = self.playlist_data.pop(idx)
+        item  = self.tree.takeTopLevelItem(idx)
+        if current_track:
+            try:
+                self.current_index = self.playlist_data.index(current_track)
+            except ValueError:
+                self.current_index = -1
+        insert_pos = self.current_index + 1
+        self.playlist_data.insert(insert_pos, track)
+        self.tree.insertTopLevelItem(insert_pos, item)
+        if current_track:
+            try:
+                self.current_index = self.playlist_data.index(current_track)
+            except ValueError:
+                pass
+        for i in range(self.tree.topLevelItemCount()):
+            self.tree.topLevelItem(i).setText(0, str(i + 1))
+        self._refresh_queue_panel()
+
+    def _queue_toggle_favorite(self, idx: int):
+        if not (0 <= idx < len(self.playlist_data)):
+            return
+        track = self.playlist_data[idx]
+        raw = track.get('starred', False)
+        current = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+        new_state = not current
+        track['starred'] = new_state
+        if idx == self.current_index and hasattr(self, 'heart_btn'):
+            accent = getattr(self, 'master_color', '#ffffff')
+            self.heart_btn.setIcon(self._make_heart_icon(new_state, accent))
+        if hasattr(self, 'navidrome_client') and self.navidrome_client:
+            import threading
+            threading.Thread(
+                target=lambda: self.navidrome_client.set_favorite(track.get('id'), new_state),
+                daemon=True,
+            ).start()
 
     def _queue_remove_at(self, idx: int):
         if not (0 <= idx < len(self.playlist_data)):

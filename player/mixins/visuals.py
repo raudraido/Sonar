@@ -266,6 +266,9 @@ class VisualsMixin:
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
 
+        for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None), getattr(self, '_info_section', None)]:
+            if _sec: _sec.set_master_color(mc)
+
         self.btn_shuffle.master_color = mc; self.btn_repeat.master_color = mc
         self.btn_shuffle.setIcon(get_cached_icon("img/shuffle.png", mc)); self.btn_repeat.setIcon(get_cached_icon("img/repeat.png", mc))
 
