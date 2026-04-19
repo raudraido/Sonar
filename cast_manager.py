@@ -417,6 +417,7 @@ class _Bridge(QObject):
     refresh_ui       = pyqtSignal()
     device_state     = pyqtSignal(str, bool)   # (dev_id, is_connected)
     device_volume    = pyqtSignal(str, int)    # (dev_id, 0-100)
+    airplay_pin_req  = pyqtSignal(str, object) # (device_name, submit_fn)
 
 
 # ── Volume slider style ───────────────────────────────────────────────────
@@ -711,6 +712,7 @@ class CastManager:
         self._ui_bridge.refresh_ui.connect(main_window.refresh_ui_styles)
         self._ui_bridge.device_state.connect(self._on_device_state_main)
         self._ui_bridge.device_volume.connect(self._on_device_volume_main)
+        self._ui_bridge.airplay_pin_req.connect(self._on_airplay_pin_main)
         if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
             self._start_scan()
 
@@ -951,6 +953,20 @@ class CastManager:
             except Exception:
                 pass
 
+    def _on_airplay_pin(self, device_name: str, submit_fn):
+        """Called from stderr-reader thread — marshal to main thread via signal."""
+        self._ui_bridge.airplay_pin_req.emit(device_name, submit_fn)
+
+    def _on_airplay_pin_main(self, device_name: str, submit_fn):
+        """Main-thread: show PIN dialog and forward the result to cliap2."""
+        from PyQt6.QtWidgets import QInputDialog
+        pin, ok = QInputDialog.getText(
+            self._win, 'AirPlay Pairing',
+            f'Enter the 4-digit PIN shown on {device_name}:',
+        )
+        if ok and pin.strip():
+            threading.Thread(target=submit_fn, args=(pin.strip(),), daemon=True).start()
+
     def _on_device_state_main(self, dev_id: str, connected: bool):
         """Runs on main thread; updates popup row and cast button color."""
         if self._popup:
@@ -997,7 +1013,7 @@ class CastManager:
                 d = _ChromecastDevice(dev._cc)
                 d.connect()   # cc.wait(); browser stays alive in self._browser
             elif dev.protocol in ('airplay1', 'airplay2'):
-                d = AirPlayDevice(dev._ap)
+                d = AirPlayDevice(dev._ap, pin_callback=self._on_airplay_pin)
                 d.connect()   # downloads binaries + ffmpeg if needed
             else:
                 d = _DLNADevice(dev.location, avt_url=dev.avt_url, rc_url=dev.rc_url)

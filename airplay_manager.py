@@ -1,9 +1,8 @@
 """
 airplay_manager.py — AirPlay 1 (RAOP via cliraop) + AirPlay 2 (cliap2) support.
 
-Binary sources: music-assistant/server (github.com/music-assistant/server)
-PCM audio is decoded by ffmpeg and piped to the binary stdin.
-Commands (pause/resume/seek/volume) go through a named FIFO pipe.
+Binaries and shared libraries are bundled under airplay/ next to this file.
+No runtime downloads required.
 """
 
 from __future__ import annotations
@@ -13,11 +12,9 @@ import os
 import platform
 import shutil
 import socket
-import stat
 import subprocess
 import threading
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -28,25 +25,39 @@ _MACHINE = platform.machine().lower()
 if _MACHINE in ('x86_64', 'amd64'):    _MACHINE = 'x86_64'
 elif _MACHINE in ('aarch64', 'arm64'): _MACHINE = 'aarch64'
 
-_BIN_DIR  = os.path.expanduser('~/.config/sonar/bin')
-_LIB_DIR  = os.path.expanduser('~/.config/sonar/lib')
-_FF5_DIR  = os.path.expanduser('~/.config/sonar/ffmpeg5/lib')
+# airplay/ directory sits next to this file
+_AIRPLAY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'airplay')
+_BUNDLE_BIN  = os.path.join(_AIRPLAY_DIR, 'bin')
+_BUNDLE_LIBS = os.path.join(_AIRPLAY_DIR, f'lib/{_SYSTEM}-{_MACHINE}')
+_CREDS_DIR   = os.path.expanduser('~/.config/sonar/credentials')
+
+
+def _creds_path(device_id: str) -> str:
+    os.makedirs(_CREDS_DIR, exist_ok=True)
+    return os.path.join(_CREDS_DIR, f'{device_id}.txt')
+
+
+def load_credentials(device_id: str) -> str:
+    """Return stored AirPlay 2 auth key for this device, or ''."""
+    try:
+        with open(_creds_path(device_id)) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ''
+
+
+def save_credentials(device_id: str, key: str):
+    with open(_creds_path(device_id), 'w') as f:
+        f.write(key.strip())
+
 
 def _cliap2_env() -> dict:
-    """Environment with FFmpeg 5.x libs prepended so cliap2 resolves its dependencies."""
+    """Inject bundled libs so cliap2 finds its FFmpeg 5.x dependencies."""
     env = os.environ.copy()
-    extra = f'{_FF5_DIR}:{_LIB_DIR}'
     existing = env.get('LD_LIBRARY_PATH', '')
-    env['LD_LIBRARY_PATH'] = f'{extra}:{existing}' if existing else extra
+    env['LD_LIBRARY_PATH'] = f'{_BUNDLE_LIBS}:{existing}' if existing else _BUNDLE_LIBS
     return env
 
-_MA_BASE = ('https://raw.githubusercontent.com/music-assistant/server'
-            '/main/music_assistant/providers/airplay/bin')
-
-_BIN_URLS: dict[str, str] = {
-    'cliraop': f'{_MA_BASE}/cliraop-{_SYSTEM}-{_MACHINE}',
-    'cliap2':  f'{_MA_BASE}/cliap2-{_SYSTEM}-{_MACHINE}',
-}
 
 # ── mDNS service types ────────────────────────────────────────────────────
 
@@ -65,41 +76,27 @@ def _ntp_now() -> int:
     return ((sec + _NTP_EPOCH) << 32) | int((us << 32) / 1_000_000)
 
 
-# ── Binary / ffmpeg management ────────────────────────────────────────────
+# ── Binary / ffmpeg lookup ────────────────────────────────────────────────
 
 def get_binary(name: str) -> str:
-    """Return path to cliraop or cliap2, downloading from music-assistant if needed."""
-    os.makedirs(_BIN_DIR, exist_ok=True)
-    path = os.path.join(_BIN_DIR, name)
+    """Return path to bundled cliraop or cliap2 binary."""
+    path = os.path.join(_BUNDLE_BIN, f'{name}-{_SYSTEM}-{_MACHINE}')
     if not os.path.isfile(path):
-        url = _BIN_URLS.get(name)
-        if not url:
-            raise RuntimeError(f'No download URL for {name} on {_SYSTEM}/{_MACHINE}')
-        print(f'[AirPlay] Downloading {name} …')
-        urllib.request.urlretrieve(url, path)
-        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        print(f'[AirPlay] {name} ready → {path}')
+        raise RuntimeError(
+            f'AirPlay binary not found: {path}\n'
+            f'Platform {_SYSTEM}/{_MACHINE} may not be supported.'
+        )
+    # Ensure executable bit is set (git may strip it)
+    os.chmod(path, os.stat(path).st_mode | 0o111)
     return path
 
 
 def get_ffmpeg() -> str:
-    """Return path to ffmpeg, auto-installing via imageio-ffmpeg if needed."""
+    """Return system ffmpeg path."""
     ff = shutil.which('ffmpeg')
     if ff:
         return ff
-    try:
-        import imageio_ffmpeg          # type: ignore
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except ImportError:
-        pass
-    import sys
-    print('[AirPlay] Installing imageio-ffmpeg (bundles static ffmpeg) …')
-    subprocess.run(
-        [sys.executable, '-m', 'pip', 'install', 'imageio-ffmpeg'],
-        check=True, capture_output=True,
-    )
-    import imageio_ffmpeg              # type: ignore
-    return imageio_ffmpeg.get_ffmpeg_exe()
+    raise RuntimeError('ffmpeg not found. Install it with: sudo apt install ffmpeg')
 
 
 # ── Device info ───────────────────────────────────────────────────────────
@@ -131,7 +128,7 @@ class AirPlayDevice:
 
     _LATENCY_MS = 1000
 
-    def __init__(self, info: AirPlayDeviceInfo):
+    def __init__(self, info: AirPlayDeviceInfo, pin_callback=None):
         self._info          = info
         self._cli_proc:     Optional[subprocess.Popen] = None
         self._ffmpeg_proc:  Optional[subprocess.Popen] = None
@@ -140,6 +137,9 @@ class AirPlayDevice:
         self._volume        = 50
         self._binary: Optional[str]  = None
         self._ffmpeg_bin: Optional[str] = None
+        self._vol_timer: Optional[threading.Timer] = None
+        # pin_callback(device_name, submit_fn) called on main thread when PIN needed
+        self._pin_callback  = pin_callback
 
     # ── Public ────────────────────────────────────────────────────────────
 
@@ -151,6 +151,8 @@ class AirPlayDevice:
                 self._binary = get_binary(bin_name)
             if not self._ffmpeg_bin:
                 self._ffmpeg_bin = get_ffmpeg()
+            if self._info.protocol == 'airplay2' and not self._info.credentials:
+                self._info.credentials = load_credentials(self._info.id)
         except Exception as e:
             print(f'[AirPlay] Binary setup failed: {e}')
 
@@ -207,6 +209,13 @@ class AirPlayDevice:
 
     def set_volume(self, v: float):
         self._volume = int(v * 100)
+        if self._vol_timer:
+            self._vol_timer.cancel()
+        self._vol_timer = threading.Timer(0.15, self._flush_volume)
+        self._vol_timer.daemon = True
+        self._vol_timer.start()
+
+    def _flush_volume(self):
         self._send(f'VOLUME={self._volume}')
 
     def get_volume(self) -> int:
@@ -286,8 +295,27 @@ class AirPlayDevice:
                 line = raw.decode('utf-8', errors='replace').rstrip()
             except Exception:
                 continue
-            if line:
-                print(f'[AirPlay:{self._info.name}] {line}')
+            if not line:
+                continue
+            print(f'[AirPlay:{self._info.name}] {line}')
+
+            # PIN pairing required
+            if 'Starting device pairing' in line and self._pin_callback:
+                self._pin_callback(self._info.name, self._submit_pin)
+
+            # New auth key after successful pairing
+            if 'new authorization key is' in line:
+                try:
+                    key = line.split('new authorization key is')[-1].strip()
+                    if key:
+                        save_credentials(self._info.id, key)
+                        self._info.credentials = key
+                        print(f'[AirPlay] Saved credentials for {self._info.name}')
+                except Exception as e:
+                    print(f'[AirPlay] Failed to save credentials: {e}')
+
+    def _submit_pin(self, pin: str):
+        self._send(f'PIN={pin.strip()}')
 
     def _cleanup(self):
         for p in (self._ffmpeg_proc, self._cli_proc):
