@@ -306,6 +306,7 @@ class PlaybackMixin:
 
             track['debug_t0'] = t0
             self.playback_manager.play_request(track)
+            self._cast_relay_track(track)
             
             print(f"[TIMING] +{time.time() - t0:.3f}s | Request Sent to Manager")
 
@@ -347,11 +348,12 @@ class PlaybackMixin:
             if hasattr(self, 'import_music'): self.import_music()
             return
         
-        if self.audio_engine.is_playing: 
+        if self.audio_engine.is_playing:
             self.audio_engine.pause()
-            self.smooth_timer.stop() 
+            self.smooth_timer.stop()
             if hasattr(self, 'seek_bar'):
                 self.seek_bar.is_playing = False
+            self._cast_relay_pause()
         else:
             # If nothing is selected, default to the top track
             if self.current_index == -1: 
@@ -361,13 +363,15 @@ class PlaybackMixin:
             if self.audio_engine.total_ms <= 0:
                 track = self.playlist_data[self.current_index]
                 self.playback_manager.play_request(track)
+                self._cast_relay_track(track)
             else:
                 self.audio_engine.play()
                 self.last_engine_update_time = time.time()
-                self.smooth_timer.start() 
+                self.smooth_timer.start()
                 if hasattr(self, 'seek_bar'):
                     self.seek_bar.is_playing = True
-        
+                self._cast_relay_play()
+
         self.refresh_ui_styles()
         self.update_window_title()
 
@@ -460,6 +464,7 @@ class PlaybackMixin:
             
             self.visual_update_timer.start(350)
             self.preload_next()
+            self._cast_relay_track(track)
             if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
                 self._refresh_queue_panel()
     
@@ -641,6 +646,7 @@ class PlaybackMixin:
         self.ignore_updates_until = time.time() + 1.0
         self.last_engine_pos = target_ms
         self.last_engine_update_time = time.time()
+        self._cast_relay_seek(target_ms)
 
     def on_live_scratch(self, target_ms):
         """Fires 60 times a second while the user is dragging the waveform."""
@@ -915,3 +921,37 @@ class PlaybackMixin:
             if tl and hasattr(tl, 'refresh_track_item'):
                 tl.refresh_track_item(str(fresh.get('id', '')), fresh)
     
+
+    # ── Cast relay helpers ─────────────────────────────────────────────────────
+
+    def _cast_relay_track(self, track):
+        cm = getattr(self, '_cast_manager', None)
+        if cm:
+            import threading
+            threading.Thread(target=lambda: cm.relay_track(track), daemon=True).start()
+
+    def _cast_relay_pause(self):
+        cm = getattr(self, '_cast_manager', None)
+        if cm:
+            cm.relay_pause()
+
+    def _cast_relay_play(self):
+        cm = getattr(self, '_cast_manager', None)
+        if cm:
+            cm.relay_play()
+
+    def _cast_relay_seek(self, target_ms: int):
+        cm = getattr(self, '_cast_manager', None)
+        if cm:
+            import threading
+            threading.Thread(
+                target=cm.relay_seek, args=(target_ms / 1000.0,), daemon=True
+            ).start()
+
+    def _cast_relay_volume(self, value: int):
+        cm = getattr(self, '_cast_manager', None)
+        if cm:
+            import threading
+            threading.Thread(
+                target=cm.relay_volume, args=(value,), daemon=True
+            ).start()

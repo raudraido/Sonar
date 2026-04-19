@@ -456,6 +456,9 @@ class SonarPlayer(
         # --- Background downloader for playlist covers ---
         self.playlist_cover_worker = PlaylistCoverWorker(None)
         self.playlist_cover_worker.cover_downloaded.connect(self.tree.viewport().update)
+
+        # Pre-initialize cast manager so device discovery runs in background at startup
+        QTimer.singleShot(2000, self._init_cast_manager)
         
         # --- Initialize the Spotlight Search Overlay (No DB passed)
         self.spotlight = SpotlightSearch(self, None)
@@ -849,6 +852,15 @@ class SonarPlayer(
         self.import_btn.clicked.connect(self.import_music)
         self.import_btn.setToolTip("Add Music")
 
+        self.cast_btn = QPushButton("")
+        self.cast_btn.setFixedSize(40, 40)
+        self.cast_btn.setIconSize(QSize(22, 22))
+        self.cast_btn.setFlat(True)
+        self.cast_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cast_btn.setStyleSheet("background: transparent; border: none;")
+        self.cast_btn.setToolTip("Cast to device")
+        self.cast_btn.clicked.connect(self._on_cast_clicked)
+
         self.settings_btn = QPushButton("")
         self.settings_btn.setFixedSize(40, 40)
         self.settings_btn.setIconSize(QSize(20, 20))
@@ -974,6 +986,8 @@ class SonarPlayer(
         right_layout.addSpacing(10)
         right_layout.addWidget(self.vol_icon_label)
         right_layout.addWidget(self.vol_slider)
+        right_layout.addSpacing(10)
+        right_layout.addWidget(self.cast_btn)
         
         main_footer_layout.addWidget(footer_left, 1)
         main_footer_layout.addWidget(footer_center, 2)
@@ -997,7 +1011,7 @@ class SonarPlayer(
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
-        for w in [self.import_btn, self.settings_btn, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
+        for w in [self.import_btn, self.settings_btn, self.cast_btn, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             w.setCursor(Qt.CursorShape.PointingHandCursor)
             w.installEventFilter(self)
@@ -1055,6 +1069,18 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
+
+    # ── Cast ──────────────────────────────────────────────────────────────────
+
+    def _init_cast_manager(self):
+        """Called at startup (2 s delay) to kick off background device discovery."""
+        from cast_manager import CastManager
+        if not hasattr(self, '_cast_manager'):
+            self._cast_manager = CastManager(self)
+
+    def _on_cast_clicked(self):
+        self._init_cast_manager()
+        self._cast_manager.show_picker()
 
     # ── Queue panel helpers ───────────────────────────────────────────────────
 

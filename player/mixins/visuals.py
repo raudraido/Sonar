@@ -277,6 +277,8 @@ class VisualsMixin:
 
         for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.import_btn, "img/import.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png")]:
             btn.setIcon(get_cached_icon(icon_name, mc))
+        cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
+        self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
 
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, 'set_accent_color'):
@@ -527,13 +529,13 @@ class VisualsMixin:
     def update_volume(self, value):
         """Optimized: Only updates audio engine and icon, skips full UI refresh."""
         self.audio_engine.set_volume(value)
-        
+
         should_be_muted = (value == 0)
-        
+
         if should_be_muted != self.is_muted:
             self.is_muted = should_be_muted
             self.update_volume_icon()
-        
+
         if not self.is_muted:
             self.last_volume = value
 
