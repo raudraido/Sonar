@@ -203,7 +203,7 @@ class AirPlayDevice:
 
     def pause(self):               self._send('ACTION=PAUSE')
     def resume(self):              self._send('ACTION=PLAY')
-    def seek(self, seconds: float): self._send(f'SEEK={int(seconds)}')
+    def seek(self, seconds: float): self._send(f'PROGRESS={int(seconds)}')
 
     def set_volume(self, v: float):
         self._volume = int(v * 100)
