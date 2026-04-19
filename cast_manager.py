@@ -40,6 +40,13 @@ try:
 except ImportError:
     _HAVE_DLNA = False
 
+try:
+    import zeroconf as _zc_mod   # noqa: F401 — just check presence
+    from airplay_manager import AirPlayDevice, AirPlayDeviceInfo, discover as _ap_discover
+    _HAVE_AP = True
+except ImportError:
+    _HAVE_AP = False
+
 
 # ── Dedicated asyncio loop (for DLNA async operations) ────────────────────
 
@@ -112,12 +119,13 @@ def _didl(url: str, title: str, artist: str, album: str, ct: str) -> str:
 class DeviceInfo:
     id:       str
     name:     str
-    protocol: str          # 'chromecast' | 'dlna'
+    protocol: str          # 'chromecast' | 'dlna' | 'airplay1' | 'airplay2'
     location: str = ''     # DLNA description URL
     avt_url:  str = ''     # cached AVTransport control URL (skip _ensure() on connect)
     rc_url:   str = ''     # cached RenderingControl control URL
     _cc:      object = field(default=None, repr=False)
     _browser: object = field(default=None, repr=False)
+    _ap:      object = field(default=None, repr=False)  # AirPlayDeviceInfo
 
 
 # ── Chromecast wrapper ────────────────────────────────────────────────────
@@ -434,7 +442,7 @@ class _DeviceRow(QWidget):
     toggled        = pyqtSignal(object)        # DeviceInfo | None
     volume_changed = pyqtSignal(object, int)   # (DeviceInfo | None, 0–100)
 
-    _PROTO_ICON = {'chromecast': '📺', 'dlna': '🔊'}
+    _PROTO_ICON = {'chromecast': '📺', 'dlna': '🔊', 'airplay1': '', 'airplay2': ''}
 
     def __init__(self, dev, is_active: bool, volume: int = 50,
                  show_toggle: bool = True, parent=None):
@@ -703,13 +711,13 @@ class CastManager:
         self._ui_bridge.refresh_ui.connect(main_window.refresh_ui_styles)
         self._ui_bridge.device_state.connect(self._on_device_state_main)
         self._ui_bridge.device_volume.connect(self._on_device_volume_main)
-        if _HAVE_CC or _HAVE_DLNA:
+        if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
             self._start_scan()
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def show_picker(self):
-        if not (_HAVE_CC or _HAVE_DLNA):
+        if not (_HAVE_CC or _HAVE_DLNA or _HAVE_AP):
             self._no_lib_msg(); return
 
         import time as _t
@@ -777,13 +785,15 @@ class CastManager:
         if self._pending_scans > 0:
             return   # already scanning
         self._devices.clear()
-        self._pending_scans = (_HAVE_CC + _HAVE_DLNA)  # booleans sum as ints
+        self._pending_scans = (_HAVE_CC + _HAVE_DLNA + _HAVE_AP)
         bridge = _Bridge(self._win)
         bridge.devices_found.connect(self._on_scan_results)
         if _HAVE_CC:
             threading.Thread(target=self._discover_cc, args=(bridge,), daemon=True).start()
         if _HAVE_DLNA:
             _run_async(self._discover_dlna(bridge))
+        if _HAVE_AP:
+            threading.Thread(target=self._discover_airplay, args=(bridge,), daemon=True).start()
 
     def _on_scan_results(self, devices: list):
         import time as _t
@@ -875,6 +885,21 @@ class CastManager:
         except Exception as e:
             print(f'[DLNA] device_info error for {location}: {e}')
             return location.split('/')[2], '', ''
+
+    def _discover_airplay(self, bridge: _Bridge):
+        try:
+            ap_devices = _ap_discover(timeout=5.0)
+            devices = [
+                DeviceInfo(
+                    id=d.id, name=d.name, protocol=d.protocol,
+                    _ap=d,
+                )
+                for d in ap_devices
+            ]
+            bridge.devices_found.emit(devices)
+        except Exception as e:
+            print(f'[Cast] AirPlay discovery error: {e}')
+            bridge.devices_found.emit([])
 
     # ── Toggle / volume handlers (main thread, called by popup signals) ──────
 
@@ -971,6 +996,9 @@ class CastManager:
             if dev.protocol == 'chromecast':
                 d = _ChromecastDevice(dev._cc)
                 d.connect()   # cc.wait(); browser stays alive in self._browser
+            elif dev.protocol in ('airplay1', 'airplay2'):
+                d = AirPlayDevice(dev._ap)
+                d.connect()   # downloads binaries + ffmpeg if needed
             else:
                 d = _DLNADevice(dev.location, avt_url=dev.avt_url, rc_url=dev.rc_url)
 
@@ -1076,6 +1104,7 @@ class CastManager:
         missing = []
         if not _HAVE_CC:   missing.append('pychromecast')
         if not _HAVE_DLNA: missing.append('async-upnp-client')
+        if not _HAVE_AP:   missing.append('zeroconf')
         QMessageBox.information(
             self._win, 'Cast unavailable',
             f"Install missing libraries:\n  pip install {' '.join(missing)}",
