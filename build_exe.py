@@ -26,6 +26,10 @@ IMPORT_TO_PIP = {
     "mutagen": "mutagen",
     "sounddevice": "sounddevice",
     "soundfile": "SoundFile",
+    "pychromecast": "pychromecast",
+    "zeroconf": "zeroconf",
+    "aiohttp": "aiohttp",
+    "async_upnp_client": "async-upnp-client",
 }
 
 # Standard library modules — never try to pip install these
@@ -299,7 +303,7 @@ def build():
     if current_os == "Linux":
         bundle_linux_qt_platform_plugins(added_data)
 
-    # 6. Bundle the platform-specific audio engine binary
+    # 6. Bundle the platform-specific audio engine binary + its dependency DLLs
     print("\n--- Detecting Audio Engine Binary ---")
     binary = find_audio_binary()
     if binary:
@@ -307,6 +311,18 @@ def build():
         print(f"  Added Binary: {binary}")
     else:
         print("  WARNING: No audio_core binary found. Run build.py first.")
+
+    if current_os == "Windows":
+        libs_dir = "libs"
+        if os.path.isdir(libs_dir):
+            print("\n--- Bundling audio_core dependency DLLs ---")
+            for dll in os.listdir(libs_dir):
+                if dll.lower().endswith(".dll"):
+                    src = os.path.join(libs_dir, dll)
+                    added_data.append(f'--add-binary={src}{_SEP}libs')
+                    print(f"  Added DLL: {dll}")
+        else:
+            print("  WARNING: libs/ folder not found — audio_core.dll dependencies may be missing.")
 
     # 7. PyInstaller arguments
     args = [
@@ -317,6 +333,21 @@ def build():
         '--clean',
         '--windowed',
         '--collect-all=psutil',
+        '--collect-all=pychromecast',
+        '--collect-all=zeroconf',
+        '--collect-all=aiohttp',
+        '--collect-all=async_upnp_client',
+        '--collect-all=ifaddr',
+        '--hidden-import=pychromecast',
+        '--hidden-import=pychromecast.discovery',
+        '--hidden-import=pychromecast.controllers',
+        '--hidden-import=pychromecast.controllers.media',
+        '--hidden-import=zeroconf',
+        '--hidden-import=zeroconf._utils.ipaddress',
+        '--hidden-import=zeroconf._dns',
+        '--hidden-import=aiohttp',
+        '--hidden-import=async_upnp_client',
+        '--hidden-import=async_upnp_client.search',
     ] + added_data
 
     # Generate icon.ico from the Sonar design (Windows requires .ico)
