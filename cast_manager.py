@@ -141,7 +141,7 @@ class _ChromecastDevice:
         # kills cc.wait() for every other device in the batch.
         self._cc.wait(timeout=8)
 
-    def play_track(self, url: str, track: dict):
+    def play_track(self, url: str, track: dict, **_kw):
         ct = _content_type(track)
         mc = self._cc.media_controller
         mc.play_media(
@@ -310,7 +310,7 @@ class _DLNADevice:
         except Exception:
             return 50
 
-    def play_track(self, url, track):
+    def play_track(self, url, track, **_kw):
         f = _run_async(self.async_play_track(url, track))
         f.add_done_callback(
             lambda fut: print(f'[DLNA] play_track error: {fut.exception()}')
@@ -1171,8 +1171,14 @@ class CastManager:
                 d = _ChromecastDevice(dev._cc)
                 d.connect()   # cc.wait(); browser stays alive in self._browser
             elif dev.protocol in ('airplay1', 'airplay2'):
-                d = AirPlayDevice(dev._ap, pin_callback=self._on_airplay_pin)
-                d.connect()   # downloads binaries + ffmpeg if needed
+                d = AirPlayDevice(
+                    dev._ap,
+                    pin_callback=self._on_airplay_pin,
+                    error_callback=lambda name, msg: self._ui_bridge.show_error.emit(
+                        f'AirPlay – {name}', msg
+                    ),
+                )
+                d.connect()
             else:
                 d = _DLNADevice(dev.location, avt_url=dev.avt_url, rc_url=dev.rc_url)
 
@@ -1208,6 +1214,14 @@ class CastManager:
                         except Exception as e:
                             print(f'[Cast] DLNA play chain error: {e}')
                     fut.add_done_callback(_on_chain_done)
+            elif dev.protocol in ('airplay1', 'airplay2'):
+                # stream_file() runs for the full song — fire-and-forget; errors
+                # arrive via error_callback as a Qt signal on the main thread.
+                if url:
+                    d.play_track(url, track)
+                vol = d.get_volume()
+                if vol > 0:
+                    self._ui_bridge.device_volume.emit(dev.id, vol)
             else:
                 # Chromecast: already blocking-connected; do play+seek in this thread
                 import time

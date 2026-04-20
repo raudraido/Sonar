@@ -83,11 +83,13 @@ class AirPlayDevice:
     Public API matches what cast_manager expects.
     """
 
-    def __init__(self, info: AirPlayDeviceInfo, pin_callback=None):
-        self._info         = info
-        self._pin_callback = pin_callback
-        self._atv          = None   # pyatv AppleTV object
-        self._volume       = 50
+    def __init__(self, info: AirPlayDeviceInfo, pin_callback=None, error_callback=None):
+        self._info           = info
+        self._pin_callback   = pin_callback
+        self._error_callback = error_callback
+        self._atv            = None   # pyatv AppleTV object
+        self._volume         = 50
+        self._stream_future  = None   # currently running stream_file future
 
     # ── Public ────────────────────────────────────────────────────────────
 
@@ -96,7 +98,21 @@ class AirPlayDevice:
 
     def play_track(self, url: str, track: dict, subsonic=None,
                    seek_s: float = 0.0, ntp_start: int = 0, **_kw):
-        _run(self._async_play(url, seek_s)).result(timeout=30)
+        # stream_file() runs for the full duration of the song — never block here.
+        # Cancel any previous stream so we don't pile up concurrent streams.
+        if self._stream_future and not self._stream_future.done():
+            self._stream_future.cancel()
+        self._stream_future = _run(self._async_play(url, seek_s))
+        self._stream_future.add_done_callback(self._on_stream_done)
+
+    def _on_stream_done(self, fut):
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc:
+            print(f'[AirPlay] Stream error for {self._info.name!r}: {exc}')
+            if self._error_callback:
+                self._error_callback(self._info.name, str(exc))
 
     def pause(self):
         if self._atv:
@@ -126,6 +142,9 @@ class AirPlayDevice:
         return self._volume
 
     def stop(self):
+        if self._stream_future and not self._stream_future.done():
+            self._stream_future.cancel()
+        self._stream_future = None
         if self._atv:
             try:
                 _run(self._atv.remote_control.stop()).result(timeout=5)
@@ -148,13 +167,16 @@ class AirPlayDevice:
         if config is None:
             raise RuntimeError(f'No pyatv config for {self._info.name!r}')
 
-        proto = Protocol.AirPlay if self._info.protocol == 'airplay2' else Protocol.RAOP
+        # stream_file() always routes through the RAOP service internally (even on
+        # AirPlay 2), so credentials must be on the RAOP service or verify_connection
+        # falls back to hap_transient which Apple TV rejects with 470.
+        proto = Protocol.RAOP
         loop  = asyncio.get_event_loop()
 
-        # Apply stored credentials
+        # Apply stored credentials to the RAOP service
         creds = self._info.credentials or load_credentials(self._info.id)
         if creds:
-            svc = config.get_service(proto)
+            svc = config.get_service(Protocol.RAOP)
             if svc:
                 try:
                     svc.credentials = creds
@@ -169,6 +191,18 @@ class AirPlayDevice:
             return
         except _exc.AuthenticationError as e:
             print(f'[AirPlay] Auth required for {self._info.name!r}: {e}')
+            # Stale saved credentials may have triggered this — clear them so pairing
+            # starts fresh rather than re-presenting bad creds to the device.
+            if creds:
+                print(f'[AirPlay] Clearing stale credentials for {self._info.name!r}')
+                save_credentials(self._info.id, '')
+                self._info.credentials = ''
+                svc = config.get_service(proto)
+                if svc:
+                    try:
+                        svc.credentials = None
+                    except Exception:
+                        pass
         except _exc.PairingError as e:
             print(f'[AirPlay] Pairing error connecting to {self._info.name!r}: {e}')
             raise
@@ -184,9 +218,27 @@ class AirPlayDevice:
                 'This device may not support pyatv pairing — '
                 'try an Apple TV or AirPlay-certified speaker instead.'
             ) from e
+        except _exc.AuthenticationError as e:
+            # HTTP 470 / auth failure during pairing handshake (e.g. wrong PIN or
+            # device rejected the HAP exchange).
+            raise RuntimeError(
+                f'Could not pair with {self._info.name!r}: the device rejected the '
+                f'authorization request ({e}).\n\n'
+                'Please check that the PIN was entered correctly and try again.'
+            ) from e
 
-        self._atv = await pyatv.connect(config, loop)
-        print(f'[AirPlay] Connected to {self._info.name!r} after pairing')
+        try:
+            self._atv = await pyatv.connect(config, loop)
+            print(f'[AirPlay] Connected to {self._info.name!r} after pairing')
+        except (_exc.AuthenticationError, _exc.PairingError) as e:
+            # Credentials from pairing didn't take — wipe them so the next attempt
+            # re-pairs from scratch rather than looping on a bad credential.
+            save_credentials(self._info.id, '')
+            self._info.credentials = ''
+            raise RuntimeError(
+                f'Paired with {self._info.name!r} but the connection still requires '
+                f'authorization ({e}).\n\nPlease try connecting again.'
+            ) from e
 
     async def _do_pairing(self, config, protocol, loop):
         """Run the pyatv pairing handshake, prompting for PIN via pin_callback."""
@@ -238,16 +290,17 @@ class AirPlayDevice:
         try:
             await self._atv.stream.stream_file(url)
         except Exception as e:
-            if 'auth' not in str(e).lower() and 'authenticated' not in str(e).lower():
+            e_str = str(e).lower()
+            if not ('auth' in e_str or '470' in e_str or 'credentials' in e_str or 'verify' in e_str):
                 raise
 
-            # stream_file auth failure — connect() succeeded but streaming needs
-            # credentials. Attempt pairing, reconnect, then retry once.
+            # stream_file auth failure — RAOP service needs credentials.
+            # Always pair with Protocol.RAOP so the credentials land on the right service.
             import pyatv
             from pyatv.const import Protocol
             from pyatv import exceptions as _exc
 
-            proto = Protocol.AirPlay if self._info.protocol == 'airplay2' else Protocol.RAOP
+            proto = Protocol.RAOP
             loop  = asyncio.get_event_loop()
             config = self._info._pyatv_config
 
@@ -255,20 +308,32 @@ class AirPlayDevice:
                 print(f'[AirPlay] Stream auth failed — attempting pairing with {self._info.name!r} …')
                 await self._do_pairing(config, proto, loop)
             except _exc.PairingError as pe:
-                # Device rejected pairing (e.g. macOS requires MFi hardware)
                 raise RuntimeError(
                     f'Cannot stream to {self._info.name!r}: pairing rejected.\n\n'
                     'macOS AirPlay receivers require MFi hardware authentication '
                     'that pyatv cannot provide.\n'
                     'Please use an Apple TV, HomePod, or AirPlay-certified speaker.'
                 ) from pe
+            except _exc.AuthenticationError as ae:
+                raise RuntimeError(
+                    f'Could not pair with {self._info.name!r}: authorization failed ({ae}).\n\n'
+                    'Please check that the PIN was entered correctly and try again.'
+                ) from ae
 
             # Reconnect with freshly stored credentials then retry
             try:
                 await self._atv.close()
             except Exception:
                 pass
-            self._atv = await pyatv.connect(config, loop)
+            try:
+                self._atv = await pyatv.connect(config, loop)
+            except (_exc.AuthenticationError, _exc.PairingError) as ce:
+                save_credentials(self._info.id, '')
+                self._info.credentials = ''
+                raise RuntimeError(
+                    f'Paired with {self._info.name!r} but reconnect failed ({ce}).\n\n'
+                    'Please try connecting again.'
+                ) from ce
             await self._atv.stream.stream_file(url)
 
         if seek_s > 1.0:
