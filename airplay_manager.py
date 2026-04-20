@@ -16,12 +16,13 @@ from typing import Optional
 
 # ── Credentials storage ───────────────────────────────────────────────────
 
-_CREDS_DIR = os.path.expanduser('~/.config/sonar/credentials')
+_CREDS_DIR = os.path.join(os.path.expanduser('~'), '.config', 'sonar', 'credentials')
 
 
 def _creds_path(device_id: str) -> str:
     os.makedirs(_CREDS_DIR, exist_ok=True)
-    return os.path.join(_CREDS_DIR, f'{device_id}.txt')
+    safe_id = device_id.replace(':', '').replace('/', '_').replace('\\', '_')
+    return os.path.join(_CREDS_DIR, f'{safe_id}.txt')
 
 
 def load_credentials(device_id: str) -> str:
@@ -141,32 +142,110 @@ class AirPlayDevice:
     async def _async_connect(self):
         import pyatv
         from pyatv.const import Protocol
+        from pyatv import exceptions as _exc
 
         config = self._info._pyatv_config
         if config is None:
             raise RuntimeError(f'No pyatv config for {self._info.name!r}')
 
-        # Apply stored credentials so the device doesn't ask to pair again
+        proto = Protocol.AirPlay if self._info.protocol == 'airplay2' else Protocol.RAOP
+        loop  = asyncio.get_event_loop()
+
+        # Apply stored credentials
         creds = self._info.credentials or load_credentials(self._info.id)
         if creds:
-            for proto in (Protocol.AirPlay, Protocol.RAOP):
-                svc = config.get_service(proto)
-                if svc:
-                    try:
-                        svc.credentials = creds
-                    except Exception:
-                        pass
+            svc = config.get_service(proto)
+            if svc:
+                try:
+                    svc.credentials = creds
+                except Exception:
+                    pass
 
-        self._atv = await pyatv.connect(config, asyncio.get_event_loop())
-        print(f'[AirPlay] Connected to {self._info.name!r} ({self._info.protocol})')
+        # Always try a direct connect first — many devices (Mac, open speakers)
+        # work without pairing; only fall through to pairing on an explicit auth error.
+        try:
+            self._atv = await pyatv.connect(config, loop)
+            print(f'[AirPlay] Connected to {self._info.name!r} ({self._info.protocol})')
+            return
+        except _exc.AuthenticationError as e:
+            print(f'[AirPlay] Auth required for {self._info.name!r}: {e}')
+        except _exc.PairingError as e:
+            print(f'[AirPlay] Pairing error connecting to {self._info.name!r}: {e}')
+            raise
+
+        # Connect failed with AuthenticationError — attempt pairing then retry
+        try:
+            await self._do_pairing(config, proto, loop)
+        except _exc.PairingError as e:
+            # Some devices (macOS AirPlay target) don't support HAP pairing via
+            # pyatv; surface a clear message rather than a cryptic traceback.
+            raise RuntimeError(
+                f'{self._info.name!r} rejected pairing ({e}). '
+                'This device may not support pyatv pairing — '
+                'try an Apple TV or AirPlay-certified speaker instead.'
+            ) from e
+
+        self._atv = await pyatv.connect(config, loop)
+        print(f'[AirPlay] Connected to {self._info.name!r} after pairing')
+
+    async def _do_pairing(self, config, protocol, loop):
+        """Run the pyatv pairing handshake, prompting for PIN via pin_callback."""
+        import pyatv
+
+        print(f'[AirPlay] Starting pairing with {self._info.name!r} …')
+        pairing = await pyatv.pair(config, protocol, loop)
+        await pairing.begin()
+
+        try:
+            if pairing.device_provides_pin:
+                # Device shows PIN on screen — ask the user to type it in
+                pin_ready  = asyncio.Event()
+                pin_holder = []
+
+                def submit_fn(pin_str: str):
+                    pin_holder.append(pin_str.strip())
+                    loop.call_soon_threadsafe(pin_ready.set)
+
+                if self._pin_callback:
+                    self._pin_callback(self._info.name, submit_fn)
+                else:
+                    raise RuntimeError('PIN required but no pin_callback registered')
+
+                await asyncio.wait_for(pin_ready.wait(), timeout=120.0)
+                pairing.pin(int(pin_holder[0]))
+            else:
+                # App-side PIN — pyatv picks one; we'd need to show it to the user.
+                # Most AirPlay 2 devices use device_provides_pin=True, so this is rare.
+                pairing.pin(1234)
+                print('[AirPlay] Using default PIN 1234 (app-side pairing)')
+
+            await pairing.finish()
+        finally:
+            await pairing.close()
+
+        # Save credentials so we don't pair again
+        svc = config.get_service(protocol)
+        if svc and svc.credentials:
+            save_credentials(self._info.id, svc.credentials)
+            self._info.credentials = svc.credentials
+            print(f'[AirPlay] Saved credentials for {self._info.name!r}')
 
     async def _async_play(self, url: str, seek_s: float = 0.0):
         if not self._atv:
             await self._async_connect()
 
-        from pyatv.const import MediaType
         print(f'[AirPlay] → {self._info.name!r}  {url!r}')
-        await self._atv.stream.stream_url(url, mediatype=MediaType.Music)
+        try:
+            await self._atv.stream.stream_file(url)
+        except Exception as e:
+            if 'auth' in str(e).lower() or 'authenticated' in str(e).lower():
+                raise RuntimeError(
+                    f'Authentication failed streaming to {self._info.name!r}.\n\n'
+                    'macOS AirPlay receivers require MFi hardware authentication '
+                    'that pyatv cannot provide.\n'
+                    'Please use an Apple TV, HomePod, or AirPlay-certified speaker.'
+                ) from e
+            raise
 
         if seek_s > 1.0:
             await asyncio.sleep(2.0)
@@ -174,6 +253,7 @@ class AirPlayDevice:
                 await self._atv.remote_control.set_position(int(seek_s))
             except Exception as e:
                 print(f'[AirPlay] Seek failed (ignored): {e}')
+
 
 
 # ── mDNS discovery ────────────────────────────────────────────────────────

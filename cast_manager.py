@@ -419,6 +419,7 @@ class _Bridge(QObject):
     device_state     = pyqtSignal(str, bool)   # (dev_id, is_connected)
     device_volume    = pyqtSignal(str, int)    # (dev_id, 0-100)
     airplay_pin_req  = pyqtSignal(str, object) # (device_name, submit_fn)
+    show_error       = pyqtSignal(str, str)    # (title, message)
 
 
 # ── Volume slider style ───────────────────────────────────────────────────
@@ -778,6 +779,7 @@ class CastManager:
         self._ui_bridge.device_state.connect(self._on_device_state_main)
         self._ui_bridge.device_volume.connect(self._on_device_volume_main)
         self._ui_bridge.airplay_pin_req.connect(self._on_airplay_pin_main)
+        self._ui_bridge.show_error.connect(self._on_show_error_main)
         if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
             self._start_scan()
 
@@ -1052,6 +1054,10 @@ class CastManager:
         if ok and pin.strip():
             threading.Thread(target=submit_fn, args=(pin.strip(),), daemon=True).start()
 
+    def _on_show_error_main(self, title: str, message: str):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(self._win, title, message)
+
     def _on_device_state_main(self, dev_id: str, connected: bool):
         """Runs on main thread; updates popup row and cast button color."""
         if self._popup:
@@ -1161,15 +1167,16 @@ class CastManager:
                     self._ui_bridge.device_volume.emit(dev.id, vol)
 
         except Exception as e:
-            import traceback
             print(f'[Cast] Connect failed: {e}')
-            traceback.print_exc()
+            if not isinstance(e, RuntimeError):
+                import traceback; traceback.print_exc()
             self._active_devices.pop(dev.id, None)
             self._active_ids.discard(dev.id)
             if not self._active_devices:
                 self._win._cast_connected = False
             self._refresh_ui()
             self._ui_bridge.device_state.emit(dev.id, False)
+            self._ui_bridge.show_error.emit(f'Cannot connect to {dev.name}', str(e))
 
     def _disconnect_device(self, dev_id: str):
         dev_obj = self._active_devices.pop(dev_id, None)
