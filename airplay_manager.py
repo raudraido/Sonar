@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
 
 # ── Platform detection ────────────────────────────────────────────────────
@@ -138,8 +139,16 @@ class AirPlayDevice:
         self._binary: Optional[str]  = None
         self._ffmpeg_bin: Optional[str] = None
         self._vol_timer: Optional[threading.Timer] = None
-        # pin_callback(device_name, submit_fn) called on main thread when PIN needed
-        self._pin_callback  = pin_callback
+        self._art_tmp: Optional[str] = None
+        self._current_url:      str  = ''
+        self._current_track:    dict = {}
+        self._current_subsonic       = None
+        self._pin_callback           = pin_callback
+        self._meta_ready:       bool = False
+        self._play_start_wall:  float = 0.0
+        self._play_seek_offset: float = 0.0
+        self._progress_stop:    bool  = False
+        self._art_server: Optional[HTTPServer] = None
 
     # ── Public ────────────────────────────────────────────────────────────
 
@@ -156,7 +165,8 @@ class AirPlayDevice:
         except Exception as e:
             print(f'[AirPlay] Binary setup failed: {e}')
 
-    def play_track(self, url: str, track: dict):
+    def play_track(self, url: str, track: dict, subsonic=None, seek_s: float = 0.0,
+                   ntp_start: int = 0):
         self.stop()
         if not self._binary or not self._ffmpeg_bin:
             self.connect()
@@ -164,7 +174,14 @@ class AirPlayDevice:
             print('[AirPlay] Missing binaries, cannot play')
             return
 
-        ntp            = _ntp_now()
+        self._current_url      = url
+        self._current_track    = track
+        self._current_subsonic = subsonic
+        self._meta_ready       = False
+        self._progress_stop    = False
+        self._play_seek_offset = seek_s
+
+        ntp            = ntp_start if ntp_start > 0 else _ntp_now()
         self._cmd_path = f'/tmp/sonar-{self._info.protocol}-{self._info.id[-12:]}.cmd'
         _mkfifo(self._cmd_path)
 
@@ -173,8 +190,10 @@ class AirPlayDevice:
         else:
             cli_args = self._cliraop_args(ntp)
 
-        ffmpeg_args = [
-            self._ffmpeg_bin, '-y',
+        ffmpeg_args = [self._ffmpeg_bin, '-y']
+        if seek_s > 0:
+            ffmpeg_args += ['-ss', str(seek_s)]
+        ffmpeg_args += [
             '-i', url,
             '-f', 's16le', '-ar', '44100', '-ac', '2',
             '-loglevel', 'quiet',
@@ -182,7 +201,8 @@ class AirPlayDevice:
         ]
 
         print(f'[AirPlay] → {self._info.name} ({self._info.protocol}) '
-              f'{self._info.address}:{self._info.port}')
+              f'{self._info.address}:{self._info.port}'
+              + (f' seek={seek_s:.1f}s' if seek_s else ''))
 
         cli_env = _cliap2_env() if self._info.protocol == 'airplay2' else None
         self._cli_proc = subprocess.Popen(
@@ -192,20 +212,31 @@ class AirPlayDevice:
         self._ffmpeg_proc = subprocess.Popen(
             ffmpeg_args, stdout=self._cli_proc.stdin, stderr=subprocess.DEVNULL,
         )
-        # parent process closes its copy of the write-end so the pipe EOF
-        # propagates correctly when ffmpeg exits
         self._cli_proc.stdin.close()
 
-        # Open command FIFO for writing in a background thread; blocks until
-        # the binary opens it for reading (happens ~immediately after start)
-        threading.Thread(target=self._open_cmd_fifo, daemon=True).start()
+        # Open command FIFO then push track metadata after a short delay
+        threading.Thread(
+            target=self._open_cmd_fifo_and_meta, args=(track, subsonic), daemon=True,
+        ).start()
 
         # Monitor stderr to log status / detect connection
         threading.Thread(target=self._read_stderr, daemon=True).start()
 
+        # Periodically send PROGRESS updates (AirPlay 2 only)
+        if self._info.protocol == 'airplay2':
+            threading.Thread(target=self._progress_loop, daemon=True).start()
+
     def pause(self):               self._send('ACTION=PAUSE')
     def resume(self):              self._send('ACTION=PLAY')
-    def seek(self, seconds: float): self._send(f'PROGRESS={int(seconds)}')
+    def seek(self, seconds: float):
+        # cliap2 does not support seeking — restart ffmpeg from the new position
+        if self._current_url:
+            threading.Thread(
+                target=self.play_track,
+                args=(self._current_url, self._current_track),
+                kwargs={'subsonic': self._current_subsonic, 'seek_s': seconds},
+                daemon=True,
+            ).start()
 
     def set_volume(self, v: float):
         self._volume = int(v * 100)
@@ -272,20 +303,126 @@ class AirPlayDevice:
             args += ['--auth', d.credentials]
         return args
 
-    def _open_cmd_fifo(self):
+    def _open_cmd_fifo_and_meta(self, track: dict, subsonic=None):
         try:
             self._cmd_fd = open(self._cmd_path, 'w', buffering=1)
         except Exception as e:
             print(f'[AirPlay] cmd FIFO open failed: {e}')
+            return
+        # _meta_ready is set by _read_stderr when "player: event_play_start()" is seen
+        deadline = time.time() + 10.0
+        while not self._meta_ready and time.time() < deadline:
+            time.sleep(0.1)
+        self._play_start_wall = time.time()
+        self._send_metadata(track, subsonic)
+
+    @staticmethod
+    def _parse_duration_s(track: dict) -> int:
+        duration = track.get('duration', 0)
+        if isinstance(duration, str) and ':' in duration:
+            parts = duration.split(':')
+            try: return int(parts[0]) * 60 + int(parts[1])
+            except: return 0
+        try: return int(float(duration))
+        except: return 0
+
+    def _send_metadata(self, track: dict, subsonic=None):
+        self._send_metadata_with_progress(track, 0)
+
+        # Artwork — download bytes then serve via a tiny local HTTP server
+        # so cliap2 can fetch a plain http://127.0.0.1:PORT/art.jpg URL
+        cover_id = track.get('cover_id') or track.get('coverArt')
+        if cover_id and subsonic:
+            try:
+                art_bytes = subsonic.get_cover_art(cover_id, size=500)
+                if art_bytes:
+                    art_url = self._serve_artwork(art_bytes)
+                    self._send(f'ARTWORK={art_url}')
+                    print(f'[AirPlay] Artwork served at {art_url}')
+            except Exception as e:
+                print(f'[AirPlay] Artwork send failed: {e}')
+
+    def _serve_artwork(self, art_bytes: bytes) -> str:
+        """Spin up (or reuse) a per-device HTTP server and return the URL for the image."""
+        is_png  = art_bytes[:4] == b'\x89PNG'
+        mime    = 'image/png' if is_png else 'image/jpeg'
+        ext     = '.png'     if is_png else '.jpg'
+        data    = art_bytes  # captured in closure
+
+        # Shut down previous server if any
+        if self._art_server:
+            try:
+                self._art_server.shutdown()
+            except Exception:
+                pass
+            self._art_server = None
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type', mime)
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            def log_message(self, *args):
+                pass  # silence access logs
+
+        srv = HTTPServer(('127.0.0.1', 0), _Handler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        self._art_server = srv
+        return f'http://127.0.0.1:{port}/art{ext}'
+
+    def _send_metadata_with_progress(self, track: dict, progress_s: int):
+        """Send SENDMETA batch with the given playback position in seconds."""
+        title      = track.get('title')  or track.get('name', '')
+        artist     = track.get('artist', '')
+        album      = track.get('album',  '')
+        duration_s = self._parse_duration_s(track)
+
+        cmd  = f'TITLE={title}\nARTIST={artist}\nALBUM={album}\n'
+        cmd += f'DURATION={duration_s}\nPROGRESS={progress_s}\nACTION=SENDMETA\n'
+        self._send_raw(cmd)
+        if progress_s == 0:
+            print(f'[AirPlay] Metadata: {title} / {artist} ({duration_s}s)')
 
     def _send(self, cmd: str):
+        self._send_raw(cmd + '\n')
+
+    def _send_raw(self, data: str):
         fd = self._cmd_fd
         if fd:
             try:
-                fd.write(cmd + '\n')
+                fd.write(data)
                 fd.flush()
-            except Exception:
-                pass
+            except BrokenPipeError:
+                print(f'[AirPlay:{self._info.name}] Command pipe closed by cliap2')
+                self._cmd_fd = None
+            except Exception as e:
+                print(f'[AirPlay:{self._info.name}] Command send error: {e}')
+                self._cmd_fd = None
+
+    def _progress_loop(self):
+        """Periodically re-send full SENDMETA with updated PROGRESS.
+
+        Re-sending SENDMETA (not just a bare PROGRESS command) keeps the Apple
+        TV Now Playing screen refreshed and advances the seek bar correctly.
+        """
+        # Wait until _open_cmd_fifo_and_meta sets _play_start_wall
+        deadline = time.time() + 15.0
+        while self._play_start_wall == 0.0 and not self._progress_stop:
+            if time.time() > deadline:
+                return
+            time.sleep(0.2)
+
+        interval = 5   # seconds between refreshes
+        while not self._progress_stop and self._cmd_fd is not None:
+            time.sleep(interval)
+            if self._progress_stop or self._cmd_fd is None:
+                break
+            elapsed = int(time.time() - self._play_start_wall + self._play_seek_offset)
+            self._send_metadata_with_progress(self._current_track, elapsed)
 
     def _read_stderr(self):
         if not self._cli_proc:
@@ -298,6 +435,10 @@ class AirPlayDevice:
             if not line:
                 continue
             print(f'[AirPlay:{self._info.name}] {line}')
+
+            # cliap2 is ready to accept metadata / commands
+            if 'event_play_start' in line or 'Starting at' in line:
+                self._meta_ready = True
 
             # PIN pairing required
             if 'Starting device pairing' in line and self._pin_callback:
@@ -318,6 +459,14 @@ class AirPlayDevice:
         self._send(f'PIN={pin.strip()}')
 
     def _cleanup(self):
+        self._progress_stop   = True
+        self._play_start_wall = 0.0
+        if self._art_server:
+            try:
+                self._art_server.shutdown()
+            except Exception:
+                pass
+            self._art_server = None
         for p in (self._ffmpeg_proc, self._cli_proc):
             if p:
                 try: p.kill()

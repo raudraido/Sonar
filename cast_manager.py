@@ -9,6 +9,7 @@ Play/pause/seek/track-change events are relayed automatically.
 import asyncio
 import hashlib
 import html
+import os
 import re
 import shutil
 import socket
@@ -439,14 +440,40 @@ QSlider::handle:horizontal {
 
 # ── Per-device row ────────────────────────────────────────────────────────
 
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'img')
+
+def _proto_pixmap(protocol: str | None, color: str = '#ffffff') -> 'QPixmap':
+    from PyQt6.QtGui import QPixmap, QPainter
+    names = {
+        'chromecast': 'cast.png',
+        'dlna':       'dlna.png',
+        'airplay1':   'airplay.png',
+        'airplay2':   'airplay.png',
+    }
+    fname = names.get(protocol or '', 'cast.png')
+    src = QPixmap(os.path.join(_ICON_DIR, fname))
+    if src.isNull():
+        return src
+    src = src.scaled(22, 22,
+                     Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+    # tint: paint the color over the pixmap using the alpha of the original
+    tinted = QPixmap(src.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    p = QPainter(tinted)
+    p.drawPixmap(0, 0, src)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(tinted.rect(), QColor(color))
+    p.end()
+    return tinted
+
+
 class _DeviceRow(QWidget):
     toggled        = pyqtSignal(object)        # DeviceInfo | None
     volume_changed = pyqtSignal(object, int)   # (DeviceInfo | None, 0–100)
 
-    _PROTO_ICON = {'chromecast': '📺', 'dlna': '🔊', 'airplay1': '', 'airplay2': ''}
-
     def __init__(self, dev, is_active: bool, volume: int = 50,
-                 show_toggle: bool = True, parent=None):
+                 show_toggle: bool = True, accent_color: str = '#ffffff', parent=None):
         super().__init__(parent)
         self._dev = dev
         self.setFixedHeight(44)
@@ -456,11 +483,14 @@ class _DeviceRow(QWidget):
         lay.setSpacing(10)
 
         # type icon
-        char = '🖥' if dev is None else self._PROTO_ICON.get(dev.protocol, '🔊')
-        icon = QLabel(char)
-        icon.setFixedWidth(24)
+        icon = QLabel()
+        icon.setFixedSize(24, 24)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet('font-size:15px; background:transparent; color:#aaa;')
+        icon.setStyleSheet('background:transparent;')
+        if dev is not None:
+            px = _proto_pixmap(dev.protocol, accent_color)
+            if not px.isNull():
+                icon.setPixmap(px)
         lay.addWidget(icon)
 
         # name
@@ -538,20 +568,35 @@ class _CastPopup(QFrame):
 
     def __init__(self, active_ids: set, local_volume: int,
                  current_track: Optional[dict], cover_pixmap=None, parent=None,
-                 initial_devices: list = None, still_scanning: bool = True):
+                 initial_devices: list = None, still_scanning: bool = True,
+                 accent_color: str = '#ffffff'):
         super().__init__(parent, Qt.WindowType.Popup)
-        self._active_ids = set(active_ids)
-        self._rows: dict = {}     # dev_id → _DeviceRow
+        self._active_ids  = set(active_ids)
+        self._rows: dict  = {}     # dev_id → _DeviceRow
+        self._accent      = accent_color
         self.setObjectName('CastPopup')
         self.setMinimumWidth(320)
-        self.setStyleSheet(
-            '#CastPopup {'
-            '  background:#1e1e1e;'
-            '  border:1px solid rgba(255,255,255,0.12);'
-            '  border-radius:12px;'
+
+        # Transparent window so the rounded frame clips correctly
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet('background: transparent; border: none;')
+
+        # Outer container that actually draws the background + border-radius
+        self._frame = QFrame(self)
+        self._frame.setObjectName('CastFrame')
+        self._frame.setStyleSheet(
+            'QFrame#CastFrame {'
+            '  background: #111;'
+            '  border: 1px solid #2a2a2a;'
+            '  border-radius: 12px;'
             '}'
         )
-        self._lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._frame)
+
+        self._lay = QVBoxLayout(self._frame)
         self._lay.setContentsMargins(0, 0, 0, 8)
         self._lay.setSpacing(0)
 
@@ -649,7 +694,7 @@ class _CastPopup(QFrame):
         if dev.id in self._rows:
             return
         row = _DeviceRow(dev, is_active=(dev.id in self._active_ids),
-                         volume=50, show_toggle=True)
+                         volume=50, show_toggle=True, accent_color=self._accent)
         row.toggled.connect(self.toggled)
         row.volume_changed.connect(self.volume_changed)
         self._rows[dev.id] = row
@@ -739,6 +784,7 @@ class CastManager:
             parent=self._win,
             initial_devices=list(self._devices),
             still_scanning=(self._pending_scans > 0 or stale),
+            accent_color=getattr(self._win, 'master_color', '#ffffff'),
         )
         self._popup.toggled.connect(self._on_toggle)
         self._popup.volume_changed.connect(self._on_volume_changed)
@@ -751,13 +797,32 @@ class CastManager:
         if stale:
             self._start_scan()
 
-    def relay_track(self, track: dict):
+    # How many ms ahead of now we schedule AirPlay 2 to start so PC and
+    # AirPlay begin playing at the same wall-clock moment.
+    _AP2_SYNC_MS = 1500
+
+    def has_airplay2(self) -> bool:
+        """Return True if any active device is AirPlay 2."""
+        for dev_id in list(self._active_devices):
+            dev_info = next((d for d in self._devices if d.id == dev_id), None)
+            if dev_info and dev_info.protocol == 'airplay2':
+                return True
+        return False
+
+    def relay_track(self, track: dict, ntp_start: int = 0):
         url = track.get('stream_url') or track.get('path', '')
         if not url or not self._active_devices: return
+        sc = getattr(self._win, 'subsonic_client', None)
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
             cast_url = self._dlna_url(url) if (dev_info and dev_info.protocol == 'dlna') else url
-            threading.Thread(target=dev.play_track, args=(cast_url, track), daemon=True).start()
+            kw = {'subsonic': sc}
+            if ntp_start > 0 and dev_info and dev_info.protocol == 'airplay2':
+                kw['ntp_start'] = ntp_start
+            threading.Thread(
+                target=dev.play_track, args=(cast_url, track), kwargs=kw,
+                daemon=True,
+            ).start()
 
     def relay_pause(self):
         for dev in list(self._active_devices.values()):

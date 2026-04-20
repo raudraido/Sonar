@@ -305,9 +305,8 @@ class PlaybackMixin:
                 self._song_refresh_worker.start()
 
             track['debug_t0'] = t0
-            self.playback_manager.play_request(track)
-            self._cast_relay_track(track)
-            
+            self._play_with_cast_sync(track)
+
             print(f"[TIMING] +{time.time() - t0:.3f}s | Request Sent to Manager")
 
     def play_next(self):
@@ -362,8 +361,7 @@ class PlaybackMixin:
             # Let your native playback manager handle the fresh track safely!
             if self.audio_engine.total_ms <= 0:
                 track = self.playlist_data[self.current_index]
-                self.playback_manager.play_request(track)
-                self._cast_relay_track(track)
+                self._play_with_cast_sync(track)
             else:
                 self.audio_engine.play()
                 self.last_engine_update_time = time.time()
@@ -923,6 +921,33 @@ class PlaybackMixin:
     
 
     # ── Cast relay helpers ─────────────────────────────────────────────────────
+
+    def _play_with_cast_sync(self, track):
+        """Start PC + cast playback, synchronized when AirPlay 2 is active."""
+        cm = getattr(self, '_cast_manager', None)
+        if cm and getattr(cm, 'has_airplay2', lambda: False)():
+            # Compute a future NTP start time so cliap2 can buffer ahead
+            try:
+                from airplay_manager import _ntp_now
+                _NTP_PER_S = 1 << 32
+                sync_ms = cm._AP2_SYNC_MS
+                ntp_start = _ntp_now() + int(sync_ms / 1000.0 * _NTP_PER_S)
+            except Exception:
+                ntp_start = 0
+                sync_ms   = 0
+            import threading
+            threading.Thread(
+                target=lambda: cm.relay_track(track, ntp_start=ntp_start),
+                daemon=True,
+            ).start()
+            if sync_ms > 0:
+                # Delay PC audio so both sources start at the same moment
+                QTimer.singleShot(sync_ms, lambda t=track: self.playback_manager.play_request(t))
+            else:
+                self.playback_manager.play_request(track)
+        else:
+            self.playback_manager.play_request(track)
+            self._cast_relay_track(track)
 
     def _cast_relay_track(self, track):
         cm = getattr(self, '_cast_manager', None)

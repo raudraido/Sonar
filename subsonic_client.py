@@ -911,6 +911,17 @@ class SubsonicClient:
             pass
         return None
 
+    def get_cover_art_url(self, cover_id, size=500) -> str:
+        """Return a direct HTTP URL for the cover art (for passing to external processes)."""
+        if not cover_id:
+            return ''
+        import urllib.parse
+        params = self._get_auth_params()
+        params['id'] = cover_id
+        params['size'] = size
+        params.pop('f', None)  # remove json format flag — this is an image endpoint
+        return f"{self.base_url}/rest/getCoverArt?{urllib.parse.urlencode(params)}"
+
     def get_artists(self):
         try:
             r = requests.get(f"{self.base_url}/rest/getArtists", params=self._get_auth_params())
