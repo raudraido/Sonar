@@ -570,7 +570,12 @@ class _CastPopup(QFrame):
                  current_track: Optional[dict], cover_pixmap=None, parent=None,
                  initial_devices: list = None, still_scanning: bool = True,
                  accent_color: str = '#ffffff'):
-        super().__init__(parent, Qt.WindowType.Popup)
+        super().__init__(parent,
+                         Qt.WindowType.Tool |
+                         Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._active_ids  = set(active_ids)
         self._rows: dict  = {}     # dev_id → _DeviceRow
         self._accent      = accent_color
@@ -737,6 +742,21 @@ class _CastPopup(QFrame):
         self.move(x, y)
         self.show()
         self.raise_()
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.MouseButtonPress:
+            pos = event.globalPosition().toPoint()
+            if not self.geometry().contains(pos):
+                self.close()
+        return False
+
+    def closeEvent(self, event):
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().removeEventFilter(self)
+        super().closeEvent(event)
 
 
 # ── Main manager ──────────────────────────────────────────────────────────
