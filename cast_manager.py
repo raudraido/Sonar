@@ -567,62 +567,61 @@ class _CastPopup(QFrame):
     toggled        = pyqtSignal(object)        # DeviceInfo | None
     volume_changed = pyqtSignal(object, int)   # (DeviceInfo | None, 0–100)
 
-    def __init__(self, active_ids: set, local_volume: int,
-                 current_track: Optional[dict], cover_pixmap=None, parent=None,
-                 initial_devices: list = None, still_scanning: bool = True,
-                 accent_color: str = '#ffffff'):
-        super().__init__(parent,
-                         Qt.WindowType.Tool |
-                         Qt.WindowType.FramelessWindowHint |
-                         Qt.WindowType.NoDropShadowWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._active_ids  = set(active_ids)
-        self._rows: dict  = {}     # dev_id → _DeviceRow
-        self._accent      = accent_color
+    def __init__(self, parent=None):
+        # Created once at startup and reused — no per-click HWND creation flash.
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._on_close_cb = None
+        self._active_ids  = set()
+        self._rows: dict  = {}
+        self._accent      = '#ffffff'
+        self._scan_lbl    = None
         self.setObjectName('CastPopup')
         self.setMinimumWidth(320)
-
-        # Transparent window so the rounded frame clips correctly
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setStyleSheet('background: transparent; border: none;')
-
-        # Outer container that actually draws the background + border-radius
-        self._frame = QFrame(self)
-        self._frame.setObjectName('CastFrame')
-        self._frame.setStyleSheet(
-            'QFrame#CastFrame {'
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet(
+            'QFrame#CastPopup {'
             '  background: #111;'
             '  border: 1px solid #2a2a2a;'
             '  border-radius: 12px;'
             '}'
         )
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        outer.addWidget(self._frame)
 
-        self._lay = QVBoxLayout(self._frame)
+        self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 8)
         self._lay.setSpacing(0)
 
-        # ── track header ──────────────────────────────────────────────────
-        self._build_header(current_track, cover_pixmap)
+        # ── fixed header (updated in place on each refresh) ───────────────
+        self._build_header()
         self._lay.addWidget(self._sep())
 
-        # ── "This device" — always active, no toggle ──────────────────────
-        local_row = _DeviceRow(None, is_active=True, volume=local_volume,
-                               show_toggle=False)
+        # ── "This device" — permanent, no toggle ─────────────────────────
+        local_row = _DeviceRow(None, is_active=True, volume=50, show_toggle=False)
         local_row.volume_changed.connect(self.volume_changed)
         self._lay.addWidget(local_row)
         self._rows['__local__'] = local_row
 
         self._lay.addWidget(self._sep())
+        # layout indices 0–3 are the fixed section; 4+ are dynamic
 
-        # ── discovered devices ────────────────────────────────────────────
-        self._scan_lbl = None
-        if initial_devices:
-            for dev in initial_devices:
+    # ── Content refresh (called each time the popup is shown) ─────────────
+
+    def refresh(self, track, cover_pixmap, local_volume, devices,
+                active_ids, still_scanning, accent_color):
+        self._active_ids = set(active_ids)
+        self._accent     = accent_color
+
+        self._update_header(track, cover_pixmap)
+
+        local_row = self._rows['__local__']
+        local_row._slider.blockSignals(True)
+        local_row._slider.setValue(local_volume)
+        local_row._slider.blockSignals(False)
+
+        self._clear_dynamic()
+
+        if devices:
+            for dev in devices:
                 self._add_device_row(dev)
             if still_scanning:
                 self._scan_lbl = QLabel('  Refreshing…')
@@ -631,43 +630,80 @@ class _CastPopup(QFrame):
                 )
                 self._lay.addWidget(self._scan_lbl)
         else:
-            self._scan_lbl = QLabel('  Scanning…')
+            text = '  Scanning…' if still_scanning else '  No devices found'
+            self._scan_lbl = QLabel(text)
             self._scan_lbl.setStyleSheet(
                 'color:#444; font-size:12px; padding:10px 14px; background:transparent;'
             )
             self._lay.addWidget(self._scan_lbl)
 
-    def _build_header(self, track: Optional[dict], cover_pixmap=None):
+        self.adjustSize()
+
+    def _clear_dynamic(self):
+        """Remove all device rows (except local) and the scan/status label."""
+        for dev_id in list(self._rows.keys()):
+            if dev_id != '__local__':
+                self._rows.pop(dev_id).setParent(None)
+        if self._scan_lbl is not None:
+            self._scan_lbl.setParent(None)
+            self._scan_lbl = None
+        # Belt-and-suspenders: drop anything still sitting past the fixed 4 items
+        while self._lay.count() > 4:
+            item = self._lay.takeAt(4)
+            if item and item.widget():
+                item.widget().setParent(None)
+
+    # ── Header ────────────────────────────────────────────────────────────
+
+    def _build_header(self):
         hdr = QWidget()
         hdr.setStyleSheet('background:transparent;')
         h = QHBoxLayout(hdr)
         h.setContentsMargins(14, 12, 14, 10)
         h.setSpacing(12)
 
-        # cover art
-        art = QLabel()
-        art.setFixedSize(50, 50)
-        art.setStyleSheet('border-radius:6px; background:#2d2d2d;')
+        self._hdr_art = QLabel()
+        self._hdr_art.setFixedSize(50, 50)
+        self._hdr_art.setStyleSheet('border-radius:6px; background:#2d2d2d;')
+        pix = QPixmap(50, 50); pix.fill(QColor('#2d2d2d'))
+        self._hdr_art.setPixmap(pix)
+        h.addWidget(self._hdr_art)
+
+        txt = QVBoxLayout()
+        txt.setSpacing(3)
+        txt.setContentsMargins(0, 0, 0, 0)
+
+        self._hdr_title = QLabel('Nothing playing')
+        self._hdr_title.setStyleSheet(
+            'color:#efefef; font-size:13px; font-weight:bold; background:transparent;'
+        )
+        self._hdr_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        txt.addWidget(self._hdr_title)
+
+        self._hdr_sub = QLabel('')
+        self._hdr_sub.setStyleSheet('color:#888; font-size:11px; background:transparent;')
+        self._hdr_sub.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._hdr_sub.hide()
+        txt.addWidget(self._hdr_sub)
+
+        txt.addStretch()
+        h.addLayout(txt, 1)
+        self._lay.addWidget(hdr)
+
+    def _update_header(self, track, cover_pixmap):
         if cover_pixmap and not cover_pixmap.isNull():
             scaled = cover_pixmap.scaled(
                 50, 50,
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            # centre-crop to exactly 50×50
             x = (scaled.width()  - 50) // 2
             y = (scaled.height() - 50) // 2
-            art.setPixmap(scaled.copy(x, y, 50, 50))
+            self._hdr_art.setPixmap(scaled.copy(x, y, 50, 50))
         else:
-            pix = QPixmap(50, 50)
-            pix.fill(QColor('#2d2d2d'))
-            art.setPixmap(pix)
-        h.addWidget(art)
+            pix = QPixmap(50, 50); pix.fill(QColor('#2d2d2d'))
+            self._hdr_art.setPixmap(pix)
 
-        # title + artist
-        txt = QVBoxLayout()
-        txt.setSpacing(3)
-        txt.setContentsMargins(0, 0, 0, 0)
         if track:
             title  = track.get('title') or 'Unknown'
             artist = track.get('artist') or ''
@@ -676,20 +712,14 @@ class _CastPopup(QFrame):
         else:
             title, sub = 'Nothing playing', ''
 
-        t = QLabel(title)
-        t.setStyleSheet(
-            'color:#efefef; font-size:13px; font-weight:bold; background:transparent;'
-        )
-        t.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        txt.addWidget(t)
+        self._hdr_title.setText(title)
         if sub:
-            s = QLabel(sub)
-            s.setStyleSheet('color:#888; font-size:11px; background:transparent;')
-            s.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            txt.addWidget(s)
-        txt.addStretch()
-        h.addLayout(txt, 1)
-        self._lay.addWidget(hdr)
+            self._hdr_sub.setText(sub)
+            self._hdr_sub.show()
+        else:
+            self._hdr_sub.hide()
+
+    # ── Helpers ───────────────────────────────────────────────────────────
 
     def _sep(self):
         s = QWidget(); s.setFixedHeight(1)
@@ -712,8 +742,7 @@ class _CastPopup(QFrame):
             self._scan_lbl = None
         for dev in devices:
             self._add_device_row(dev)
-        # show "No devices found" only if still nothing besides local row
-        if len(self._rows) == 1:
+        if len(self._rows) == 1:   # only local row
             lbl = QLabel('  No devices found')
             lbl.setStyleSheet(
                 'color:#444; font-size:12px; padding:10px 14px; background:transparent;'
@@ -722,7 +751,6 @@ class _CastPopup(QFrame):
         self.adjustSize()
 
     def update_device_state(self, dev_id: str, active: bool, volume: int = 50):
-        """Called from main thread to reflect a connect/disconnect in the row UI."""
         row = self._rows.get(dev_id)
         if row:
             row.set_active(active, volume)
@@ -732,32 +760,48 @@ class _CastPopup(QFrame):
         else:
             self._active_ids.discard(dev_id)
 
+    # ── Show / dismiss ────────────────────────────────────────────────────
+
     def show_near(self, button):
-        self.adjustSize()
-        g   = button.mapToGlobal(QPoint(0, 0))
-        x   = g.x() + button.width() // 2 - self.width() // 2
-        y   = g.y() - self.height() - 8
-        scr = button.screen().availableGeometry()
-        x   = max(scr.left() + 8, min(x, scr.right() - self.width() - 8))
-        y   = max(scr.top()  + 8, y)
+        from PyQt6.QtCore import QPoint, QTimer
+        from PyQt6.QtWidgets import QApplication
+
+        if self.layout():
+            self.layout().activate()
+        hint = self.sizeHint()
+        w = max(hint.width(), self.minimumWidth(), 320)
+        h = hint.height() if hint.height() > 0 else 200
+
+        g = button.mapTo(self.parent(), QPoint(0, 0))
+        x = g.x() + button.width() // 2 - w // 2
+        y = g.y() - h - 8
+        pw = self.parent().width()
+        x = max(8, min(x, pw - w - 8))
+        y = max(8, y)
+
+        self.resize(w, h)
         self.move(x, y)
         self.show()
         self.raise_()
-        from PyQt6.QtWidgets import QApplication
-        QApplication.instance().installEventFilter(self)
 
-    def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
-        if event.type() == QEvent.Type.MouseButtonPress:
-            pos = event.globalPosition().toPoint()
-            if not self.geometry().contains(pos):
-                self.close()
-        return False
+        QTimer.singleShot(300, lambda: QApplication.instance().installEventFilter(self))
 
-    def closeEvent(self, event):
+    def _dismiss(self):
         from PyQt6.QtWidgets import QApplication
         QApplication.instance().removeEventFilter(self)
-        super().closeEvent(event)
+        self.hide()
+        if self._on_close_cb:
+            self._on_close_cb()
+
+    def eventFilter(self, _, event):
+        from PyQt6.QtCore import QEvent, QRect
+        if event.type() == QEvent.Type.MouseButtonPress:
+            pos = event.globalPosition().toPoint()
+            tl  = self.mapToGlobal(self.rect().topLeft())
+            br  = self.mapToGlobal(self.rect().bottomRight())
+            if not QRect(tl, br).contains(pos):
+                self._dismiss()
+        return False
 
 
 # ── Main manager ──────────────────────────────────────────────────────────
@@ -769,7 +813,7 @@ class CastManager:
         self._win                       = main_window
         self._active_devices: dict      = {}    # dev_id → device obj
         self._active_ids: set           = set()
-        self._popup                     = None
+        self._popup_closed_at           = 0.0   # monotonic time of last popup hide
         self._browser                   = None
         self._devices: list             = []    # cached discovered DeviceInfo list
         self._scan_time                 = 0.0
@@ -780,16 +824,43 @@ class CastManager:
         self._ui_bridge.device_volume.connect(self._on_device_volume_main)
         self._ui_bridge.airplay_pin_req.connect(self._on_airplay_pin_main)
         self._ui_bridge.show_error.connect(self._on_show_error_main)
+
+        # Create the popup once now so Windows initialises its HWND at startup,
+        # not on the user's first click (which caused the flash).
+        parent = main_window.centralWidget() or main_window
+        self._popup = _CastPopup(parent=parent)
+        self._popup.toggled.connect(self._on_toggle)
+        self._popup.volume_changed.connect(self._on_volume_changed)
+        self._popup._on_close_cb = self._on_popup_hidden
+        # Pre-warm: force the native window handle to be created now, then hide.
+        self._popup.move(-9999, -9999)
+        self._popup.show()
+        self._popup.hide()
+
         if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
             self._start_scan()
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def _on_popup_hidden(self):
+        import time as _t
+        self._popup_closed_at = _t.monotonic()
 
     def show_picker(self):
         if not (_HAVE_CC or _HAVE_DLNA or _HAVE_AP):
             self._no_lib_msg(); return
 
         import time as _t
+
+        # Toggle: if already visible, dismiss it.
+        if self._popup.isVisible():
+            self._popup._dismiss()
+            return
+
+        # Guard against re-opening within 250 ms of a dismiss (same click).
+        if _t.monotonic() - self._popup_closed_at < 0.25:
+            return
+
         stale = _t.time() - self._scan_time > self._RESCAN_AFTER
 
         idx      = getattr(self._win, 'current_index', -1)
@@ -798,21 +869,17 @@ class CastManager:
         vol      = getattr(getattr(self._win, 'vol_slider', None), 'value', lambda: 50)()
         cover_px = getattr(self._win, 'current_cover_pixmap', None)
 
-        self._popup = _CastPopup(
-            active_ids=self._active_ids,
-            local_volume=vol,
-            current_track=track,
+        self._popup.refresh(
+            track=track,
             cover_pixmap=cover_px,
-            parent=self._win,
-            initial_devices=list(self._devices),
+            local_volume=vol,
+            devices=list(self._devices),
+            active_ids=self._active_ids,
             still_scanning=(self._pending_scans > 0 or stale),
             accent_color=getattr(self._win, 'master_color', '#ffffff'),
         )
-        self._popup.toggled.connect(self._on_toggle)
-        self._popup.volume_changed.connect(self._on_volume_changed)
         self._popup.show_near(self._win.cast_btn)
 
-        # Refresh volume sliders for already-connected devices in background
         if self._active_devices:
             threading.Thread(target=self._sync_volumes, daemon=True).start()
 
@@ -890,8 +957,8 @@ class CastManager:
         self._pending_scans = max(0, self._pending_scans - 1)
         if self._pending_scans == 0:
             self._scan_time = _t.time()
-        # Feed any open popup with newly discovered devices
-        if self._popup and devices:
+        # Feed the popup with newly discovered devices only while it's open
+        if self._popup.isVisible() and devices:
             self._popup.add_devices(devices)
 
     def _discover_cc(self, bridge: _Bridge):

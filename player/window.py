@@ -222,6 +222,7 @@ class _TooltipLabel(_QFrame):
     def __init__(self):
         super().__init__(None, _Qt2.WindowType.ToolTip | _Qt2.WindowType.FramelessWindowHint | _Qt2.WindowType.WindowStaysOnTopHint)
         self.setAttribute(_Qt2.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(_Qt2.WidgetAttribute.WA_ShowWithoutActivating)
         self.setStyleSheet("""
             QFrame {
                 background-color: #1a1a1a;
@@ -243,10 +244,15 @@ class _TooltipLabel(_QFrame):
 
     def show_at(self, pos, text):
         self._lbl.setText(text)
+        
+        # 1. Move off-screen, show, and adjust size to prevent center-screen ghosting
+        self.move(-9999, -9999)
+        self.show()
         self._lbl.adjustSize()
         self.adjustSize()
+        
+        # 2. Teleport to the actual mouse/widget coordinates
         self.move(pos)
-        self.show()
         self.raise_()
 
 
@@ -858,7 +864,7 @@ class SonarPlayer(
         self.cast_btn.setFlat(True)
         self.cast_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cast_btn.setStyleSheet("background: transparent; border: none;")
-        self.cast_btn.setToolTip("Cast to device")
+        self.cast_btn.setToolTip("")
         self.cast_btn.clicked.connect(self._on_cast_clicked)
 
         self.settings_btn = QPushButton("")
