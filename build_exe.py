@@ -30,6 +30,7 @@ IMPORT_TO_PIP = {
     "zeroconf": "zeroconf",
     "aiohttp": "aiohttp",
     "async_upnp_client": "async-upnp-client",
+    "pyatv": "pyatv",
 }
 
 # Standard library modules — never try to pip install these
@@ -338,6 +339,7 @@ def build():
         '--collect-all=aiohttp',
         '--collect-all=async_upnp_client',
         '--collect-all=ifaddr',
+        '--collect-all=pyatv',
         '--hidden-import=pychromecast',
         '--hidden-import=pychromecast.discovery',
         '--hidden-import=pychromecast.controllers',
@@ -348,6 +350,11 @@ def build():
         '--hidden-import=aiohttp',
         '--hidden-import=async_upnp_client',
         '--hidden-import=async_upnp_client.search',
+        '--hidden-import=pyatv',
+        '--hidden-import=pyatv.protocols',
+        '--hidden-import=pyatv.protocols.airplay',
+        '--hidden-import=pyatv.protocols.raop',
+        '--hidden-import=pyatv.protocols.mrp',
     ] + added_data
 
     # Generate icon.ico from the Sonar design (Windows requires .ico)

@@ -42,7 +42,7 @@ except ImportError:
     _HAVE_DLNA = False
 
 try:
-    import zeroconf as _zc_mod   # noqa: F401 — just check presence
+    import pyatv as _pyatv_mod   # noqa: F401 — just check presence
     from airplay_manager import AirPlayDevice, AirPlayDeviceInfo, discover as _ap_discover
     _HAVE_AP = True
 except ImportError:
@@ -1205,7 +1205,7 @@ class CastManager:
         missing = []
         if not _HAVE_CC:   missing.append('pychromecast')
         if not _HAVE_DLNA: missing.append('async-upnp-client')
-        if not _HAVE_AP:   missing.append('zeroconf')
+        if not _HAVE_AP:   missing.append('pyatv')
         QMessageBox.information(
             self._win, 'Cast unavailable',
             f"Install missing libraries:\n  pip install {' '.join(missing)}",
