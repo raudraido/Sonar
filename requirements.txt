@@ -21,3 +21,10 @@ pynput>=1.7.6
 
 # Optional: evdev for Linux media key support
 # Install manually on Linux: pip install evdev
+
+# Cast / AirPlay support
+pychromecast>=14.0.0
+async-upnp-client>=0.36.0
+aiohttp>=3.9.0
+pyatv>=0.14.0
+zeroconf>=0.115.0

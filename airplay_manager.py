@@ -238,14 +238,38 @@ class AirPlayDevice:
         try:
             await self._atv.stream.stream_file(url)
         except Exception as e:
-            if 'auth' in str(e).lower() or 'authenticated' in str(e).lower():
+            if 'auth' not in str(e).lower() and 'authenticated' not in str(e).lower():
+                raise
+
+            # stream_file auth failure — connect() succeeded but streaming needs
+            # credentials. Attempt pairing, reconnect, then retry once.
+            import pyatv
+            from pyatv.const import Protocol
+            from pyatv import exceptions as _exc
+
+            proto = Protocol.AirPlay if self._info.protocol == 'airplay2' else Protocol.RAOP
+            loop  = asyncio.get_event_loop()
+            config = self._info._pyatv_config
+
+            try:
+                print(f'[AirPlay] Stream auth failed — attempting pairing with {self._info.name!r} …')
+                await self._do_pairing(config, proto, loop)
+            except _exc.PairingError as pe:
+                # Device rejected pairing (e.g. macOS requires MFi hardware)
                 raise RuntimeError(
-                    f'Authentication failed streaming to {self._info.name!r}.\n\n'
+                    f'Cannot stream to {self._info.name!r}: pairing rejected.\n\n'
                     'macOS AirPlay receivers require MFi hardware authentication '
                     'that pyatv cannot provide.\n'
                     'Please use an Apple TV, HomePod, or AirPlay-certified speaker.'
-                ) from e
-            raise
+                ) from pe
+
+            # Reconnect with freshly stored credentials then retry
+            try:
+                await self._atv.close()
+            except Exception:
+                pass
+            self._atv = await pyatv.connect(config, loop)
+            await self._atv.stream.stream_file(url)
 
         if seek_s > 1.0:
             await asyncio.sleep(2.0)
@@ -283,6 +307,8 @@ def discover(timeout: float = 5.0) -> list[AirPlayDeviceInfo]:
         print(f'[AirPlay] Discovery error: {e}')
         return []
 
+    _MAC_PREFIXES = ('MacBook', 'iMac', 'MacPro', 'MacMini', 'Mac Pro', 'Mac Mini')
+
     seen: dict[str, AirPlayDeviceInfo] = {}  # identifier → info
 
     for config in configs:
@@ -295,6 +321,12 @@ def discover(timeout: float = 5.0) -> list[AirPlayDeviceInfo]:
 
             svc      = config.get_service(Protocol.AirPlay) or config.get_service(Protocol.RAOP)
             protocol = 'airplay2' if has_ap2 else 'airplay1'
+
+            # Skip macOS AirPlay receivers — they require MFi hardware auth
+            model = svc.properties.get('model', '') or config.device_info.model or ''
+            if any(model.startswith(p) for p in _MAC_PREFIXES):
+                print(f'[AirPlay] Skipping {config.name!r} (macOS receiver, model={model!r})')
+                continue
 
             dev = AirPlayDeviceInfo(
                 id            = f'ap_{config.identifier}',
