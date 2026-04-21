@@ -68,6 +68,9 @@ class PersistenceMixin:
                 from PyQt6.QtCore import QByteArray, QTimer
                 state = QByteArray.fromHex(splitter_hex.encode())
                 QTimer.singleShot(0, lambda: self._splitter.restoreState(state))
+            elif hasattr(self, '_splitter'):
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._splitter.setSizes([569, 1056]))
         except Exception as e:
             print(f"Splitter restore error: {e}")
 

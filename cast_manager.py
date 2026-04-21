@@ -144,9 +144,13 @@ class _ChromecastDevice:
     def play_track(self, url: str, track: dict, **_kw):
         ct = _content_type(track)
         mc = self._cc.media_controller
+        
+        thumb = track.get('cover_url') or ''
+        
         mc.play_media(
             url, ct,
             title=track.get('title', ''),
+            thumb=thumb if thumb.startswith('http') else None,
             metadata={
                 'metadataType': 3,   # MUSIC_TRACK
                 'albumName': track.get('album', ''),
@@ -366,6 +370,38 @@ class _StreamProxy:
             origin = self._urls.get(key, '')
         if not origin:
             handler.send_response(404); handler.end_headers(); return
+
+        if not origin.startswith('http'):
+            # --- Handle Local File Casting ---
+            if not os.path.isfile(origin):
+                handler.send_response(404); handler.end_headers(); return
+            
+            try:
+                file_size = os.path.getsize(origin)
+                handler.send_response(200)
+                
+                suffix = origin.rsplit('.', 1)[-1].lower()
+                ct = {
+                    'flac': 'audio/flac', 'mp3': 'audio/mpeg', 'ogg': 'audio/ogg',
+                    'opus': 'audio/ogg', 'aac': 'audio/aac', 'm4a': 'audio/mp4',
+                    'wav': 'audio/wav'
+                }.get(suffix, 'audio/mpeg')
+                
+                handler.send_header('Content-Type', ct)
+                handler.send_header('Content-Length', str(file_size))
+                
+                pn = _DLNA_PN.get(ct, '')
+                cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
+                handler.send_header('transferMode.dlna.org', 'Streaming')
+                handler.send_header('contentFeatures.dlna.org', cf)
+                handler.end_headers()
+                
+                if not head_only:
+                    with open(origin, 'rb') as f:
+                        shutil.copyfileobj(f, handler.wfile, length=65536)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
 
         # Forward all headers from receiver → Navidrome (except Host)
         fwd_headers = {k: v for k, v in handler.headers.items()
@@ -904,7 +940,8 @@ class CastManager:
         sc = getattr(self._win, 'subsonic_client', None)
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
-            cast_url = self._dlna_url(url) if (dev_info and dev_info.protocol == 'dlna') else url
+            # Proxy Chromecast streams to bypass strict CORS, HTTPS, DNS, and local file restrictions
+            cast_url = self._dlna_url(url) if (dev_info and dev_info.protocol in ('dlna', 'chromecast')) else url
             kw = {'subsonic': sc}
             if ntp_start > 0 and dev_info and dev_info.protocol == 'airplay2':
                 kw['ntp_start'] = ntp_start
@@ -1226,7 +1263,8 @@ class CastManager:
                 # Chromecast: already blocking-connected; do play+seek in this thread
                 import time
                 if url:
-                    d.play_track(url, track)
+                    cast_url = self._dlna_url(url)
+                    d.play_track(cast_url, track)
                     if pos_ms > 500:
                         deadline = time.time() + 10
                         while time.time() < deadline:
