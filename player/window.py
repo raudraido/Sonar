@@ -64,6 +64,29 @@ from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
 
 
+class CenteredSquareWrapper(QWidget):
+    """Forces the album art to remain a perfect square and perfectly centered 
+    within its available space, preventing it from sticking to the edges."""
+    def __init__(self, child):
+        super().__init__()
+        self.child = child
+        self.child.setParent(self)
+
+    def minimumSizeHint(self):
+        return QSize(8, 8)
+
+    def resizeEvent(self, event):
+        w = self.width()
+        h = self.height()
+        side = min(w, h)
+        
+        # Calculate exact center coordinates
+        x = (w - side) // 2
+        y = (h - side) // 2
+        
+        self.child.setGeometry(x, y, side, side)
+        super().resizeEvent(event)
+
 class _SectionWidget(QWidget):
     """Left-panel section — hide/unhide button fades in on hover, exact scrubber pattern."""
 
@@ -248,6 +271,11 @@ class _RightPanelWidget(QWidget):
     def __init__(self, splitter):
         super().__init__()
         self._edge = _SplitterEdge(splitter, self)
+
+    def minimumSizeHint(self):
+        # This tells the QSplitter to ignore the massive minimum width of the tabs
+        # and allows you to crush the right panel all the way down to 8 pixels.
+        return QSize(8, 8)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -633,7 +661,7 @@ class SonarPlayer(
         main_layout.setSpacing(0)
 
         content = QHBoxLayout()
-        content.setContentsMargins(40, 0, 8, 0)
+        content.setContentsMargins(8, 0, 8, 0)
         content.setSpacing(0)
 
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
@@ -642,6 +670,7 @@ class SonarPlayer(
 
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
         _left_widget = _LeftPanelWidget()
+        _left_widget.setMinimumWidth(8) # <--- ADD THIS LINE to crush the left side
         left_panel = QVBoxLayout(_left_widget)
         left_panel.setContentsMargins(0, 0, 4, 0)
         left_panel.setSpacing(0)
@@ -649,7 +678,8 @@ class SonarPlayer(
 
         # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
-        self._art_section = _SectionWidget(self.art_container, 'art', self)
+        self._centered_art = CenteredSquareWrapper(self.art_container)
+        self._art_section = _SectionWidget(self._centered_art, 'art', self)
         left_panel.addWidget(self._art_section, 2)
 
         # Section 2: Visualizer (25%)
@@ -871,6 +901,7 @@ class SonarPlayer(
 
         # --- RIGHT PANEL (Tabs) ---
         _right_widget = _RightPanelWidget(self._splitter)
+        _right_widget.setMinimumWidth(8)
         right_panel = QVBoxLayout(_right_widget)
         right_panel.setContentsMargins(4, 0, 0, 0)
         right_panel.setSpacing(0)
