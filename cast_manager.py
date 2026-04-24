@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 import urllib.request
+import urllib.error
+import ssl
 
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QPoint
 from PyQt6.QtWidgets import (
@@ -31,6 +33,21 @@ try:
     import pychromecast
     from pychromecast.discovery import CastBrowser, SimpleCastListener
     _HAVE_CC = True
+
+    # Monkey-patch older versions of pychromecast to fix a known mDNS bug
+    # that crashes discovery with: "cannot access local variable 'host'"
+    import pychromecast.discovery
+    if not getattr(pychromecast.discovery, '_patched_for_host_bug', False):
+        _orig_get_info = getattr(pychromecast.discovery, 'get_info_from_service', None)
+        if _orig_get_info:
+            def _safe_get_info(*args, **kwargs):
+                try:
+                    return _orig_get_info(*args, **kwargs)
+                except UnboundLocalError as e:
+                    if 'host' in str(e): return None
+                    raise
+            pychromecast.discovery.get_info_from_service = _safe_get_info
+            pychromecast.discovery._patched_for_host_bug = True
 except ImportError:
     _HAVE_CC = False
 
@@ -141,23 +158,29 @@ class _ChromecastDevice:
         # kills cc.wait() for every other device in the batch.
         self._cc.wait(timeout=8)
 
-    def play_track(self, url: str, track: dict, **_kw):
+    def play_track(self, url: str, track: dict, seek_s: float = 0.0, **_kw):
         ct = _content_type(track)
         mc = self._cc.media_controller
         
         thumb = track.get('cover_url') or ''
         
-        mc.play_media(
-            url, ct,
-            title=track.get('title', ''),
-            thumb=thumb if thumb.startswith('http') else None,
-            metadata={
-                'metadataType': 3,   # MUSIC_TRACK
-                'albumName': track.get('album', ''),
-                'artist':    track.get('artist', ''),
-            },
-        )
-        mc.block_until_active(timeout=10)
+        try:
+            mc.play_media(
+                url, ct,
+                title=track.get('title', ''),
+                thumb=thumb if thumb.startswith('http') else None,
+                current_time=seek_s,
+                autoplay=True,
+                stream_type="BUFFERED",
+                metadata={
+                    'metadataType': 3,   # MUSIC_TRACK
+                    'albumName': track.get('album', ''),
+                    'artist':    track.get('artist', ''),
+                },
+            )
+            mc.block_until_active(timeout=15)
+        except Exception as e:
+            print(f'[Cast] play_track error: {e}')
 
     def get_volume(self) -> int:
         try:
@@ -166,13 +189,21 @@ class _ChromecastDevice:
         except Exception:
             return 50
 
-    def pause(self):   self._cc.media_controller.pause()
-    def resume(self):  self._cc.media_controller.play()
-    def seek(self, s): self._cc.media_controller.seek(s)
+    def pause(self):
+        try: self._cc.media_controller.pause()
+        except Exception as e: print(f'[Cast] pause error: {e}')
+    def resume(self):
+        try: self._cc.media_controller.play()
+        except Exception as e: print(f'[Cast] resume error: {e}')
+    def seek(self, s):
+        try: self._cc.media_controller.seek(s)
+        except Exception as e: print(f'[Cast] seek error: {e}')
     def stop(self):
         try: self._cc.quit_app()
         except Exception: pass
-    def set_volume(self, v: float): self._cc.set_volume(max(0.0, min(1.0, v)))
+    def set_volume(self, v: float):
+        try: self._cc.set_volume(max(0.0, min(1.0, v)))
+        except Exception as e: print(f'[Cast] set_volume error: {e}')
 
 
 # ── DLNA wrapper (raw SOAP — works with nested sub-device layouts) ────────
@@ -349,6 +380,18 @@ class _StreamProxy:
         class _Handler(BaseHTTPRequestHandler):
             def do_GET(self):  proxy._serve(self, head_only=False)
             def do_HEAD(self): proxy._serve(self, head_only=True)
+            def do_OPTIONS(self):
+                self.send_response(204)
+                origin_header = self.headers.get('Origin', '*')
+                self.send_header('Access-Control-Allow-Origin', origin_header)
+                self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+                req_headers = self.headers.get('Access-Control-Request-Headers')
+                if req_headers:
+                    self.send_header('Access-Control-Allow-Headers', req_headers)
+                else:
+                    self.send_header('Access-Control-Allow-Headers', '*')
+                self.send_header('Access-Control-Max-Age', '86400')
+                self.end_headers()
             def log_message(self, *a): pass  # silence request log
 
         self._server = ThreadingHTTPServer(('0.0.0.0', 0), _Handler)
@@ -358,14 +401,27 @@ class _StreamProxy:
         t.start()
         print(f'[DLNAProxy] listening on {self._ip}:{self._port}')
 
-    def url_for(self, navidrome_url: str) -> str:
+    def url_for(self, navidrome_url: str, is_chromecast: bool = False, content_type: str = '') -> str:
         key = hashlib.md5(navidrome_url.encode()).hexdigest()
+        if is_chromecast:
+            key += "_cc"
         with self._lock:
             self._urls[key] = navidrome_url
-        return f'http://{self._ip}:{self._port}/{key}'
+            
+        ext = 'mp3'
+        if 'flac' in content_type: ext = 'flac'
+        elif 'ogg' in content_type: ext = 'ogg'
+        elif 'mp4' in content_type or 'm4a' in content_type or 'aac' in content_type: ext = 'm4a'
+        elif 'wav' in content_type: ext = 'wav'
+        
+        return f'http://{self._ip}:{self._port}/{key}.{ext}'
 
     def _serve(self, handler: BaseHTTPRequestHandler, head_only: bool):
         key = handler.path.lstrip('/')
+        key = key.split('.')[0]
+        is_chromecast = key.endswith('_cc')
+        if is_chromecast:
+            key = key[:-3]
         with self._lock:
             origin = self._urls.get(key, '')
         if not origin:
@@ -378,7 +434,36 @@ class _StreamProxy:
             
             try:
                 file_size = os.path.getsize(origin)
-                handler.send_response(200)
+                range_header = handler.headers.get('Range')
+                
+                start = 0
+                end = file_size - 1
+                status = 200
+                
+                if range_header and range_header.startswith('bytes='):
+                    range_match = re.match(r'bytes=(\d*)-(\d*)', range_header)
+                    if range_match:
+                        start_str = range_match.group(1)
+                        end_str = range_match.group(2)
+                        if start_str:
+                            start = int(start_str)
+                            if end_str:
+                                end = int(end_str)
+                        elif end_str:
+                            start = max(0, file_size - int(end_str))
+                        status = 206
+                        
+                if start >= file_size:
+                    handler.send_response(416)
+                    handler.send_header('Content-Range', f'bytes */{file_size}')
+                    origin_header = handler.headers.get('Origin', '*')
+                    handler.send_header('Access-Control-Allow-Origin', origin_header)
+                    handler.end_headers()
+                    return
+                
+                content_length = end - start + 1
+                
+                handler.send_response(status)
                 
                 suffix = origin.rsplit('.', 1)[-1].lower()
                 ct = {
@@ -388,49 +473,81 @@ class _StreamProxy:
                 }.get(suffix, 'audio/mpeg')
                 
                 handler.send_header('Content-Type', ct)
-                handler.send_header('Content-Length', str(file_size))
+                handler.send_header('Content-Length', str(content_length))
+                handler.send_header('Accept-Ranges', 'bytes')
+                if status == 206:
+                    handler.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
                 
-                pn = _DLNA_PN.get(ct, '')
-                cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
-                handler.send_header('transferMode.dlna.org', 'Streaming')
-                handler.send_header('contentFeatures.dlna.org', cf)
+                if not is_chromecast:
+                    pn = _DLNA_PN.get(ct, '')
+                    cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
+                    handler.send_header('transferMode.dlna.org', 'Streaming')
+                    handler.send_header('contentFeatures.dlna.org', cf)
+                origin_header = handler.headers.get('Origin', '*')
+                handler.send_header('Access-Control-Allow-Origin', origin_header)
+                handler.send_header('Access-Control-Expose-Headers', 'Content-Type, Content-Length, Content-Range, Accept-Ranges, transferMode.dlna.org, contentFeatures.dlna.org')
                 handler.end_headers()
                 
-                if not head_only:
+                if handler.command != 'HEAD':
                     with open(origin, 'rb') as f:
-                        shutil.copyfileobj(f, handler.wfile, length=65536)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+                        f.seek(start)
+                        bytes_left = content_length
+                        while bytes_left > 0:
+                            chunk = f.read(min(65536, bytes_left))
+                            if not chunk:
+                                break
+                            try:
+                                handler.wfile.write(chunk)
+                            except (BrokenPipeError, ConnectionResetError):
+                                break
+                            bytes_left -= len(chunk)
+            except Exception as e:
+                print(f"[CastProxy] Local file error: {e}")
             return
 
-        # Forward all headers from receiver → Navidrome (except Host)
-        fwd_headers = {k: v for k, v in handler.headers.items()
-                       if k.lower() != 'host'}
-        req = urllib.request.Request(origin, headers=fwd_headers)
+        # Forward all headers from receiver → origin (except Host and Connection)
+        fwd_headers = {}
+        for k, v in handler.headers.items():
+            if k.lower() not in ('host', 'connection', 'cache-control', 'accept-encoding'):
+                fwd_headers[k] = v
+        fwd_headers['Accept-Encoding'] = 'identity'  # Prevent downstream gzip compression from destroying chunk lengths
+                
+        req = urllib.request.Request(origin, headers=fwd_headers, method=handler.command)
+        
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
         try:
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
         except urllib.error.HTTPError as e:
-            handler.send_response(e.code); handler.end_headers(); return
-        except Exception:
+            resp = e  # urllib treats 206 as HTTPError sometimes; read it like a normal response!
+        except Exception as e:
+            print(f"[CastProxy] Remote URL error: {e}")
             handler.send_response(502); handler.end_headers(); return
 
-        handler.send_response(resp.status if hasattr(resp, 'status') else 200)
+        status = getattr(resp, 'status', getattr(resp, 'code', 200))
+        handler.send_response(status)
         ct = resp.headers.get('Content-Type', 'audio/mpeg').split(';')[0].strip()
 
         # Pass through Navidrome headers (skip hop-by-hop)
-        skip = {'transfer-encoding', 'connection', 'keep-alive'}
+        skip = {'transfer-encoding', 'connection', 'keep-alive', 'access-control-allow-origin', 'access-control-expose-headers'}
         for name, value in resp.headers.items():
             if name.lower() not in skip:
                 handler.send_header(name, value)
 
-        # Inject DLNA streaming headers — this is why the receiver plays instantly
-        pn = _DLNA_PN.get(ct, '')
-        cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
-        handler.send_header('transferMode.dlna.org', 'Streaming')
-        handler.send_header('contentFeatures.dlna.org', cf)
+        # Inject DLNA & CORS streaming headers (skipping DLNA headers for Chromecast)
+        if not is_chromecast:
+            pn = _DLNA_PN.get(ct, '')
+            cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
+            handler.send_header('transferMode.dlna.org', 'Streaming')
+            handler.send_header('contentFeatures.dlna.org', cf)
+        origin_header = handler.headers.get('Origin', '*')
+        handler.send_header('Access-Control-Allow-Origin', origin_header)
+        handler.send_header('Access-Control-Expose-Headers', 'Content-Type, Content-Length, Content-Range, Accept-Ranges, transferMode.dlna.org, contentFeatures.dlna.org')
         handler.end_headers()
 
-        if not head_only:
+        if handler.command != 'HEAD':
             try:
                 shutil.copyfileobj(resp, handler.wfile, length=65536)
             except (BrokenPipeError, ConnectionResetError):
@@ -938,11 +1055,17 @@ class CastManager:
         url = track.get('stream_url') or track.get('path', '')
         if not url or not self._active_devices: return
         sc = getattr(self._win, 'subsonic_client', None)
+        ct = _content_type(track)
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
-            # Proxy Chromecast streams to bypass strict CORS, HTTPS, DNS, and local file restrictions
-            cast_url = self._dlna_url(url) if (dev_info and dev_info.protocol in ('dlna', 'chromecast')) else url
+            is_cc = (dev_info and dev_info.protocol == 'chromecast')
+            cast_url = self._dlna_url(url, is_chromecast=is_cc, ct=ct) if (dev_info and dev_info.protocol in ('dlna', 'chromecast')) else url
             kw = {'subsonic': sc}
+            
+            pos_ms = getattr(self._win, 'last_engine_pos', 0)
+            if pos_ms > 500:
+                kw['seek_s'] = pos_ms / 1000.0
+                
             if ntp_start > 0 and dev_info and dev_info.protocol == 'airplay2':
                 kw['ntp_start'] = ntp_start
             threading.Thread(
@@ -1181,16 +1304,17 @@ class CastManager:
     # ── Connection / disconnection (background threads) ───────────────────
 
     @staticmethod
-    def _dlna_url(url: str) -> str:
+    def _dlna_url(url: str, is_chromecast: bool = False, ct: str = '') -> str:
         """Wrap URL through local proxy that injects DLNA streaming headers."""
         if not url:
             return url
-        return _get_proxy().url_for(url)
+        return _get_proxy().url_for(url, is_chromecast, ct)
 
     async def _dlna_play_chain(self, d: '_DLNADevice', url: str, track: dict,
                                pos_ms: int, paused: bool) -> int:
         """Async: play → seek → pause → return actual volume. Runs in cast loop."""
-        await d.async_play_track(self._dlna_url(url), track)
+        ct = _content_type(track)
+        await d.async_play_track(self._dlna_url(url, is_chromecast=False, ct=ct), track)
         if pos_ms > 500:
             await asyncio.sleep(1.0)   # let stream buffer
             try:
@@ -1260,25 +1384,11 @@ class CastManager:
                 if vol > 0:
                     self._ui_bridge.device_volume.emit(dev.id, vol)
             else:
-                # Chromecast: already blocking-connected; do play+seek in this thread
-                import time
+                # Chromecast: already blocking-connected; do play in this thread
                 if url:
-                    cast_url = self._dlna_url(url)
-                    d.play_track(cast_url, track)
-                    if pos_ms > 500:
-                        deadline = time.time() + 10
-                        while time.time() < deadline:
-                            time.sleep(0.5)
-                            try:
-                                state = d._cc.media_controller.status.player_state
-                                if state in ('PLAYING', 'PAUSED'):
-                                    break
-                            except Exception:
-                                break
-                        try:
-                            d.seek(pos_ms / 1000.0)
-                        except Exception as seek_err:
-                            print(f'[Cast] Seek failed (ignored): {seek_err}')
+                    ct = _content_type(track)
+                    cast_url = self._dlna_url(url, is_chromecast=True, ct=ct)
+                    d.play_track(cast_url, track, seek_s=(pos_ms / 1000.0) if pos_ms > 500 else 0.0)
                     if paused:
                         d.pause()
                 vol = d.get_volume()
