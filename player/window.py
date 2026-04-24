@@ -188,33 +188,71 @@ class _SectionWidget(QWidget):
         self._main.settings.setValue(f'section_{self._key}_visible', int(vis))
 
 
+class _InvisibleHandle(_QSplitterHandle):
+    def paintEvent(self, event):
+        pass
+
+
 class _GripSplitter(QSplitter):
-    """QSplitter with a subtle line grab handle."""
+    """QSplitter whose built-in handle is invisible and non-interactive.
+    Resizing is handled entirely by _SplitterEdge on the right panel."""
     def createHandle(self):
-        return _GripHandle(self.orientation(), self)
+        h = _InvisibleHandle(self.orientation(), self)
+        h.setAttribute(_Qt2.WidgetAttribute.WA_TransparentForMouseEvents)
+        return h
 
 
-class _GripHandle(_QSplitterHandle):
-    _LINE_H = 40
+class _SplitterEdge(QWidget):
+    """8-px overlay at the left edge of the right panel. Drag to resize."""
+    _W = 8
+
+    def __init__(self, splitter, parent_panel):
+        super().__init__(parent_panel)
+        self._splitter = splitter
+        self._press_x = None
+        self.setFixedWidth(self._W)
+        self.setCursor(_Qt2.CursorShape.SizeHorCursor)
+        self.setMouseTracking(True)
 
     def paintEvent(self, event):
-        p = _QPainter(self)
-        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        cx, cy = w // 2, h // 2
-        alpha = 140 if self.underMouse() else 0
-        p.setPen(_Qt2.PenStyle.NoPen)
-        p.setBrush(_QColor(255, 255, 255, alpha))
-        p.drawRoundedRect(cx - 1, cy - self._LINE_H // 2, 2, self._LINE_H, 1, 1)
-        p.end()
+        pass
 
-    def enterEvent(self, event):
-        self.update()
-        super().enterEvent(event)
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_x = event.globalPosition().toPoint().x()
 
-    def leaveEvent(self, event):
-        self.update()
-        super().leaveEvent(event)
+    def mouseMoveEvent(self, event):
+        if self._press_x is not None:
+            gx = event.globalPosition().toPoint().x()
+            delta = gx - self._press_x
+            self._press_x = gx
+            sizes = self._splitter.sizes()
+            total = sizes[0] + sizes[1]
+            new_left = max(1, min(total - 200, sizes[0] + delta))
+            self._splitter.setSizes([new_left, total - new_left])
+
+    def mouseReleaseEvent(self, event):
+        self._press_x = None
+
+
+class _LeftPanelWidget(QWidget):
+    """Left panel — overrides minimumSizeHint so QSplitter lets it shrink to 8 px."""
+    def minimumSizeHint(self):
+        s = super().minimumSizeHint()
+        return QSize(8, s.height())
+
+
+class _RightPanelWidget(QWidget):
+    """Right panel with a left-edge resize handle overlay — right where the tabs start."""
+
+    def __init__(self, splitter):
+        super().__init__()
+        self._edge = _SplitterEdge(splitter, self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._edge.setGeometry(0, 0, _SplitterEdge._W, self.height())
+        self._edge.raise_()
 
 
 class _TooltipLabel(_QFrame):
@@ -363,7 +401,7 @@ class SonarPlayer(
         self.dynamic_color = True
         self.static_bg_path = self.settings.value('static_bg_path') or None
         
-        default_vis = {'blur': 15, 'overlay': 0.3, 'bg_alpha': 0.55, 'footer_alpha': 0.85, 'queue_alpha': 0.96}
+        default_vis = {'blur': 2.5, 'overlay': 0.25, 'bg_alpha': 0.75, 'footer_alpha': 0.75, 'queue_alpha': 0.75}
         saved_vis = self.settings.value('visual_settings')
         if saved_vis:
             try:
@@ -599,14 +637,13 @@ class SonarPlayer(
         content.setSpacing(0)
 
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
-        self._splitter.setHandleWidth(16)
+        self._splitter.setHandleWidth(0)
         self._splitter.setChildrenCollapsible(False)
-        # Queue panel (index 2) will be shown/hidden via setVisible, not collapsed
 
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
-        _left_widget = QWidget()
+        _left_widget = _LeftPanelWidget()
         left_panel = QVBoxLayout(_left_widget)
-        left_panel.setContentsMargins(0, 0, 6, 0)
+        left_panel.setContentsMargins(0, 0, 4, 0)
         left_panel.setSpacing(0)
         left_panel.addSpacing(36)
 
@@ -833,9 +870,9 @@ class SonarPlayer(
         self.add_global_nav(self.tabs.indexOf(self.home_tab), 'home')
 
         # --- RIGHT PANEL (Tabs) ---
-        _right_widget = QWidget()
+        _right_widget = _RightPanelWidget(self._splitter)
         right_panel = QVBoxLayout(_right_widget)
-        right_panel.setContentsMargins(6, 0, 0, 0)
+        right_panel.setContentsMargins(4, 0, 0, 0)
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
 

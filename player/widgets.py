@@ -489,45 +489,42 @@ class SettingsWindow(QWidget):
         layout.addWidget(self.bg_img_name)
 
         layout.addWidget(QLabel("Background:"))
-        self.blur_label = QLabel(f"Blur Radius: {self.parent.visual_settings['blur']}px")
-        
+        _blur_pct = int(min(self.parent.visual_settings['blur'], 5) / 5 * 100)
+        self.blur_label = QLabel(f"Blur Radius: {_blur_pct}%")
+
         layout.addWidget(self.blur_label)
         self.blur_slider = QSlider(Qt.Orientation.Horizontal)
-        self.blur_slider.setRange(0, 150)
-        self.blur_slider.setValue(self.parent.visual_settings['blur'])
+        self.blur_slider.setRange(0, 100)
+        self.blur_slider.setValue(_blur_pct)
         self.blur_slider.valueChanged.connect(self.update_labels_only)
-        self.blur_slider.sliderReleased.connect(self.apply_heavy_changes)
-        
+
         layout.addWidget(self.blur_slider)
         self.dark_label = QLabel(f"Darkness Blend: {int(self.parent.visual_settings['overlay'] * 100)}%")
-        
+
         layout.addWidget(self.dark_label)
         self.dark_slider = QSlider(Qt.Orientation.Horizontal)
         self.dark_slider.setRange(0, 100)
         self.dark_slider.setValue(int(self.parent.visual_settings['overlay'] * 100))
         self.dark_slider.valueChanged.connect(self.update_labels_only)
-        self.dark_slider.sliderReleased.connect(self.apply_heavy_changes)
-        
+
         layout.addWidget(self.dark_slider)
         self.alpha_label = QLabel(f"Playlist Opacity: {int(self.parent.visual_settings['bg_alpha'] * 100)}%")
-        
+
         layout.addWidget(self.alpha_label)
         self.alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.alpha_slider.setRange(0, 100)
         self.alpha_slider.setValue(int(self.parent.visual_settings['bg_alpha'] * 100))
         self.alpha_slider.valueChanged.connect(self.update_labels_only)
-        self.alpha_slider.sliderReleased.connect(self.apply_heavy_changes)
         layout.addWidget(self.alpha_slider)
 
         # --- THE NEW FOOTER SLIDER HERE
         self.footer_alpha_label = QLabel(f"Footer Opacity: {int(self.parent.visual_settings.get('footer_alpha', 0.85) * 100)}%")
         layout.addWidget(self.footer_alpha_label)
-        
+
         self.footer_alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.footer_alpha_slider.setRange(0, 100)
         self.footer_alpha_slider.setValue(int(self.parent.visual_settings.get('footer_alpha', 0.85) * 100))
         self.footer_alpha_slider.valueChanged.connect(self.update_labels_only)
-        self.footer_alpha_slider.sliderReleased.connect(self.apply_heavy_changes)
         layout.addWidget(self.footer_alpha_slider)
 
         self.queue_alpha_label = QLabel(f"Queue Opacity: {int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100)}%")
@@ -537,8 +534,18 @@ class SettingsWindow(QWidget):
         self.queue_alpha_slider.setRange(0, 100)
         self.queue_alpha_slider.setValue(int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100))
         self.queue_alpha_slider.valueChanged.connect(self.update_labels_only)
-        self.queue_alpha_slider.sliderReleased.connect(self.apply_heavy_changes)
         layout.addWidget(self.queue_alpha_slider)
+
+        # Single debounce timer — restarted on every valueChanged, fires apply_heavy_changes
+        # 150ms after the user stops interacting (covers drag, arrow keys, and bar clicks).
+        from PyQt6.QtCore import QTimer as _QTimer
+        self._apply_debounce = _QTimer(self)
+        self._apply_debounce.setSingleShot(True)
+        self._apply_debounce.setInterval(150)
+        self._apply_debounce.timeout.connect(self.apply_heavy_changes)
+        for _s in (self.blur_slider, self.dark_slider, self.alpha_slider,
+                   self.footer_alpha_slider, self.queue_alpha_slider):
+            _s.valueChanged.connect(self._apply_debounce.start)
 
         layout.addSpacing(15)
 
@@ -675,7 +682,7 @@ class SettingsWindow(QWidget):
             if hasattr(self.parent, 'visualizer'): self.parent.visualizer.bar_color = QColor(self.parent.master_color)
     
     def update_labels_only(self):
-        self.blur_label.setText(f"Blur Radius: {self.blur_slider.value()}px")
+        self.blur_label.setText(f"Blur Radius: {self.blur_slider.value()}%")
         self.dark_label.setText(f"Darkness Blend: {self.dark_slider.value()}%")
         self.alpha_label.setText(f"Playlist Opacity: {self.alpha_slider.value()}%")
         
@@ -683,7 +690,7 @@ class SettingsWindow(QWidget):
         self.queue_alpha_label.setText(f"Queue Opacity: {self.queue_alpha_slider.value()}%")
     
     def apply_heavy_changes(self):
-        self.parent.visual_settings['blur'] = self.blur_slider.value()
+        self.parent.visual_settings['blur'] = round(self.blur_slider.value() / 100 * 5, 2)
         self.parent.visual_settings['overlay'] = self.dark_slider.value() / 100.0
         self.parent.visual_settings['bg_alpha'] = self.alpha_slider.value() / 100.0
         
@@ -811,7 +818,7 @@ class SquareArtContainer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         
         side = min(self.width(), self.height())
-        x = (self.width() - side) // 2
+        x = self.width() - side
         y = (self.height() - side) // 2
         rect = QRect(x, y, side, side)
         
