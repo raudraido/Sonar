@@ -116,6 +116,7 @@ def _protocol_info(ct: str) -> str:
 
 def _didl(url: str, title: str, artist: str, album: str, ct: str, art_url: str = '') -> str:
     def e(s): return html.escape(str(s or ''))
+    print(f'[DLNA didl] art_url={art_url!r}')
     art_tag = f'<upnp:albumArtURI>{e(art_url)}</upnp:albumArtURI>' if art_url else ''
     return (
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
@@ -427,6 +428,7 @@ class _StreamProxy:
             key = key[:-3]
         with self._lock:
             origin = self._urls.get(key, '')
+        print(f'[DLNAProxy] {handler.command} {handler.path} → {origin[:80] if origin else "NOT FOUND"}')
         if not origin:
             handler.send_response(404); handler.end_headers(); return
 
@@ -530,8 +532,31 @@ class _StreamProxy:
             handler.send_response(502); handler.end_headers(); return
 
         status = getattr(resp, 'status', getattr(resp, 'code', 200))
-        handler.send_response(status)
         ct = resp.headers.get('Content-Type', 'audio/mpeg').split(';')[0].strip()
+        is_image = ct.startswith('image/')
+
+        # For images: read fully, transcode to JPEG (DLNA receivers don't support WebP)
+        if is_image:
+            raw = resp.read()
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(raw)).convert('RGB')
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=90)
+                body = buf.getvalue()
+            except Exception:
+                body = raw
+            handler.send_response(status)
+            handler.send_header('Content-Type', 'image/jpeg')
+            handler.send_header('Content-Length', str(len(body)))
+            handler.send_header('Access-Control-Allow-Origin', '*')
+            handler.end_headers()
+            if handler.command != 'HEAD':
+                handler.wfile.write(body)
+            return
+
+        handler.send_response(status)
 
         # Pass through Navidrome headers (skip hop-by-hop)
         skip = {'transfer-encoding', 'connection', 'keep-alive', 'access-control-allow-origin', 'access-control-expose-headers'}
@@ -539,7 +564,7 @@ class _StreamProxy:
             if name.lower() not in skip:
                 handler.send_header(name, value)
 
-        # Inject DLNA & CORS streaming headers (skipping DLNA headers for Chromecast)
+        # Inject DLNA streaming headers (audio only)
         if not is_chromecast:
             pn = _DLNA_PN.get(ct, '')
             cf = f'{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
@@ -1070,6 +1095,7 @@ class CastManager:
                 with proxy._lock:
                     proxy._urls[key] = navidrome_art
                 track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
+                print(f'[DLNA relay_track] cover_url={track["cover_url"]}')
         ct = _content_type(track)
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
@@ -1332,6 +1358,7 @@ class CastManager:
         if not track.get('cover_url'):
             sc = getattr(self._win, 'navidrome_client', None)
             cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+            print(f'[DLNA play_chain] sc={sc!r} cover_id={cover_id!r}')
             if sc and cover_id:
                 navidrome_art = sc.get_cover_art_url(cover_id, size=500)
                 proxy = _get_proxy()
@@ -1340,6 +1367,8 @@ class CastManager:
                     proxy._urls[key] = navidrome_art
                 track = dict(track)
                 track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
+                print(f'[DLNA play_chain] cover_url={track["cover_url"]}')
+        print(f'[DLNA play_chain] final cover_url={track.get("cover_url")!r}')
         await d.async_play_track(self._dlna_url(url, is_chromecast=False, ct=ct), track)
         if pos_ms > 500:
             await asyncio.sleep(1.0)   # let stream buffer
