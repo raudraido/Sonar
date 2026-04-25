@@ -261,7 +261,8 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
     }
     
     // FFT Visualizer — skip entirely when nobody is watching (e.g. minimized)
-    if (engine.vis_active.load(std::memory_order_relaxed)) {
+    static int fft_skip = 0;
+    if (engine.vis_active.load(std::memory_order_relaxed) && (++fft_skip & 1) == 0) {
         int frames = (int)frameCount;
         for (int i = 0; i < frames; i++) {
             engine.vis_left_buf[engine.vis_write] = out[i * CHANNELS];
@@ -514,14 +515,15 @@ extern "C" {
         config.playback.channels = CHANNELS;
         config.sampleRate = SAMPLE_RATE;
         config.dataCallback = data_callback;
-        config.performanceProfile = ma_performance_profile_low_latency; 
-
         #ifdef __linux__
+            // low_latency forces tiny periods; combined with FFT in the callback it causes underruns
+            config.performanceProfile = ma_performance_profile_conservative;
             ma_backend backends[] = { ma_backend_pulseaudio };
             if (ma_device_init_ex(backends, 1, NULL, &config, &engine.device) != MA_SUCCESS) {
                 ma_device_init(NULL, &config, &engine.device);
             }
         #else
+            config.performanceProfile = ma_performance_profile_low_latency;
             ma_device_init(NULL, &config, &engine.device);
         #endif
         ma_device_start(&engine.device);

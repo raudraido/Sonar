@@ -271,8 +271,9 @@ class QueuePanel(QWidget):
         self.setStyleSheet(
             '#QueuePanel {'
             '  background: rgba(14,14,14,0.96);'
-            '  border: 1px solid rgba(255,255,255,0.10);'
+            '  border: none;'
             '  border-radius: 10px;'
+            '  outline: none;'
             '}'
         )
 
@@ -284,7 +285,7 @@ class QueuePanel(QWidget):
         # ── Content column ────────────────────────────────────────────────────
         content = QWidget()
         content.setObjectName('QueueContent')
-        content.setStyleSheet('QWidget#QueueContent { background: transparent; }')
+        content.setStyleSheet('QWidget#QueueContent { background: transparent; border: none; }')
         col = QVBoxLayout(content)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)

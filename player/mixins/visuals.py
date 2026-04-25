@@ -393,7 +393,7 @@ class VisualsMixin:
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
                 f'  background: rgba(14,14,14,{queue_alpha});'
-                f'  border: 1px solid rgba(255,255,255,0.10);'
+                f'  border: none;'
                 f'  border-radius: 10px;'
                 f'}}'
             )

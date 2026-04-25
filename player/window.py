@@ -291,7 +291,7 @@ class _RightPanelWidget(QWidget):
         self._edge.setGeometry(0, 0, _SplitterEdge._W, self.height())
         self._edge.raise_()
         hw = self._edge._splitter.handleWidth()
-        print(f"[RIGHT_PANEL] x={self.x()} width={self.width()} handle={hw} gap={self.x() - (self.parent().width() - self.width() - hw)}")
+        #print(f"[RIGHT_PANEL] x={self.x()} width={self.width()} handle={hw} gap={self.x() - (self.parent().width() - self.width() - hw)}")
 
 
 class _TooltipLabel(_QFrame):
@@ -716,8 +716,10 @@ class SonarPlayer(
 
         # Section 3: Track info (25%)
         text_info_container = QWidget()
+        text_info_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        text_info_container.setMaximumWidth(400)
         text_info_layout = QVBoxLayout(text_info_container)
-        text_info_layout.setContentsMargins(0, 15, 0, 0) # Top margin 15, left margin 0
+        text_info_layout.setContentsMargins(0, 5, 0, 0) # Top margin 15, left margin 0
         text_info_layout.setSpacing(6)
 
         self.track_title = QLabel("")
@@ -735,6 +737,7 @@ class SonarPlayer(
 
         self.file_type_label = QLabel("")
         self.file_type_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.file_type_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.file_type_label.setStyleSheet("font-size: 11px; color: #888; font-weight: 600;")
         text_info_layout.addWidget(self.file_type_label)
 
@@ -750,7 +753,15 @@ class SonarPlayer(
         
         text_info_layout.addStretch(1)
 
-        self._info_section = _SectionWidget(text_info_container, 'info', self)
+        info_centering = QWidget()
+        info_centering_layout = QHBoxLayout(info_centering)
+        info_centering_layout.setContentsMargins(0, 0, 0, 0)
+        info_centering_layout.setSpacing(0)
+        info_centering_layout.addStretch(1)
+        info_centering_layout.addWidget(text_info_container, stretch=32)
+        info_centering_layout.addStretch(1)
+
+        self._info_section = _SectionWidget(info_centering, 'info', self)
         left_panel.addWidget(self._info_section, 1)
 
         # Restore section visibility (deferred so layout has computed heights first)
