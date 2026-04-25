@@ -390,8 +390,13 @@ class PersistenceMixin:
             self.playlist_loader.wait()
             
         # 5. Stop the active audio engine
-        if hasattr(self, 'audio_engine'): 
+        if hasattr(self, 'audio_engine'):
             self.audio_engine.stop()
+
+        # 5a. Send stop to any active cast/DLNA devices
+        if hasattr(self, '_cast_manager'):
+            try: self._cast_manager._disconnect_all()
+            except Exception: pass
         
         # 6. Clean up temporary cache files
         for f in self.temp_files:

@@ -114,8 +114,9 @@ def _protocol_info(ct: str) -> str:
     pn = _DLNA_PN.get(ct, '')
     return f'http-get:*:{ct}:{pn}DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS={_DLNA_FLAGS}'
 
-def _didl(url: str, title: str, artist: str, album: str, ct: str) -> str:
+def _didl(url: str, title: str, artist: str, album: str, ct: str, art_url: str = '') -> str:
     def e(s): return html.escape(str(s or ''))
+    art_tag = f'<upnp:albumArtURI>{e(art_url)}</upnp:albumArtURI>' if art_url else ''
     return (
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/" '
@@ -125,6 +126,7 @@ def _didl(url: str, title: str, artist: str, album: str, ct: str) -> str:
         f'<dc:creator>{e(artist)}</dc:creator>'
         f'<upnp:artist>{e(artist)}</upnp:artist>'
         f'<upnp:album>{e(album)}</upnp:album>'
+        f'{art_tag}'
         f'<upnp:class>object.item.audioItem.musicTrack</upnp:class>'
         f'<res protocolInfo="{_protocol_info(ct)}">{e(url)}</res>'
         f'</item></DIDL-Lite>'
@@ -293,8 +295,9 @@ class _DLNADevice:
 
     async def async_play_track(self, url: str, track: dict):
         ct   = _content_type(track)
+        art  = track.get('cover_url') or ''
         meta = _didl(url, track.get('title', ''), track.get('artist', ''),
-                     track.get('album', ''), ct)
+                     track.get('album', ''), ct, art_url=art)
         # Reset transport state first — many receivers start faster from a clean state
         try:
             await self._avt('Stop')
@@ -675,8 +678,9 @@ class _DeviceRow(QWidget):
             self._update_check(is_active)
             lay.addWidget(self._ck)
 
+        c = QColor(accent_color)
         self._normal_bg = 'background:transparent;'
-        self._hover_bg  = 'background:rgba(255,255,255,0.07);'
+        self._hover_bg  = f'background:rgba({c.red()},{c.green()},{c.blue()},0.12);'
         self.setStyleSheet(self._normal_bg)
 
     def _update_check(self, active: bool):
@@ -1054,7 +1058,17 @@ class CastManager:
     def relay_track(self, track: dict, ntp_start: int = 0):
         url = track.get('stream_url') or track.get('path', '')
         if not url or not self._active_devices: return
-        sc = getattr(self._win, 'subsonic_client', None)
+        sc = getattr(self._win, 'navidrome_client', None)
+        if sc and not track.get('cover_url'):
+            cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+            if cover_id:
+                track = dict(track)
+                navidrome_art = sc.get_cover_art_url(cover_id, size=500)
+                proxy = _get_proxy()
+                key = hashlib.md5(navidrome_art.encode()).hexdigest()
+                with proxy._lock:
+                    proxy._urls[key] = navidrome_art
+                track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
         ct = _content_type(track)
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
@@ -1314,6 +1328,17 @@ class CastManager:
                                pos_ms: int, paused: bool) -> int:
         """Async: play → seek → pause → return actual volume. Runs in cast loop."""
         ct = _content_type(track)
+        if not track.get('cover_url'):
+            sc = getattr(self._win, 'navidrome_client', None)
+            cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+            if sc and cover_id:
+                navidrome_art = sc.get_cover_art_url(cover_id, size=500)
+                proxy = _get_proxy()
+                key = hashlib.md5(navidrome_art.encode()).hexdigest()
+                with proxy._lock:
+                    proxy._urls[key] = navidrome_art
+                track = dict(track)
+                track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
         await d.async_play_track(self._dlna_url(url, is_chromecast=False, ct=ct), track)
         if pos_ms > 500:
             await asyncio.sleep(1.0)   # let stream buffer

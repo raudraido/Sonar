@@ -252,14 +252,13 @@ class AudioVisualizer(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        padding_right = 10
-        padding_top = 5
-        self.btn_toggle_vis.move(self.width() - self.btn_toggle_vis.width() - padding_right, padding_top)
         # Rebuild floor line pen now that width has changed
         self._rebuild_floor_pen(self.width())
 
     def enterEvent(self, event):
-        # Recreate the effect+animation if they were torn down after last fade-out
+        if self.btn_toggle_vis.parent() is not self:
+            super().enterEvent(event)
+            return
         if self.toggle_opacity is None:
             self._init_opacity_effect()
         self.hover_anim.stop()
@@ -268,13 +267,15 @@ class AudioVisualizer(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        if self.btn_toggle_vis.parent() is not self:
+            super().leaveEvent(event)
+            return
         if self.toggle_opacity is None:
-            # Nothing to fade — button is already invisible
             super().leaveEvent(event)
             return
         self.hover_anim.stop()
         self.hover_anim.setEndValue(0.0)
-        self.hover_anim.start()  # _on_hover_anim_finished will teardown at opacity 0
+        self.hover_anim.start()
         super().leaveEvent(event)
 
 

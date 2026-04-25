@@ -98,6 +98,7 @@ class _SectionWidget(QWidget):
         self._content = content
         self._key = key
         self._main = main_window
+        self._companion_btn = None
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -170,12 +171,27 @@ class _SectionWidget(QWidget):
         self._hover_anim.setDuration(250)
         self._hover_anim.finished.connect(self._on_anim_finished)
 
+        self._companion_opacity = None
+        self._companion_anim = None
+        if self._companion_btn is not None:
+            self._companion_btn.show()
+            self._companion_opacity = QGraphicsOpacityEffect(self._companion_btn)
+            self._companion_opacity.setOpacity(0.0)
+            self._companion_btn.setGraphicsEffect(self._companion_opacity)
+            self._companion_anim = QPropertyAnimation(self._companion_opacity, b"opacity")
+            self._companion_anim.setDuration(250)
+
     def _on_anim_finished(self):
         if self._toggle_opacity and self._toggle_opacity.opacity() == 0.0:
             self._btn.setGraphicsEffect(None)
             self._btn.hide()
             self._toggle_opacity = None
             self._hover_anim = None
+            if self._companion_btn is not None:
+                self._companion_btn.setGraphicsEffect(None)
+                self._companion_btn.hide()
+                self._companion_opacity = None
+                self._companion_anim = None
 
     def eventFilter(self, obj, event):
         if obj is self._btn:
@@ -191,6 +207,10 @@ class _SectionWidget(QWidget):
         self._hover_anim.stop()
         self._hover_anim.setEndValue(1.0)
         self._hover_anim.start()
+        if self._companion_anim is not None:
+            self._companion_anim.stop()
+            self._companion_anim.setEndValue(1.0)
+            self._companion_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -200,11 +220,17 @@ class _SectionWidget(QWidget):
         self._hover_anim.stop()
         self._hover_anim.setEndValue(0.0)
         self._hover_anim.start()
+        if self._companion_anim is not None:
+            self._companion_anim.stop()
+            self._companion_anim.setEndValue(0.0)
+            self._companion_anim.start()
         super().leaveEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._btn.move(self.width() - self._btn.width() - 10, 5)
+        if self._companion_btn is not None:
+            self._companion_btn.move(self._btn.x() - self._companion_btn.width() - 8, 5)
 
     def _toggle(self):
         vis = not self._content.isVisible()
@@ -685,7 +711,7 @@ class SonarPlayer(
         left_panel = QVBoxLayout(_left_widget)
         left_panel.setContentsMargins(8, 0, 8, 0) #LEFT panel (Album/Visualizer/Info) left margin
         left_panel.setSpacing(0)
-        left_panel.addSpacing(42)
+        left_panel.addSpacing(38 if sys.platform == "win32" else 42)
 
         # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
@@ -712,6 +738,15 @@ class SonarPlayer(
         vis_layout.addStretch(1)
 
         self._vis_section = _SectionWidget(vis_container, 'vis', self)
+        btn_vis = self.visualizer.btn_toggle_vis
+        # Tear down AudioVisualizer's opacity effect before re-parenting
+        btn_vis.setGraphicsEffect(None)
+        btn_vis.hide()
+        self.visualizer.toggle_opacity = None
+        self.visualizer.hover_anim = None
+        btn_vis.setParent(self._vis_section)
+        btn_vis.raise_()
+        self._vis_section._companion_btn = btn_vis
         left_panel.addWidget(self._vis_section, 1)
 
         # Section 3: Track info (25%)
