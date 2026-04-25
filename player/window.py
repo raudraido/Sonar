@@ -67,13 +67,13 @@ from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
 class CenteredSquareWrapper(QWidget):
     """Forces the album art to remain a perfect square and perfectly centered 
     within its available space, preventing it from sticking to the edges."""
-    def __init__(self, child):
+    
+    def __init__(self, splitter):
         super().__init__()
-        self.child = child
-        self.child.setParent(self)
+        self._edge = _SplitterEdge(splitter, self)
 
     def minimumSizeHint(self):
-        return QSize(8, 8)
+        return QSize(0, 0)
 
     def resizeEvent(self, event):
         w = self.width()
@@ -85,6 +85,9 @@ class CenteredSquareWrapper(QWidget):
         y = (h - side) // 2
         
         self.child.setGeometry(x, y, side, side)
+        art_section = self.parent()
+        left_widget = art_section.parent() if art_section else None
+        print(f"[ART] wrapper={w} art_section={art_section.width() if art_section else '?'} left_widget={left_widget.width() if left_widget else '?'} h={h} side={side}")
         super().resizeEvent(event)
 
 class _SectionWidget(QWidget):
@@ -214,6 +217,11 @@ class _SectionWidget(QWidget):
 class _InvisibleHandle(_QSplitterHandle):
     def paintEvent(self, event):
         pass
+        
+    def sizeHint(self):
+        # Force the splitter handle to truly take up 0 pixels
+        from PyQt6.QtCore import QSize
+        return QSize(0, 0)
 
 
 class _GripSplitter(QSplitter):
@@ -227,7 +235,7 @@ class _GripSplitter(QSplitter):
 
 class _SplitterEdge(QWidget):
     """8-px overlay at the left edge of the right panel. Drag to resize."""
-    _W = 8
+    _W = 6
 
     def __init__(self, splitter, parent_panel):
         super().__init__(parent_panel)
@@ -236,6 +244,7 @@ class _SplitterEdge(QWidget):
         self.setFixedWidth(self._W)
         self.setCursor(_Qt2.CursorShape.SizeHorCursor)
         self.setMouseTracking(True)
+        self.setStyleSheet("background: red;")  # DEBUG
 
     def paintEvent(self, event):
         pass
@@ -262,7 +271,7 @@ class _LeftPanelWidget(QWidget):
     """Left panel — overrides minimumSizeHint so QSplitter lets it shrink to 8 px."""
     def minimumSizeHint(self):
         s = super().minimumSizeHint()
-        return QSize(8, s.height())
+        return QSize(256, s.height())
 
 
 class _RightPanelWidget(QWidget):
@@ -281,6 +290,8 @@ class _RightPanelWidget(QWidget):
         super().resizeEvent(event)
         self._edge.setGeometry(0, 0, _SplitterEdge._W, self.height())
         self._edge.raise_()
+        hw = self._edge._splitter.handleWidth()
+        print(f"[RIGHT_PANEL] x={self.x()} width={self.width()} handle={hw} gap={self.x() - (self.parent().width() - self.width() - hw)}")
 
 
 class _TooltipLabel(_QFrame):
@@ -657,11 +668,11 @@ class SonarPlayer(
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 30, 0, 0)
+        main_layout.setContentsMargins(0, 16, 0, 0) #TAB window top margin
         main_layout.setSpacing(0)
 
         content = QHBoxLayout()
-        content.setContentsMargins(8, 0, 8, 0)
+        content.setContentsMargins(0, 0, 8, 8) #TAB window right and bottom margins
         content.setSpacing(0)
 
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
@@ -670,45 +681,64 @@ class SonarPlayer(
 
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
         _left_widget = _LeftPanelWidget()
-        _left_widget.setMinimumWidth(8) # <--- ADD THIS LINE to crush the left side
+        #_left_widget.setMinimumWidth(0)
         left_panel = QVBoxLayout(_left_widget)
-        left_panel.setContentsMargins(0, 0, 4, 0)
+        left_panel.setContentsMargins(8, 0, 8, 0) #LEFT panel (Album/Visualizer/Info) left margin
         left_panel.setSpacing(0)
-        left_panel.addSpacing(36)
+        left_panel.addSpacing(42)
 
         # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
-        self._centered_art = CenteredSquareWrapper(self.art_container)
-        self._art_section = _SectionWidget(self._centered_art, 'art', self)
+        self._art_section = _SectionWidget(self.art_container, 'art', self)
         left_panel.addWidget(self._art_section, 2)
 
         # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
         self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._vis_section = _SectionWidget(self.visualizer, 'vis', self)
+        
+        # Give it a minimum width so it physically cannot shrink to 0 pixels
+        self.visualizer.setMinimumWidth(150) 
+        self.visualizer.setMaximumWidth(400) 
+        
+        vis_container = QWidget()
+        vis_layout = QHBoxLayout(vis_container)
+        vis_layout.setContentsMargins(0, 0, 0, 0)
+        vis_layout.setSpacing(0)
+        
+        # The magic fix: Give the visualizer a high stretch priority (10) 
+        # so it pushes out to its 400px maximum before the side stretches (1) take over.
+        vis_layout.addStretch(1)
+        vis_layout.addWidget(self.visualizer, stretch=32)
+        vis_layout.addStretch(1)
+
+        self._vis_section = _SectionWidget(vis_container, 'vis', self)
         left_panel.addWidget(self._vis_section, 1)
 
         # Section 3: Track info (25%)
         text_info_container = QWidget()
         text_info_layout = QVBoxLayout(text_info_container)
-        text_info_layout.setContentsMargins(0, 15, 0, 0)
+        text_info_layout.setContentsMargins(0, 15, 0, 0) # Top margin 15, left margin 0
         text_info_layout.setSpacing(6)
 
         self.track_title = QLabel("")
+        self.track_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.track_title.setWordWrap(True)
         self.track_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.track_title.setStyleSheet("font-size: 28px; font-weight: bold; color: white;")
         text_info_layout.addWidget(self.track_title)
 
         self.track_artist = QLabel("")
+        self.track_artist.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.track_artist.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.track_artist.setStyleSheet("font-size: 18px; color: #888;")
         text_info_layout.addWidget(self.track_artist)
 
         self.file_type_label = QLabel("")
+        self.file_type_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.file_type_label.setStyleSheet("font-size: 11px; color: #888; font-weight: 600;")
         text_info_layout.addWidget(self.file_type_label)
 
+        # Heart button back to the left
         self.heart_btn = QPushButton()
         self.heart_btn.setFixedSize(24, 24)
         self.heart_btn.setFlat(True)
@@ -717,6 +747,7 @@ class SonarPlayer(
         self.heart_btn.setStyleSheet("background: transparent; border: none;")
         self.heart_btn.clicked.connect(self._toggle_now_playing_favorite)
         text_info_layout.addWidget(self.heart_btn)
+        
         text_info_layout.addStretch(1)
 
         self._info_section = _SectionWidget(text_info_container, 'info', self)
@@ -741,7 +772,7 @@ class SonarPlayer(
         nav_layout = QHBoxLayout(self.nav_container)
         
         
-        nav_layout.setContentsMargins(5, 0, 15, 9) 
+        nav_layout.setContentsMargins(5, 0, 15, 9) #NAVIGATON button margins (right and bottom) 
         nav_layout.setSpacing(4)
         
         
@@ -901,9 +932,9 @@ class SonarPlayer(
 
         # --- RIGHT PANEL (Tabs) ---
         _right_widget = _RightPanelWidget(self._splitter)
-        _right_widget.setMinimumWidth(8)
+        _right_widget.setMinimumWidth(0)
         right_panel = QVBoxLayout(_right_widget)
-        right_panel.setContentsMargins(4, 0, 0, 0)
+        right_panel.setContentsMargins(0, 0, 0, 0)
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
 
@@ -911,10 +942,11 @@ class SonarPlayer(
         self._splitter.addWidget(_right_widget)
         self._splitter.setStretchFactor(0, 35)
         self._splitter.setStretchFactor(1, 65)
+        print(f"[INIT] splitter.handleWidth()={self._splitter.handleWidth()}")
 
         content.addWidget(self._splitter)
         main_layout.addLayout(content, 1)
-        main_layout.addSpacing(8)
+        main_layout.addSpacing(0)
 
         # =========================================================
         # PLAYER CONTROLS & FOOTER
@@ -1185,7 +1217,7 @@ class SonarPlayer(
         panel_h  = min(panel_h, max_h)
         panel_h  = max(panel_h, 180)
         x = margin_l
-        y = self.height() - footer_h - margin_b - panel_h
+        y = self.height() - footer_h - margin_b - panel_h + 1
         self._queue_panel.setGeometry(x, y, panel_w, panel_h)
 
     def _refresh_queue_panel(self):

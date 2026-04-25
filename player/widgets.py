@@ -817,12 +817,18 @@ class SquareArtContainer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         
+        # 1. Find the natural maximum square size
         side = min(self.width(), self.height())
-        x = self.width() - side
+        
+        # 2. Center it. When the panel shrinks, 'x' gracefully drops to 0, 
+        # leaving you with exactly the 8px margin from your outer layout.
+        x = (self.width() - side) // 2
         y = (self.height() - side) // 2
+        
         rect = QRect(x, y, side, side)
         
         painter.setBrush(QColor("#121212"))
+        # ... (keep all the original drawing logic below here)
         painter.setPen(QPen(QColor("#222222"), 1))
         painter.drawRoundedRect(rect, 15, 15)
         

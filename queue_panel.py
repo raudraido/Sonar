@@ -301,7 +301,7 @@ class QueuePanel(QWidget):
             'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
         )
         hbox = QHBoxLayout(header)
-        hbox.setContentsMargins(14, 0, 10, 0)
+        hbox.setContentsMargins(14, 0, 8, 0)
         hbox.setSpacing(0)
 
         lbl = QLabel('Queue')
