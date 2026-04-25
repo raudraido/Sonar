@@ -453,7 +453,36 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-                
+        # ── Logo + version header ─────────────────────────────────────────
+        from player import resource_path
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        header.setContentsMargins(0, 4, 0, 4)
+
+        logo_lbl = QLabel()
+        px = QPixmap(resource_path('img/icon.png'))
+        if not px.isNull():
+            logo_lbl.setPixmap(px.scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
+        header.addWidget(logo_lbl)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        name_lbl = QLabel("Sonar")
+        name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #fff; background: transparent;")
+        ver_lbl = QLabel("v0.17.0")
+        ver_lbl.setStyleSheet("font-size: 11px; color: #555; background: transparent;")
+        title_col.addWidget(name_lbl)
+        title_col.addWidget(ver_lbl)
+        header.addLayout(title_col)
+        header.addStretch()
+        layout.addLayout(header)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #2a2a2a;")
+        layout.addWidget(sep)
+
         layout.addWidget(QLabel("Theme:"))
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
         self.dynamic_check.setChecked(self.parent.dynamic_color)

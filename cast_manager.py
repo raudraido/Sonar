@@ -681,6 +681,7 @@ class _DeviceRow(QWidget):
         c = QColor(accent_color)
         self._normal_bg = 'background:transparent;'
         self._hover_bg  = f'background:rgba({c.red()},{c.green()},{c.blue()},0.12);'
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(self._normal_bg)
 
     def _update_check(self, active: bool):
@@ -753,7 +754,7 @@ class _CastPopup(QFrame):
         self._lay.addWidget(self._sep())
 
         # ── "This device" — permanent, no toggle ─────────────────────────
-        local_row = _DeviceRow(None, is_active=True, volume=50, show_toggle=False)
+        local_row = _DeviceRow(None, is_active=True, volume=50, show_toggle=False, accent_color=self._accent)
         local_row.volume_changed.connect(self.volume_changed)
         self._lay.addWidget(local_row)
         self._rows['__local__'] = local_row
