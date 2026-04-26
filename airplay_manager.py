@@ -90,11 +90,19 @@ class AirPlayDevice:
         self._atv            = None   # pyatv AppleTV object
         self._volume         = 50
         self._stream_future  = None   # currently running stream_file future
+        self._dev_id         = None
+        self._bridge         = None
 
     # ── Public ────────────────────────────────────────────────────────────
 
     def connect(self):
         _run(self._async_connect()).result(timeout=15)
+
+    def register_listeners(self, dev_id: str, bridge):
+        self._dev_id = dev_id
+        self._bridge = bridge
+        if self._atv:
+            self._start_push_updater()
 
     def play_track(self, url: str, track: dict, subsonic=None,
                    seek_s: float = 0.0, ntp_start: int = 0, **_kw):
@@ -102,7 +110,7 @@ class AirPlayDevice:
         # Cancel any previous stream so we don't pile up concurrent streams.
         if self._stream_future and not self._stream_future.done():
             self._stream_future.cancel()
-        self._stream_future = _run(self._async_play(url, seek_s))
+        self._stream_future = _run(self._async_play(url, track, seek_s))
         self._stream_future.add_done_callback(self._on_stream_done)
 
     def _on_stream_done(self, fut):
@@ -110,7 +118,9 @@ class AirPlayDevice:
             return
         exc = fut.exception()
         if exc:
-            print(f'[AirPlay] Stream error for {self._info.name!r}: {exc}')
+            import traceback
+            tb = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            print(f'[AirPlay] Stream error for {self._info.name!r}:\n{tb}')
             if self._error_callback:
                 self._error_callback(self._info.name, str(exc))
 
@@ -157,6 +167,30 @@ class AirPlayDevice:
             self._atv = None
 
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _start_push_updater(self):
+        from pyatv.const import DeviceState
+        dev_id = self._dev_id
+        bridge = self._bridge
+        atv    = self._atv
+
+        class _Listener:
+            def playstatus_update(self, updater, playstatus):
+                state_map = {
+                    DeviceState.Playing: 'playing',
+                    DeviceState.Paused:  'paused',
+                }
+                state = state_map.get(playstatus.device_state)
+                if state:
+                    bridge.dlna_playstate.emit(dev_id, state)
+            def playstatus_error(self, updater, exception):
+                print(f'[AirPlay] push update error: {exception}')
+
+        async def _start():
+            atv.push_updater.listener = _Listener()
+            atv.push_updater.start()
+
+        _run(_start())
 
     async def _async_connect(self):
         import pyatv
@@ -282,13 +316,84 @@ class AirPlayDevice:
             self._info.credentials = svc.credentials
             print(f'[AirPlay] Saved credentials for {self._info.name!r}')
 
-    async def _async_play(self, url: str, seek_s: float = 0.0):
+    async def _async_play(self, url: str, track: dict, seek_s: float = 0.0):
         if not self._atv:
             await self._async_connect()
 
+        import pyatv.interface as _iface
+        import aiohttp
+
+        artwork = None
+        cover_url = track.get('cover_url') or ''
+        if cover_url.startswith('http'):
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(cover_url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                        if r.status == 200:
+                            artwork = await r.read()
+            except Exception as e:
+                print(f'[AirPlay] artwork fetch failed: {e}')
+
+        def _to_seconds(val):
+            if val is None:
+                return None
+            if isinstance(val, (int, float)):
+                return float(val)
+            s = str(val).strip()
+            if ':' in s:
+                try:
+                    parts = s.split(':')
+                    if len(parts) == 2:
+                        return float(parts[0]) * 60 + float(parts[1])
+                    if len(parts) == 3:
+                        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                except ValueError:
+                    return None
+            try:
+                return float(s)
+            except ValueError:
+                return None
+
+        duration = _to_seconds(track.get('duration') or track.get('total_time'))
+        metadata = _iface.MediaMetadata(
+            title=track.get('title') or None,
+            artist=track.get('artist') or None,
+            album=track.get('album') or None,
+            artwork=artwork,
+            duration=duration,
+        )
+
+        # miniaudio's MP3 decoder needs to seek during init (to skip ID3 tags and
+        # find MPEG sync). Streaming HTTP responses aren't fully seekable, so large
+        # ID3 blocks (embedded artwork > 32KB) cause DecodeError. Download to a
+        # temp file first for formats other than FLAC/WAV which are fine via URL.
+        import os as _os, tempfile as _tmp
+        suffix = (track.get('suffix') or '').lower() or \
+                 url.rsplit('.', 1)[-1].split('?')[0].split('&')[0].lower()
+        tmp_path = None
+        play_src = url
+        if suffix not in ('flac', 'wav'):
+            try:
+                fd, tmp_path = _tmp.mkstemp(suffix=f'.{suffix or "mp3"}')
+                _os.close(fd)
+                print(f'[AirPlay] Downloading {suffix} to temp file for seekable decode…')
+                async with aiohttp.ClientSession() as _s:
+                    async with _s.get(url, timeout=aiohttp.ClientTimeout(total=300)) as _r:
+                        with open(tmp_path, 'wb') as _f:
+                            async for _chunk in _r.content.iter_chunked(65536):
+                                _f.write(_chunk)
+                play_src = tmp_path
+                print(f'[AirPlay] Downloaded {_os.path.getsize(tmp_path)//1024}KB')
+            except Exception as _e:
+                print(f'[AirPlay] Temp download failed ({_e}), trying direct URL')
+                play_src = url
+                if tmp_path and _os.path.exists(tmp_path):
+                    _os.unlink(tmp_path)
+                tmp_path = None
+
         print(f'[AirPlay] → {self._info.name!r}  {url!r}')
         try:
-            await self._atv.stream.stream_file(url)
+            await self._atv.stream.stream_file(play_src, metadata=metadata)
         except Exception as e:
             e_str = str(e).lower()
             if not ('auth' in e_str or '470' in e_str or 'credentials' in e_str or 'verify' in e_str):
@@ -334,14 +439,20 @@ class AirPlayDevice:
                     f'Paired with {self._info.name!r} but reconnect failed ({ce}).\n\n'
                     'Please try connecting again.'
                 ) from ce
-            await self._atv.stream.stream_file(url)
+            await self._atv.stream.stream_file(play_src, metadata=metadata)
+        finally:
+            if tmp_path and _os.path.exists(tmp_path):
+                try:
+                    _os.unlink(tmp_path)
+                except Exception:
+                    pass
 
         if seek_s > 1.0:
             await asyncio.sleep(2.0)
             try:
                 await self._atv.remote_control.set_position(int(seek_s))
-            except Exception as e:
-                print(f'[AirPlay] Seek failed (ignored): {e}')
+            except Exception:
+                pass  # set_position not supported on all AirPlay devices
 
 
 

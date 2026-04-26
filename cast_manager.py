@@ -1248,10 +1248,10 @@ class CastManager:
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
             is_cc = (dev_info and dev_info.protocol == 'chromecast')
-            if is_cc or (dev_info and dev_info.protocol == 'dlna'):
+            if dev_info and dev_info.protocol in ('dlna', 'chromecast'):
                 cast_url = self._dlna_url(url, is_chromecast=is_cc, ct=ct)
             else:
-                cast_url = url
+                cast_url = url  # AirPlay: pass raw URL, pyatv fetches directly
             kw = {'subsonic': sc}
             
             pos_ms = getattr(self._win, 'last_engine_pos', 0)
@@ -1626,10 +1626,27 @@ class CastManager:
                             print(f'[Cast] DLNA play chain error: {e}')
                     fut.add_done_callback(_on_chain_done)
             elif dev.protocol in ('airplay1', 'airplay2'):
+                d.register_listeners(dev.id, self._ui_bridge)
                 # stream_file() runs for the full song — fire-and-forget; errors
                 # arrive via error_callback as a Qt signal on the main thread.
                 if url:
-                    d.play_track(url, track)
+                    ct = _content_type(track)
+                    # Pass the raw URL directly — pyatv fetches it itself via requests.
+                    # Routing through the local proxy breaks miniaudio's MP3 decoder
+                    # (the proxy strips Content-Length, so miniaudio can't seek for init).
+                    ap_url = url
+                    if not track.get('cover_url'):
+                        sc = getattr(self._win, 'navidrome_client', None)
+                        cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+                        if sc and cover_id:
+                            navidrome_art = sc.get_cover_art_url(cover_id, size=500)
+                            proxy = _get_proxy()
+                            key = hashlib.md5(navidrome_art.encode()).hexdigest()
+                            with proxy._lock:
+                                proxy._urls[key] = navidrome_art
+                            track = dict(track)
+                            track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
+                    d.play_track(ap_url, track)
                 vol = d.get_volume()
                 if vol > 0:
                     self._ui_bridge.device_volume.emit(dev.id, vol)
