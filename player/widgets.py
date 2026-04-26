@@ -448,11 +448,32 @@ class SettingsWindow(QWidget):
         super().__init__()
         self.parent = parent
         self.setWindowTitle("Settings")
-        self.setFixedWidth(420)
+        self.setFixedWidth(460)
         self.setWindowFlags(Qt.WindowType.Tool)
         self.setStyleSheet("background-color: #181818; color: #ddd; font-family: sans-serif;")
-        layout = QVBoxLayout(self)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { border: none; background: #1a1a1a; width: 6px; margin: 0; }
+            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        outer.addWidget(self._scroll)
+
+        _content = QWidget()
+        _content.setStyleSheet("background: transparent;")
+        self._scroll.setWidget(_content)
+
+        layout = QVBoxLayout(_content)
         layout.setSpacing(15)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         # ── Logo + version header ─────────────────────────────────────────
         from player import resource_path
@@ -587,20 +608,9 @@ class SettingsWindow(QWidget):
             hotkeys_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
             layout.addWidget(hotkeys_label)
 
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setFixedHeight(300)
-            scroll.setStyleSheet("""
-                QScrollArea { background: transparent; border: none; }
-                QScrollBar:vertical { border: none; background: rgba(0,0,0,0.05); width: 6px; margin: 0; }
-                QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-            """)
-
-            content = QWidget()
-            content.setStyleSheet("background: transparent;")
-            grid = QGridLayout(content)
+            _hk_widget = QWidget()
+            _hk_widget.setStyleSheet("background: transparent;")
+            grid = QGridLayout(_hk_widget)
             grid.setContentsMargins(0, 0, 6, 0)
             grid.setHorizontalSpacing(8)
             grid.setVerticalSpacing(3)
@@ -641,8 +651,7 @@ class SettingsWindow(QWidget):
             reset_all.clicked.connect(self._reset_all_hotkeys)
             grid.addWidget(reset_all, len(DEFAULT_HOTKEYS), 0, 1, 3)
 
-            scroll.setWidget(content)
-            layout.addWidget(scroll)
+            layout.addWidget(_hk_widget)
             layout.addSpacing(10)
 
         # --- LOGOUT BUTTON ---
@@ -664,6 +673,18 @@ class SettingsWindow(QWidget):
         layout.addWidget(self.logout_btn)
         
         layout.addStretch()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        p = self.parent
+        if p and p.isVisible():
+            pg = p.geometry()
+            max_h = pg.height() - 40
+            self.setMaximumHeight(max_h)
+            self.adjustSize()
+            x = pg.x() + (pg.width()  - self.width())  // 2
+            y = pg.y() + (pg.height() - self.height()) // 2
+            self.move(x, y)
 
     def toggle_dynamic_color(self):
         self.parent.dynamic_color = self.dynamic_check.isChecked()
