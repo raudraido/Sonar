@@ -7,6 +7,7 @@ parent reference so it can write back to visual_settings).
 """
 import os
 import re
+from version import __version__
 
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
@@ -470,7 +471,7 @@ class SettingsWindow(QWidget):
         title_col.setSpacing(0)
         name_lbl = QLabel("Sonar")
         name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #fff; background: transparent;")
-        ver_lbl = QLabel("v0.17.0")
+        ver_lbl = QLabel(f"v{__version__}")
         ver_lbl.setStyleSheet("font-size: 11px; color: #555; background: transparent;")
         title_col.addWidget(name_lbl)
         title_col.addWidget(ver_lbl)
