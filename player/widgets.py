@@ -717,11 +717,27 @@ class SettingsWindow(QWidget):
         p = self.parent
         if p and p.isVisible():
             pg = p.geometry()
-            h = min(700, pg.height() - 60)
+            h = min(900, pg.height() - 60)
             self.setFixedHeight(h)
             x = pg.x() + (pg.width()  - self.width())  // 2
             y = pg.y() + (pg.height() - h) // 2
             self.move(x, y)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(200, lambda: QApplication.instance().installEventFilter(self))
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self, _, event):
+        from PyQt6.QtCore import QEvent, QRect
+        if event.type() == QEvent.Type.MouseButtonPress:
+            pos = event.globalPosition().toPoint()
+            tl  = self.mapToGlobal(self.rect().topLeft())
+            br  = self.mapToGlobal(self.rect().bottomRight())
+            if not QRect(tl, br).contains(pos):
+                self.hide()
+        return False
 
     def toggle_dynamic_color(self):
         self.parent.dynamic_color = self.dynamic_check.isChecked()
