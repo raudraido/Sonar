@@ -163,12 +163,32 @@ class _ChromecastDevice:
         # kills cc.wait() for every other device in the batch.
         self._cc.wait(timeout=8)
 
+    def register_listeners(self, dev_id: str, bridge):
+        cc = self._cc
+        mc = cc.media_controller
+
+        class _MediaListener:
+            def new_media_status(self, status):
+                state_map = {'PLAYING': 'playing', 'PAUSED': 'paused'}
+                state = state_map.get(status.player_state)
+                if state:
+                    bridge.dlna_playstate.emit(dev_id, state)
+
+        class _CastListener:
+            def new_cast_status(self, status):
+                if status.volume_level is not None:
+                    bridge.device_volume.emit(dev_id, int(status.volume_level * 100))
+
+        mc.register_status_listener(_MediaListener())
+        cc.register_status_listener(_CastListener())
+
     def play_track(self, url: str, track: dict, seek_s: float = 0.0, **_kw):
         ct = _content_type(track)
         mc = self._cc.media_controller
-        
         thumb = track.get('cover_url') or ''
-        
+        print(f'[CC] play_media url={url[:80]}  ct={ct}  seek={seek_s}')
+        print(f'[CC] thumb={thumb[:80] if thumb else None}')
+        print(f'[CC] cc.status={self._cc.status}')
         try:
             mc.play_media(
                 url, ct,
@@ -185,7 +205,7 @@ class _ChromecastDevice:
             )
             mc.block_until_active(timeout=15)
         except Exception as e:
-            print(f'[Cast] play_track error: {e}')
+            print(f'[CC] play_track error: {e}')
 
     def get_volume(self) -> int:
         try:
@@ -552,8 +572,6 @@ class _StreamProxy:
         key = handler.path.lstrip('/')
         key = key.split('.')[0]
         is_chromecast = key.endswith('_cc')
-        if is_chromecast:
-            key = key[:-3]
         with self._lock:
             origin = self._urls.get(key, '')
         print(f'[DLNAProxy] {handler.command} {handler.path} → {origin[:80] if origin else "NOT FOUND"}')
@@ -1230,7 +1248,10 @@ class CastManager:
         for dev_id, dev in list(self._active_devices.items()):
             dev_info = next((d for d in self._devices if d.id == dev_id), None)
             is_cc = (dev_info and dev_info.protocol == 'chromecast')
-            cast_url = self._dlna_url(url, is_chromecast=is_cc, ct=ct) if (dev_info and dev_info.protocol in ('dlna', 'chromecast')) else url
+            if is_cc or (dev_info and dev_info.protocol == 'dlna'):
+                cast_url = self._dlna_url(url, is_chromecast=is_cc, ct=ct)
+            else:
+                cast_url = url
             kw = {'subsonic': sc}
             
             pos_ms = getattr(self._win, 'last_engine_pos', 0)
@@ -1542,6 +1563,7 @@ class CastManager:
             if dev.protocol == 'chromecast':
                 d = _ChromecastDevice(dev._cc)
                 d.connect()   # cc.wait(); browser stays alive in self._browser
+                d.register_listeners(dev.id, self._ui_bridge)
             elif dev.protocol in ('airplay1', 'airplay2'):
                 d = AirPlayDevice(
                     dev._ap,
@@ -1616,6 +1638,19 @@ class CastManager:
                 if url:
                     ct = _content_type(track)
                     cast_url = self._dlna_url(url, is_chromecast=True, ct=ct)
+                    if not track.get('cover_url'):
+                        sc = getattr(self._win, 'navidrome_client', None)
+                        cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+                        if sc and cover_id:
+                            navidrome_art = sc.get_cover_art_url(cover_id, size=500)
+                            proxy = _get_proxy()
+                            key = hashlib.md5(navidrome_art.encode()).hexdigest()
+                            with proxy._lock:
+                                proxy._urls[key] = navidrome_art
+                            track = dict(track)
+                            track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
+                    print(f'[CC] connect → play  raw_url={url[:80]}')
+                    print(f'[CC] cast_url={cast_url[:80]}  ct={ct}  paused={paused}')
                     d.play_track(cast_url, track, seek_s=(pos_ms / 1000.0) if pos_ms > 500 else 0.0)
                     if paused:
                         d.pause()
