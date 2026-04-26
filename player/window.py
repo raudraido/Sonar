@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
 import os
 import sys
 import json
+from version import __version__
 from visualizer import AudioVisualizer
 from audio_engine import AudioEngine
 from subsonic_client import SubsonicClient
@@ -414,7 +415,7 @@ class SonarPlayer(
         QApplication.instance().installEventFilter(self._tooltip_filter)
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
-        self.setWindowTitle("Sonar")
+        self.setWindowTitle(f"Sonar {__version__}")
         self.resize(1625, 1070)  #Screen Size Pixels
         self.setAcceptDrops(True)
         self.last_gapless_time = 0

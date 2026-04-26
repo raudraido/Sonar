@@ -5,6 +5,7 @@ dynamic theming, row highlighting, and volume icon updates.
 import os
 import sys
 import time
+from version import __version__
 
 from PyQt6.QtWidgets import QApplication, QAbstractItemView, QLabel, QListWidget
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation
@@ -523,8 +524,8 @@ class VisualsMixin:
             title = track.get('title', 'Unknown')
             artist = track.get('artist', '')
             self.setWindowTitle(f"({status}) [{self.current_index + 1}/{len(self.playlist_data)}] {title} — {artist}")
-        else: 
-            self.setWindowTitle("Sonar")
+        else:
+            self.setWindowTitle(f"Sonar {__version__}")
 
     def update_volume(self, value):
         """Optimized: Only updates audio engine and icon, skips full UI refresh."""

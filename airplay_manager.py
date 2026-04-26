@@ -168,6 +168,50 @@ class AirPlayDevice:
 
     # ── Internal ──────────────────────────────────────────────────────────
 
+    async def _id3_skipped_stream(self, url: str) -> object:
+        """Return an asyncio.StreamReader starting past any ID3v2 tag.
+
+        Reads only 10 bytes upfront to find the tag size, then opens the
+        real stream with a Range request so miniaudio sees MPEG sync at byte 0.
+        Falls back to the raw URL string on any error.
+        """
+        import aiohttp as _aio
+        offset = 0
+        try:
+            async with _aio.ClientSession() as s:
+                async with s.get(url, headers={'Range': 'bytes=0-9'},
+                                 timeout=_aio.ClientTimeout(total=5)) as r:
+                    hdr = await r.read()
+            if len(hdr) >= 10 and hdr[:3] == b'ID3':
+                size = ((hdr[6] & 0x7f) << 21 | (hdr[7] & 0x7f) << 14 |
+                        (hdr[8] & 0x7f) << 7  | (hdr[9] & 0x7f))
+                offset = 10 + size
+        except Exception as e:
+            print(f'[AirPlay] ID3 detection failed ({e}), streaming from byte 0')
+            return url
+
+        if offset == 0:
+            return url  # no ID3 tags, stream directly
+
+        print(f'[AirPlay] Skipping {offset // 1024}KB ID3 block, streaming MPEG from offset')
+        reader = asyncio.StreamReader()
+
+        async def _feed():
+            try:
+                async with _aio.ClientSession() as s:
+                    headers = {'Range': f'bytes={offset}-'}
+                    async with s.get(url, headers=headers,
+                                     timeout=_aio.ClientTimeout(total=300)) as r:
+                        async for chunk in r.content.iter_chunked(65536):
+                            reader.feed_data(chunk)
+            except Exception as e:
+                reader.set_exception(e)
+            finally:
+                reader.feed_eof()
+
+        asyncio.ensure_future(_feed())
+        return reader
+
     def _start_push_updater(self):
         from pyatv.const import DeviceState
         dev_id = self._dev_id
@@ -363,33 +407,17 @@ class AirPlayDevice:
             duration=duration,
         )
 
-        # miniaudio's MP3 decoder needs to seek during init (to skip ID3 tags and
-        # find MPEG sync). Streaming HTTP responses aren't fully seekable, so large
-        # ID3 blocks (embedded artwork > 32KB) cause DecodeError. Download to a
-        # temp file first for formats other than FLAC/WAV which are fine via URL.
-        import os as _os, tempfile as _tmp
+        # miniaudio's MP3 decoder needs to seek during init to find MPEG sync.
+        # Large ID3v2 tags (embedded album art) push the sync past the 32KB
+        # SemiSeekableBuffer headroom → DecodeError. Fix: detect ID3 size with
+        # a 10-byte Range request, then stream from the MPEG sync offset so
+        # miniaudio sees clean audio data at byte 0. FLAC/WAV are fine as-is.
         suffix = (track.get('suffix') or '').lower() or \
                  url.rsplit('.', 1)[-1].split('?')[0].split('&')[0].lower()
-        tmp_path = None
-        play_src = url
+
+        play_src: object = url
         if suffix not in ('flac', 'wav'):
-            try:
-                fd, tmp_path = _tmp.mkstemp(suffix=f'.{suffix or "mp3"}')
-                _os.close(fd)
-                print(f'[AirPlay] Downloading {suffix} to temp file for seekable decode…')
-                async with aiohttp.ClientSession() as _s:
-                    async with _s.get(url, timeout=aiohttp.ClientTimeout(total=300)) as _r:
-                        with open(tmp_path, 'wb') as _f:
-                            async for _chunk in _r.content.iter_chunked(65536):
-                                _f.write(_chunk)
-                play_src = tmp_path
-                print(f'[AirPlay] Downloaded {_os.path.getsize(tmp_path)//1024}KB')
-            except Exception as _e:
-                print(f'[AirPlay] Temp download failed ({_e}), trying direct URL')
-                play_src = url
-                if tmp_path and _os.path.exists(tmp_path):
-                    _os.unlink(tmp_path)
-                tmp_path = None
+            play_src = await self._id3_skipped_stream(url)
 
         print(f'[AirPlay] → {self._info.name!r}  {url!r}')
         try:
@@ -440,12 +468,6 @@ class AirPlayDevice:
                     'Please try connecting again.'
                 ) from ce
             await self._atv.stream.stream_file(play_src, metadata=metadata)
-        finally:
-            if tmp_path and _os.path.exists(tmp_path):
-                try:
-                    _os.unlink(tmp_path)
-                except Exception:
-                    pass
 
         if seek_s > 1.0:
             await asyncio.sleep(2.0)
