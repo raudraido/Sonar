@@ -138,15 +138,17 @@ def _didl(url: str, title: str, artist: str, album: str, ct: str, art_url: str =
 
 @dataclass
 class DeviceInfo:
-    id:       str
-    name:     str
-    protocol: str          # 'chromecast' | 'dlna' | 'airplay1' | 'airplay2'
-    location: str = ''     # DLNA description URL
-    avt_url:  str = ''     # cached AVTransport control URL (skip _ensure() on connect)
-    rc_url:   str = ''     # cached RenderingControl control URL
-    _cc:      object = field(default=None, repr=False)
-    _browser: object = field(default=None, repr=False)
-    _ap:      object = field(default=None, repr=False)  # AirPlayDeviceInfo
+    id:            str
+    name:          str
+    protocol:      str          # 'chromecast' | 'dlna' | 'airplay1' | 'airplay2'
+    location:      str = ''     # DLNA description URL
+    avt_url:       str = ''     # cached AVTransport control URL
+    rc_url:        str = ''     # cached RenderingControl control URL
+    avt_event_url: str = ''     # GENA event subscription URL for AVTransport
+    rc_event_url:  str = ''     # GENA event subscription URL for RenderingControl
+    _cc:           object = field(default=None, repr=False)
+    _browser:      object = field(default=None, repr=False)
+    _ap:           object = field(default=None, repr=False)
 
 
 # ── Chromecast wrapper ────────────────────────────────────────────────────
@@ -215,10 +217,18 @@ class _DLNADevice:
     _AVT_TYPE = 'urn:schemas-upnp-org:service:AVTransport:1'
     _RC_TYPE  = 'urn:schemas-upnp-org:service:RenderingControl:1'
 
-    def __init__(self, location: str, avt_url: str = '', rc_url: str = ''):
-        self._location = location
-        self._avt_url  = avt_url or None   # pre-cached from discovery; skips _ensure() HTTP GET
-        self._rc_url   = rc_url  or None
+    def __init__(self, location: str, avt_url: str = '', rc_url: str = '',
+                 avt_event_url: str = '', rc_event_url: str = ''):
+        self._location      = location
+        self._avt_url       = avt_url       or None
+        self._rc_url        = rc_url        or None
+        self._avt_event_url = avt_event_url or None
+        self._rc_event_url  = rc_event_url  or None
+        self._avt_sid       = None
+        self._rc_sid        = None
+        self._renewal_task  = None
+        self._on_event      = None   # callable(type: str, value) set by CastManager
+        self._event_path    = None   # proxy path registered for this device
 
     async def _ensure(self):
         if self._avt_url:
@@ -241,16 +251,27 @@ class _DLNADevice:
                 parsed   = urlparse(self._location)
                 base_url = f'{parsed.scheme}://{parsed.netloc}'
 
-                def _ctrl_url(service_type):
-                    m = re.search(
-                        rf'<serviceType>{re.escape(service_type)}</serviceType>'
-                        r'.*?<controlURL>([^<]+)</controlURL>',
-                        xml, re.DOTALL,
-                    )
-                    return urljoin(base_url, m.group(1).strip()) if m else None
+                def _svc_urls(svc_prefix):
+                    for blk in re.findall(r'<service>.*?</service>', xml, re.DOTALL):
+                        if not re.search(
+                            rf'<serviceType>{re.escape(svc_prefix)}:\d+</serviceType>', blk
+                        ):
+                            continue
+                        cm = re.search(r'<controlURL>([^<]+)</controlURL>',   blk)
+                        em = re.search(r'<eventSubURL>([^<]+)</eventSubURL>', blk)
+                        ctrl  = urljoin(base_url, cm.group(1).strip()) if cm else None
+                        event = urljoin(base_url, em.group(1).strip()) if em else None
+                        return ctrl, event
+                    return None, None
 
-                self._avt_url = _ctrl_url(self._AVT_TYPE)
-                self._rc_url  = _ctrl_url(self._RC_TYPE)
+                avt_ctrl, avt_event = _svc_urls('urn:schemas-upnp-org:service:AVTransport')
+                rc_ctrl,  rc_event  = _svc_urls('urn:schemas-upnp-org:service:RenderingControl')
+                self._avt_url       = avt_ctrl
+                self._rc_url        = rc_ctrl
+                if not self._avt_event_url and avt_event:
+                    self._avt_event_url = avt_event
+                if not self._rc_event_url and rc_event:
+                    self._rc_event_url = rc_event
                 if self._avt_url:
                     print(f'[DLNA] AVT={self._avt_url}  RC={self._rc_url}')
                     return
@@ -343,6 +364,88 @@ class _DLNADevice:
     async def async_set_volume(self, pct: int):
         await self._rc('SetVolume', Channel='Master', DesiredVolume=pct)
 
+    # ── GENA eventing ────────────────────────────────────────────────────────
+
+    def _handle_event(self, body: bytes):
+        """Called from proxy HTTP thread when a NOTIFY arrives."""
+        if not self._on_event:
+            return
+        try:
+            text = body.decode('utf-8', errors='replace')
+            m = re.search(r'<LastChange>(.*?)</LastChange>', text, re.DOTALL)
+            if not m:
+                return
+            inner = html.unescape(m.group(1))
+            ts = re.search(r'<TransportState[^>]*\bval="([^"]+)"', inner)
+            if ts:
+                state_map = {
+                    'PLAYING':          'playing',
+                    'PAUSED_PLAYBACK':  'paused',
+                    'STOPPED':          'stopped',
+                    'NO_MEDIA_PRESENT': 'stopped',
+                }
+                state = state_map.get(ts.group(1))
+                if state:
+                    self._on_event('transport', state)
+            vol = re.search(r'<Volume[^>]*\bchannel="Master"[^>]*\bval="(\d+)"', inner)
+            if not vol:
+                vol = re.search(r'<Volume[^>]*\bval="(\d+)"[^>]*\bchannel="Master"', inner)
+            if vol:
+                self._on_event('volume', int(vol.group(1)))
+        except Exception as e:
+            print(f'[DLNA] event parse error: {e}')
+
+    async def async_subscribe(self, callback_url: str, on_event):
+        self._on_event = on_event
+        timeout_s = 1800
+        hdrs = {'NT': 'upnp:event', 'CALLBACK': f'<{callback_url}>', 'TIMEOUT': f'Second-{timeout_s}'}
+        for attr, url in (('_avt_sid', self._avt_event_url), ('_rc_sid', self._rc_event_url)):
+            if not url:
+                continue
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.request('SUBSCRIBE', url, headers=hdrs,
+                                         timeout=aiohttp.ClientTimeout(total=5)) as r:
+                        setattr(self, attr, r.headers.get('SID'))
+                        print(f'[DLNA] subscribed {url.split("/")[-1]}  SID={getattr(self, attr)}')
+            except Exception as e:
+                print(f'[DLNA] subscribe {url} failed: {e}')
+        if self._avt_sid or self._rc_sid:
+            self._renewal_task = asyncio.create_task(self._renew_loop(timeout_s))
+
+    async def _renew_loop(self, timeout_s: int):
+        await asyncio.sleep(timeout_s - 60)
+        while True:
+            for url, sid_attr in ((self._avt_event_url, '_avt_sid'), (self._rc_event_url, '_rc_sid')):
+                sid = getattr(self, sid_attr, None)
+                if not (url and sid):
+                    continue
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        async with s.request('SUBSCRIBE', url,
+                                             headers={'SID': sid, 'TIMEOUT': f'Second-{timeout_s}'},
+                                             timeout=aiohttp.ClientTimeout(total=5)) as r:
+                            if r.status == 200:
+                                setattr(self, sid_attr, r.headers.get('SID', sid))
+                except Exception as e:
+                    print(f'[DLNA] renew failed: {e}')
+            await asyncio.sleep(timeout_s - 60)
+
+    async def async_unsubscribe(self):
+        if self._renewal_task:
+            self._renewal_task.cancel()
+            self._renewal_task = None
+        for url, sid_attr in ((self._avt_event_url, '_avt_sid'), (self._rc_event_url, '_rc_sid')):
+            sid = getattr(self, sid_attr, None)
+            if url and sid:
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        await s.request('UNSUBSCRIBE', url, headers={'SID': sid},
+                                        timeout=aiohttp.ClientTimeout(total=3))
+                except Exception:
+                    pass
+        self._avt_sid = self._rc_sid = None
+
     def get_volume(self) -> int:
         try:
             return _run_async(self.async_get_volume()).result(timeout=5)
@@ -378,12 +481,14 @@ class _StreamProxy:
     """
     def __init__(self):
         self._urls: dict = {}
+        self._event_callbacks: dict = {}   # path → callable(body: bytes)
         self._lock = threading.Lock()
         proxy = self
 
         class _Handler(BaseHTTPRequestHandler):
-            def do_GET(self):  proxy._serve(self, head_only=False)
-            def do_HEAD(self): proxy._serve(self, head_only=True)
+            def do_GET(self):    proxy._serve(self, head_only=False)
+            def do_HEAD(self):   proxy._serve(self, head_only=True)
+            def do_NOTIFY(self): proxy._notify(self)
             def do_OPTIONS(self):
                 self.send_response(204)
                 origin_header = self.headers.get('Origin', '*')
@@ -404,6 +509,29 @@ class _StreamProxy:
         t = threading.Thread(target=self._server.serve_forever, daemon=True)
         t.start()
         print(f'[DLNAProxy] listening on {self._ip}:{self._port}')
+
+    def register_event(self, path: str, callback) -> str:
+        with self._lock:
+            self._event_callbacks[path] = callback
+        return f'http://{self._ip}:{self._port}/{path}'
+
+    def unregister_event(self, path: str):
+        with self._lock:
+            self._event_callbacks.pop(path, None)
+
+    def _notify(self, handler: BaseHTTPRequestHandler):
+        path = handler.path.lstrip('/')
+        length = int(handler.headers.get('Content-Length', 0))
+        body = handler.rfile.read(length) if length else b''
+        handler.send_response(200)
+        handler.end_headers()
+        with self._lock:
+            cb = self._event_callbacks.get(path)
+        if cb:
+            try:
+                cb(body)
+            except Exception as e:
+                print(f'[DLNAProxy] event callback error: {e}')
 
     def url_for(self, navidrome_url: str, is_chromecast: bool = False, content_type: str = '') -> str:
         key = hashlib.md5(navidrome_url.encode()).hexdigest()
@@ -601,6 +729,7 @@ class _Bridge(QObject):
     device_volume    = pyqtSignal(str, int)    # (dev_id, 0-100)
     airplay_pin_req  = pyqtSignal(str, object) # (device_name, submit_fn)
     show_error       = pyqtSignal(str, str)    # (title, message)
+    dlna_playstate   = pyqtSignal(str, str)    # (dev_id, 'playing'|'paused'|'stopped')
 
 
 # ── Volume slider style ───────────────────────────────────────────────────
@@ -1007,6 +1136,7 @@ class CastManager:
         self._ui_bridge.device_volume.connect(self._on_device_volume_main)
         self._ui_bridge.airplay_pin_req.connect(self._on_airplay_pin_main)
         self._ui_bridge.show_error.connect(self._on_show_error_main)
+        self._ui_bridge.dlna_playstate.connect(self._on_dlna_playstate_main)
 
         # Create the popup once now so Windows initialises its HWND at startup,
         # not on the user's first click (which caused the flash).
@@ -1201,9 +1331,10 @@ class CastManager:
                 return
             seen_locations.add(location)
             usn  = headers.get('USN', location)
-            name, avt, rc = await self._dlna_device_info(location)
+            name, avt, rc, avt_event, rc_event = await self._dlna_device_info(location)
             devices.append(DeviceInfo(id=usn, name=name, protocol='dlna',
-                                      location=location, avt_url=avt, rc_url=rc))
+                                      location=location, avt_url=avt, rc_url=rc,
+                                      avt_event_url=avt_event, rc_event_url=rc_event))
 
         try:
             await async_search(
@@ -1225,23 +1356,28 @@ class CastManager:
             parsed   = urlparse(location)
             base_url = f'{parsed.scheme}://{parsed.netloc}'
 
-            def _ctrl(svc):
-                m = re.search(
-                    rf'<serviceType>{re.escape(svc)}</serviceType>'
-                    r'.*?<controlURL>([^<]+)</controlURL>',
-                    xml, re.DOTALL,
-                )
-                return urljoin(base_url, m.group(1).strip()) if m else ''
+            def _svc(svc_prefix):
+                for blk in re.findall(r'<service>.*?</service>', xml, re.DOTALL):
+                    if not re.search(
+                        rf'<serviceType>{re.escape(svc_prefix)}:\d+</serviceType>', blk
+                    ):
+                        continue
+                    cm = re.search(r'<controlURL>([^<]+)</controlURL>',   blk)
+                    em = re.search(r'<eventSubURL>([^<]+)</eventSubURL>', blk)
+                    ctrl  = urljoin(base_url, cm.group(1).strip()) if cm else ''
+                    event = urljoin(base_url, em.group(1).strip()) if em else ''
+                    return ctrl, event
+                return '', ''
 
-            name_m = re.search(r'<friendlyName>([^<]+)</friendlyName>', xml)
-            name   = name_m.group(1).strip() if name_m else location.split('/')[2]
-            avt    = _ctrl('urn:schemas-upnp-org:service:AVTransport:1')
-            rc     = _ctrl('urn:schemas-upnp-org:service:RenderingControl:1')
+            name_m    = re.search(r'<friendlyName>([^<]+)</friendlyName>', xml)
+            name      = name_m.group(1).strip() if name_m else location.split('/')[2]
+            avt, avt_event = _svc('urn:schemas-upnp-org:service:AVTransport')
+            rc,  rc_event  = _svc('urn:schemas-upnp-org:service:RenderingControl')
             print(f'[DLNA] Discovered {name!r}  AVT={avt}  RC={rc}')
-            return name, avt, rc
+            return name, avt, rc, avt_event, rc_event
         except Exception as e:
             print(f'[DLNA] device_info error for {location}: {e}')
-            return location.split('/')[2], '', ''
+            return location.split('/')[2], '', '', '', ''
 
     def _discover_airplay(self, bridge: _Bridge):
         try:
@@ -1342,6 +1478,26 @@ class CastManager:
                 row._slider.setValue(volume)
                 row._slider.blockSignals(False)
 
+    def _on_dlna_playstate_main(self, _dev_id: str, state: str):
+        """Runs on main thread; mirrors DLNA device play/pause to the local player."""
+        ae = getattr(self._win, 'audio_engine', None)
+        if not ae:
+            return
+        if state == 'paused' and ae.is_playing:
+            ae.pause()
+            if hasattr(self._win, 'smooth_timer'):
+                self._win.smooth_timer.stop()
+            if hasattr(self._win, 'seek_bar'):
+                self._win.seek_bar.is_playing = False
+            self._win.refresh_ui_styles()
+        elif state == 'playing' and not ae.is_playing:
+            ae.play()
+            if hasattr(self._win, 'smooth_timer'):
+                self._win.smooth_timer.start()
+            if hasattr(self._win, 'seek_bar'):
+                self._win.seek_bar.is_playing = True
+            self._win.refresh_ui_styles()
+
     # ── Connection / disconnection (background threads) ───────────────────
 
     @staticmethod
@@ -1396,7 +1552,8 @@ class CastManager:
                 )
                 d.connect()
             else:
-                d = _DLNADevice(dev.location, avt_url=dev.avt_url, rc_url=dev.rc_url)
+                d = _DLNADevice(dev.location, avt_url=dev.avt_url, rc_url=dev.rc_url,
+                                avt_event_url=dev.avt_event_url, rc_event_url=dev.rc_event_url)
 
             self._active_devices[dev.id] = d
             self._active_ids.add(dev.id)
@@ -1415,6 +1572,22 @@ class CastManager:
             paused = ae and not ae.is_playing
 
             if dev.protocol == 'dlna':
+                # Set up GENA event subscription
+                if d._avt_event_url or d._rc_event_url:
+                    proxy       = _get_proxy()
+                    event_path  = f'dlna-event/{hashlib.md5(dev.location.encode()).hexdigest()[:12]}'
+                    d._event_path = event_path
+                    dev_id_cap  = dev.id
+                    bridge_cap  = self._ui_bridge
+                    def _on_dlna_event(etype, value, _did=dev_id_cap, _br=bridge_cap):
+                        if etype == 'transport':
+                            _br.dlna_playstate.emit(_did, value)
+                        elif etype == 'volume':
+                            _br.device_volume.emit(_did, value)
+                    callback_url = proxy.register_event(event_path, d._handle_event)
+                    d._on_event  = _on_dlna_event
+                    _run_async(d.async_subscribe(callback_url, _on_dlna_event))
+
                 # Fire async chain (play → seek → pause → read volume) — non-blocking
                 if url:
                     dev_id  = dev.id
@@ -1467,6 +1640,10 @@ class CastManager:
         if dev_obj:
             try: dev_obj.stop()
             except Exception: pass
+            if isinstance(dev_obj, _DLNADevice):
+                if dev_obj._event_path and _proxy is not None:
+                    _proxy.unregister_event(dev_obj._event_path)
+                _run_async(dev_obj.async_unsubscribe())
         self._active_ids.discard(dev_id)
         if not self._active_devices:
             self._win._cast_connected = False
