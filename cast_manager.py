@@ -573,7 +573,12 @@ class _StreamProxy:
         key = key.split('.')[0]
         is_chromecast = key.endswith('_cc')
         with self._lock:
-            origin = self._urls.get(key, '')
+            entry = self._urls.get(key, '')
+        # Entry can be a plain URL string or (url, id3_offset) tuple for AirPlay
+        if isinstance(entry, tuple):
+            origin, id3_offset = entry
+        else:
+            origin, id3_offset = entry, 0
         print(f'[DLNAProxy] {handler.command} {handler.path} → {origin[:80] if origin else "NOT FOUND"}')
         if not origin:
             handler.send_response(404); handler.end_headers(); return
@@ -661,8 +666,11 @@ class _StreamProxy:
         for k, v in handler.headers.items():
             if k.lower() not in ('host', 'connection', 'cache-control', 'accept-encoding'):
                 fwd_headers[k] = v
-        fwd_headers['Accept-Encoding'] = 'identity'  # Prevent downstream gzip compression from destroying chunk lengths
-                
+        fwd_headers['Accept-Encoding'] = 'identity'
+        # Skip ID3 block for AirPlay so miniaudio sees MPEG sync at byte 0
+        if id3_offset > 0 and 'Range' not in fwd_headers:
+            fwd_headers['Range'] = f'bytes={id3_offset}-'
+
         req = urllib.request.Request(origin, headers=fwd_headers, method=handler.command)
         
         ctx = ssl.create_default_context()
@@ -748,6 +756,9 @@ class _Bridge(QObject):
     airplay_pin_req  = pyqtSignal(str, object) # (device_name, submit_fn)
     show_error       = pyqtSignal(str, str)    # (title, message)
     dlna_playstate   = pyqtSignal(str, str)    # (dev_id, 'playing'|'paused'|'stopped')
+    dlna_position    = pyqtSignal(int, int)    # (position_ms, duration_ms)
+    airplay_playing  = pyqtSignal(int, int)    # (start_pos_ms, duration_ms)
+    airplay_stopped  = pyqtSignal()
 
 
 # ── Volume slider style ───────────────────────────────────────────────────
@@ -1155,6 +1166,17 @@ class CastManager:
         self._ui_bridge.airplay_pin_req.connect(self._on_airplay_pin_main)
         self._ui_bridge.show_error.connect(self._on_show_error_main)
         self._ui_bridge.dlna_playstate.connect(self._on_dlna_playstate_main)
+        self._ui_bridge.dlna_position.connect(self._on_dlna_position_main)
+        self._ui_bridge.airplay_playing.connect(self._on_airplay_playing_main)
+        self._ui_bridge.airplay_stopped.connect(self._on_airplay_stopped_main)
+
+        from PyQt6.QtCore import QTimer as _QTimer
+        self._ap_timer = _QTimer()
+        self._ap_timer.setInterval(500)
+        self._ap_timer.timeout.connect(self._on_ap_tick)
+        self._ap_wall_start  = 0.0
+        self._ap_start_pos   = 0
+        self._ap_duration_ms = 0
 
         # Create the popup once now so Windows initialises its HWND at startup,
         # not on the user's first click (which caused the flash).
@@ -1250,8 +1272,10 @@ class CastManager:
             is_cc = (dev_info and dev_info.protocol == 'chromecast')
             if dev_info and dev_info.protocol in ('dlna', 'chromecast'):
                 cast_url = self._dlna_url(url, is_chromecast=is_cc, ct=ct)
+            elif dev_info and dev_info.protocol in ('airplay1', 'airplay2'):
+                cast_url = self._airplay_url(url, ct)
             else:
-                cast_url = url  # AirPlay: pass raw URL, pyatv fetches directly
+                cast_url = url
             kw = {'subsonic': sc}
             
             pos_ms = getattr(self._win, 'last_engine_pos', 0)
@@ -1519,6 +1543,52 @@ class CastManager:
                 self._win.seek_bar.is_playing = True
             self._win.refresh_ui_styles()
 
+    def _on_dlna_position_main(self, pos_ms: int, dur_ms: int):
+        """Runs on main thread; drives seekbar from AirPlay device position."""
+        w = self._win
+        if dur_ms > 0 and hasattr(w, 'seek_bar'):
+            w.seek_bar.update_duration(dur_ms)
+            if hasattr(w, 'total_time_label'):
+                fmt = getattr(w, 'format_time', None)
+                if fmt:
+                    w.total_time_label.setText(fmt(dur_ms))
+        if pos_ms >= 0 and hasattr(w, 'update_ui_state'):
+            w.update_ui_state(pos_ms)
+
+    def _on_airplay_playing_main(self, start_pos_ms: int, duration_ms: int):
+        import time as _t
+        self._ap_start_pos   = start_pos_ms
+        self._ap_wall_start  = _t.monotonic()
+        self._ap_duration_ms = duration_ms
+        w = self._win
+        if duration_ms > 0 and hasattr(w, 'seek_bar'):
+            w.seek_bar.update_duration(duration_ms)
+            if hasattr(w, 'total_time_label') and hasattr(w, 'format_time'):
+                w.total_time_label.setText(w.format_time(duration_ms))
+        if hasattr(w, 'seek_bar'):
+            w.seek_bar.is_playing = True
+        if hasattr(w, 'smooth_timer'):
+            w.smooth_timer.start()
+        self._ap_timer.start()
+
+    def _on_airplay_stopped_main(self):
+        self._ap_timer.stop()
+
+    def _on_ap_tick(self):
+        import time as _t
+        w = self._win
+        elapsed_ms = int((_t.monotonic() - self._ap_wall_start) * 1000)
+        pos_ms = self._ap_start_pos + elapsed_ms
+        if self._ap_duration_ms > 0:
+            pos_ms = min(pos_ms, self._ap_duration_ms)
+        w.last_engine_pos = pos_ms
+        w.last_engine_update_time = _t.time()
+        if not getattr(getattr(w, 'seek_bar', None), 'is_dragging', False):
+            if hasattr(w, 'seek_bar'):
+                w.seek_bar.update_position(pos_ms)
+            if hasattr(w, 'current_time_label') and hasattr(w, 'format_time'):
+                w.current_time_label.setText(w.format_time(pos_ms))
+
     # ── Connection / disconnection (background threads) ───────────────────
 
     @staticmethod
@@ -1527,6 +1597,34 @@ class CastManager:
         if not url:
             return url
         return _get_proxy().url_for(url, is_chromecast, ct)
+
+    @staticmethod
+    def _airplay_url(url: str, ct: str = '') -> str:
+        """Register URL in proxy with ID3 skip so miniaudio gets MPEG at byte 0."""
+        if not url:
+            return url
+        proxy = _get_proxy()
+        id3_offset = 0
+        if 'mpeg' in ct or 'mp3' in ct or not ct:
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                req = urllib.request.Request(url, headers={'Range': 'bytes=0-9'})
+                with urllib.request.urlopen(req, timeout=5, context=ctx) as r:
+                    hdr = r.read(10)
+                if len(hdr) >= 10 and hdr[:3] == b'ID3':
+                    size = ((hdr[6] & 0x7f) << 21 | (hdr[7] & 0x7f) << 14 |
+                            (hdr[8] & 0x7f) << 7  | (hdr[9] & 0x7f))
+                    id3_offset = 10 + size
+                    print(f'[AirPlay] ID3 block {id3_offset // 1024}KB, streaming MPEG from offset')
+            except Exception as e:
+                print(f'[AirPlay] ID3 detection failed ({e}), streaming from byte 0')
+        key = hashlib.md5(url.encode()).hexdigest() + '_ap'
+        ext = 'flac' if 'flac' in ct else 'mp3'
+        with proxy._lock:
+            proxy._urls[key] = (url, id3_offset) if id3_offset else url
+        return f'http://{proxy._ip}:{proxy._port}/{key}.{ext}'
 
     async def _dlna_play_chain(self, d: '_DLNADevice', url: str, track: dict,
                                pos_ms: int, paused: bool) -> int:
@@ -1627,14 +1725,9 @@ class CastManager:
                     fut.add_done_callback(_on_chain_done)
             elif dev.protocol in ('airplay1', 'airplay2'):
                 d.register_listeners(dev.id, self._ui_bridge)
-                # stream_file() runs for the full song — fire-and-forget; errors
-                # arrive via error_callback as a Qt signal on the main thread.
                 if url:
                     ct = _content_type(track)
-                    # Pass the raw URL directly — pyatv fetches it itself via requests.
-                    # Routing through the local proxy breaks miniaudio's MP3 decoder
-                    # (the proxy strips Content-Length, so miniaudio can't seek for init).
-                    ap_url = url
+                    ap_url = self._airplay_url(url, ct)
                     if not track.get('cover_url'):
                         sc = getattr(self._win, 'navidrome_client', None)
                         cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
@@ -1647,6 +1740,17 @@ class CastManager:
                             track = dict(track)
                             track['cover_url'] = f'http://{proxy._ip}:{proxy._port}/{key}.jpg'
                     d.play_track(ap_url, track)
+                    # Parse track duration for seekbar timer
+                    raw = track.get('duration') or 0
+                    try:
+                        if isinstance(raw, str) and ':' in raw:
+                            parts = raw.split(':')
+                            dur_s = sum(float(p) * 60**i for i, p in enumerate(reversed(parts)))
+                        else:
+                            dur_s = float(raw)
+                    except (TypeError, ValueError):
+                        dur_s = 0
+                    self._ui_bridge.airplay_playing.emit(pos_ms, int(dur_s * 1000))
                 vol = d.get_volume()
                 if vol > 0:
                     self._ui_bridge.device_volume.emit(dev.id, vol)
@@ -1689,6 +1793,7 @@ class CastManager:
 
     def _disconnect_device(self, dev_id: str):
         dev_obj = self._active_devices.pop(dev_id, None)
+        dev_info = next((d for d in self._devices if d.id == dev_id), None)
         if dev_obj:
             try: dev_obj.stop()
             except Exception: pass
@@ -1696,6 +1801,8 @@ class CastManager:
                 if dev_obj._event_path and _proxy is not None:
                     _proxy.unregister_event(dev_obj._event_path)
                 _run_async(dev_obj.async_unsubscribe())
+            if dev_info and dev_info.protocol in ('airplay1', 'airplay2'):
+                self._ui_bridge.airplay_stopped.emit()
         self._active_ids.discard(dev_id)
         if not self._active_devices:
             self._win._cast_connected = False

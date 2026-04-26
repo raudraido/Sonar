@@ -448,32 +448,51 @@ class SettingsWindow(QWidget):
         super().__init__()
         self.parent = parent
         self.setWindowTitle("Settings")
-        self.setFixedWidth(460)
+        self.setFixedWidth(900)
         self.setWindowFlags(Qt.WindowType.Tool)
         self.setStyleSheet("background-color: #181818; color: #ddd; font-family: sans-serif;")
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        _scroll_ss = (
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
 
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(1)
+
+        # ── Left column ───────────────────────────────────────────────────
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical { border: none; background: #1a1a1a; width: 6px; margin: 0; }
-            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        """)
-        outer.addWidget(self._scroll)
+        self._scroll.setStyleSheet(_scroll_ss)
+        outer.addWidget(self._scroll, 1)
 
-        _content = QWidget()
-        _content.setStyleSheet("background: transparent;")
-        self._scroll.setWidget(_content)
-
-        layout = QVBoxLayout(_content)
+        _left = QWidget()
+        _left.setStyleSheet("background: transparent;")
+        self._scroll.setWidget(_left)
+        layout = QVBoxLayout(_left)
         layout.setSpacing(15)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(16, 16, 12, 16)
+
+        # ── Right column ──────────────────────────────────────────────────
+        _sep_line = QFrame()
+        _sep_line.setFrameShape(QFrame.Shape.VLine)
+        _sep_line.setStyleSheet("color: #2a2a2a;")
+        outer.addWidget(_sep_line)
+
+        self._scroll_right = QScrollArea()
+        self._scroll_right.setWidgetResizable(True)
+        self._scroll_right.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll_right.setStyleSheet(_scroll_ss)
+        outer.addWidget(self._scroll_right, 1)
+
+        _right = QWidget()
+        _right.setStyleSheet("background: transparent;")
+        self._scroll_right.setWidget(_right)
+        rlayout = QVBoxLayout(_right)
+        rlayout.setSpacing(15)
+        rlayout.setContentsMargins(12, 16, 16, 16)
 
         # ── Logo + version header ─────────────────────────────────────────
         from player import resource_path
@@ -594,19 +613,21 @@ class SettingsWindow(QWidget):
         self._apply_debounce.setSingleShot(True)
         self._apply_debounce.setInterval(150)
         self._apply_debounce.timeout.connect(self.apply_heavy_changes)
-        for _s in (self.blur_slider, self.dark_slider, self.alpha_slider,
-                   self.footer_alpha_slider, self.queue_alpha_slider):
+        self._sliders = (self.blur_slider, self.dark_slider, self.alpha_slider,
+                         self.footer_alpha_slider, self.queue_alpha_slider)
+        for _s in self._sliders:
             _s.valueChanged.connect(self._apply_debounce.start)
 
-        layout.addSpacing(15)
+        self._apply_slider_color()
+        layout.addStretch()
 
-        # --- HOTKEYS SECTION ---
+        # ── Right column: hotkeys + logout ────────────────────────────────
         if hasattr(self.parent, 'hotkey_manager'):
             from hotkeys import DEFAULT_HOTKEYS
 
             hotkeys_label = QLabel("HOTKEYS")
             hotkeys_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-            layout.addWidget(hotkeys_label)
+            rlayout.addWidget(hotkeys_label)
 
             _hk_widget = QWidget()
             _hk_widget.setStyleSheet("background: transparent;")
@@ -651,18 +672,18 @@ class SettingsWindow(QWidget):
             reset_all.clicked.connect(self._reset_all_hotkeys)
             grid.addWidget(reset_all, len(DEFAULT_HOTKEYS), 0, 1, 3)
 
-            layout.addWidget(_hk_widget)
-            layout.addSpacing(10)
+            rlayout.addWidget(_hk_widget)
 
-        # --- LOGOUT BUTTON ---
+        rlayout.addStretch()
+
         self.logout_btn = QPushButton("Logout / Switch Server")
         self.logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.logout_btn.setStyleSheet("""
             QPushButton {
-                background-color: #d32f2f; 
-                color: white; 
-                font-weight: bold; 
-                border-radius: 6px; 
+                background-color: #d32f2f;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
                 padding: 10px;
                 font-size: 13px;
             }
@@ -670,20 +691,36 @@ class SettingsWindow(QWidget):
             QPushButton:pressed { background-color: #b71c1c; }
         """)
         self.logout_btn.clicked.connect(self.perform_logout)
-        layout.addWidget(self.logout_btn)
-        
-        layout.addStretch()
+        rlayout.addWidget(self.logout_btn)
+
+    def _apply_slider_color(self):
+        mc = getattr(self.parent, 'master_color', '#ffffff')
+        ss = (
+            f"QSlider::groove:horizontal {{ background: #333; height: 5px; border-radius: 2px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {mc}; border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}"
+        )
+        for s in self._sliders:
+            s.setStyleSheet(ss)
+        _sb_ss = (
+            "QScrollArea { background: transparent; border: none; }"
+            f"QScrollBar:vertical {{ border: none; background: #1a1a1a; width: 6px; margin: 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {mc}; min-height: 20px; border-radius: 3px; }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        self._scroll.setStyleSheet(_sb_ss)
+        if hasattr(self, '_scroll_right'):
+            self._scroll_right.setStyleSheet(_sb_ss)
 
     def showEvent(self, event):
         super().showEvent(event)
         p = self.parent
         if p and p.isVisible():
             pg = p.geometry()
-            max_h = pg.height() - 40
-            self.setMaximumHeight(max_h)
-            self.adjustSize()
+            h = min(700, pg.height() - 60)
+            self.setFixedHeight(h)
             x = pg.x() + (pg.width()  - self.width())  // 2
-            y = pg.y() + (pg.height() - self.height()) // 2
+            y = pg.y() + (pg.height() - h) // 2
             self.move(x, y)
 
     def toggle_dynamic_color(self):
@@ -728,9 +765,12 @@ class SettingsWindow(QWidget):
         self.parent.dynamic_color = False
         color = QColorDialog.getColor(QColor(self.parent.master_color), self, "Choose Master Theme Color")
         if color.isValid():
-            self.parent.master_color = color.name(); self.color_btn.setStyleSheet(f"background: {self.parent.master_color}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
+            self.parent.master_color = color.name()
+            self.color_btn.setStyleSheet(f"background: {self.parent.master_color}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
+            self._apply_slider_color()
             self.parent.refresh_ui_styles()
-            if hasattr(self.parent, 'visualizer'): self.parent.visualizer.bar_color = QColor(self.parent.master_color)
+            if hasattr(self.parent, 'visualizer'):
+                self.parent.visualizer.bar_color = QColor(self.parent.master_color)
     
     def update_labels_only(self):
         self.blur_label.setText(f"Blur Radius: {self.blur_slider.value()}%")

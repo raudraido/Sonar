@@ -418,6 +418,9 @@ class VisualsMixin:
                 self._now_playing_panel.set_accent_color(mc, alpha)
             self._last_tree_alpha = alpha
 
+        if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
+            self.swin._apply_slider_color()
+
         pass  # Tooltip styling handled by _TooltipFilter in window.py
 
     def refresh_visuals(self):
