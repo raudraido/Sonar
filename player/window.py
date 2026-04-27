@@ -730,25 +730,20 @@ class SonarPlayer(
         self.art_container = SquareArtContainer(self)
         self._art_section = _SectionWidget(self.art_container, 'art', self)
         left_panel.addWidget(self._art_section, 2)
+        left_panel.addSpacing(8)
 
         # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
         self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
         # Give it a minimum width so it physically cannot shrink to 0 pixels
-        self.visualizer.setMinimumWidth(150) 
-        self.visualizer.setMaximumWidth(400) 
-        
+        self.visualizer.setMinimumWidth(150)
+
         vis_container = QWidget()
         vis_layout = QHBoxLayout(vis_container)
         vis_layout.setContentsMargins(0, 0, 0, 0)
         vis_layout.setSpacing(0)
-        
-        # The magic fix: Give the visualizer a high stretch priority (10) 
-        # so it pushes out to its 400px maximum before the side stretches (1) take over.
-        vis_layout.addStretch(1)
-        vis_layout.addWidget(self.visualizer, stretch=32)
-        vis_layout.addStretch(1)
+        vis_layout.addWidget(self.visualizer)
 
         self._vis_section = _SectionWidget(vis_container, 'vis', self)
         btn_vis = self.visualizer.btn_toggle_vis
@@ -1091,6 +1086,10 @@ class SonarPlayer(
         if saved_mode in (1, 2):
             self.seek_bar.display_mode = saved_mode
             self.seek_bar.render_timer.stop()
+
+        saved_vis = int(self.settings.value('vis_mode', 0))
+        if saved_vis and hasattr(self, 'visualizer'):
+            self.visualizer.vis_mode = saved_vis
         
         self.total_time_label = QLabel("0:00")
 

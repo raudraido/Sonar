@@ -26,6 +26,8 @@ class PersistenceMixin:
             self.settings.setValue('last_master_color', self.master_color)
             self.settings.setValue('visual_settings', json.dumps(self.visual_settings))
             self.settings.setValue('waveform_mode', self.seek_bar.display_mode)
+            if hasattr(self, 'visualizer'):
+                self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
             
             if hasattr(self, '_splitter'):

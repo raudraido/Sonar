@@ -5,7 +5,7 @@ import math
 from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QLinearGradient, QRadialGradient,
-    QPen, QGradient,
+    QPen, QGradient, QPainterPath,
     QIcon, QPixmap
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent
@@ -78,6 +78,7 @@ class AudioVisualizer(QWidget):
         # VU meter ballistic state
         self._vu_rms       = 0.0   # smoothed RMS in linear domain
         self._vu_bg        = QPixmap(resource_path("img/vuM.png"))
+        self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
         self._raw_vis_data = []
         self._vu_debug_frame = 0
 
@@ -383,13 +384,19 @@ class AudioVisualizer(QWidget):
     def _paint_vu_meter(self, painter):
         W, H = self.width(), self.height()
 
-        # ── Draw background image (preserve aspect ratio, letterbox/pillarbox) ──
+        # ── Layer 1: full background (glass + frame) ──────────────────────────
         if not self._vu_bg.isNull():
-            iw, ih  = self._vu_bg.width(), self._vu_bg.height()
-            scale   = min(W / iw, H / ih)
-            dw, dh  = int(iw * scale), int(ih * scale)
-            dx, dy  = (W - dw) // 2, (H - dh) // 2
+            iw, ih = self._vu_bg.width(), self._vu_bg.height()
+            scale  = min(W / iw, H / ih)
+            dw, dh = int(iw * scale), int(ih * scale)
+            dx, dy = (W - dw) // 2, (H - dh) // 2
+            radius = 8.0
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(dx, dy, dw, dh), radius, radius)
+            painter.save()
+            painter.setClipPath(path)
             painter.drawPixmap(dx, dy, dw, dh, self._vu_bg)
+            painter.restore()
         else:
             dx, dy, dw, dh = 0, 0, W, H
 
@@ -397,8 +404,9 @@ class AudioVisualizer(QWidget):
         # Arc clusters found at: (327,127),(390,112),(475,103),(500,103),(579,110),(654,119)
         # Circle fit (algebraic least-squares): cx=502.7, cy=774.9, R=671.8
         # Fractions: cx/995=0.5052, cy/503=1.5406 (pivot below image), R/995=0.6752
-        # HALF_SPAN = asin((502.7-38)/671.8) ≈ 30.5°  (was 44° — critically wrong)
-        HALF_SPAN = math.radians(30.5)
+        # HALF_SPAN = asin((502.7-38)/671.8) ≈ 30.5°
+        HALF_SPAN  = math.radians(30.5)
+        EXTRA_SPAN = math.radians(3.0)   # total extra degrees at +3dB
         R   = dw * 0.675
         px  = dx + dw * 0.505
         py  = dy + dh * 0.205 + R     # pivot ~1.54× image height below top
@@ -421,8 +429,11 @@ class AudioVisualizer(QWidget):
                 if d0 <= db <= d1:
                     f = (db - d0) / (d1 - d0)
                     t = t0 + f * (t1 - t0)
-                    return -HALF_SPAN + t * HALF_SPAN * 2.0
-            return HALF_SPAN
+                    angle = -HALF_SPAN + t * HALF_SPAN * 2.0
+                    if db > 0.0:
+                        angle += EXTRA_SPAN * (db / 3.0)
+                    return angle
+            return HALF_SPAN + EXTRA_SPAN
 
         # Grab the raw time-domain RMS from C++
         rms_instant = getattr(self, '_raw_vu_rms', 0.0)
@@ -435,15 +446,15 @@ class AudioVisualizer(QWidget):
         self._vu_rms = ALPHA * self._vu_rms + (1.0 - ALPHA) * rms_instant
         
         # Calculate the Target Decibels (+10 offset for modern music)
-        db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + 10.0
-            
+        db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + 9.0
+
         # Calculate exactly where the audio wants the needle to point
         target_a  = db2a(max(-20.0, min(3.0, db_level)))
 
         # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
         # This determines how "heavy" the needle is. 
         # Lower number = heavier/smoother. Higher number = lighter/faster.
-        NEEDLE_SPEED = 0.15 
+        NEEDLE_SPEED = 0.25 
 
         if not hasattr(self, '_current_a'):
             self._current_a = target_a
@@ -455,18 +466,21 @@ class AudioVisualizer(QWidget):
         # Feed the smoothed angle to the drawing function
         needle_a = self._current_a
 
-        # ── Needle ────────────────────────────────────────────────────────────
+        # ── Needle + Pivot (clipped to image bounds) ──────────────────────────
+        painter.save()
+        painter.setClipPath(path)
+
         tip  = pt(needle_a, R_ndl)
+        tail = pt(needle_a, 0)   # start from pivot — clip handles the cutoff
         base = QPointF(px, py)
         off  = QPointF(1.0, 0.8)
         painter.setPen(QPen(QColor(0, 0, 0, 45), 2.0,
                             Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(base + off, tip + off)
+        painter.drawLine(tail + off, tip + off)
         painter.setPen(QPen(QColor(18, 15, 10), 1.5,
                             Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(base, tip)
+        painter.drawLine(tail, tip)
 
-        # ── Pivot ─────────────────────────────────────────────────────────────
         pr = max(3.0, dh * 0.034)
         rg = QRadialGradient(px - pr * 0.38, py - pr * 0.38, pr * 2.0)
         rg.setColorAt(0.0, QColor(110, 100, 84))
@@ -474,3 +488,13 @@ class AudioVisualizer(QWidget):
         painter.setBrush(QBrush(rg))
         painter.setPen(QPen(QColor(10, 8, 5), 1.0))
         painter.drawEllipse(base, pr, pr)
+
+        painter.restore()
+
+        # ── Layer 3: frame overlay (transparent glass, opaque bezel) ──────────
+        # Drawn on top so the frame covers the needle tail naturally.
+        if not self._vu_frame.isNull():
+            painter.save()
+            painter.setClipPath(path)
+            painter.drawPixmap(dx, dy, dw, dh, self._vu_frame)
+            painter.restore()
