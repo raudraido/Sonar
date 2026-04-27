@@ -16,6 +16,7 @@ class AudioEngine(QObject):
     endOfMedia          = pyqtSignal()
     mediaSwitched       = pyqtSignal()
     visualizerDataReady = pyqtSignal(list)
+    vuDataReady         = pyqtSignal(float)
 
     def __init__(self):
         super().__init__()
@@ -71,6 +72,9 @@ class AudioEngine(QObject):
 
         self.lib.get_vis_data.argtypes = [ctypes.POINTER(ctypes.c_float)]
         self.lib.get_vis_data.restype  = None
+        
+        self.lib.get_vu_rms.argtypes = []
+        self.lib.get_vu_rms.restype = ctypes.c_float
 
         self.lib.set_scratch_mode.argtypes     = [ctypes.c_int]
         self.lib.set_scratch_mode.restype      = None
@@ -190,6 +194,9 @@ class AudioEngine(QObject):
                     self.lib.get_vis_data(self.vis_buffer)
                     self._vis_list = self.vis_buffer[:700]
                     self.visualizerDataReady.emit(self._vis_list)
+
+                    true_rms = self.lib.get_vu_rms()
+                    self.vuDataReady.emit(true_rms)
 
             if time.time() > getattr(self, 'ignore_end_checks_until', 0):
                 if self.total_ms > 0 and pos >= (self.total_ms - 200):

@@ -239,6 +239,16 @@ class _SectionWidget(QWidget):
         self._btn.setIcon(self._current_dim())
         self._btn.setToolTip("Hide" if vis else "Unhide")
         self._main.settings.setValue(f'section_{self._key}_visible', int(vis))
+        if self._key == 'vis':
+            engine = getattr(self._main, 'audio_engine', None)
+            visualizer = getattr(self._main, 'visualizer', None)
+            if engine:
+                engine.set_visualizer_active(vis)
+            if visualizer:
+                visualizer.visualizer_enabled = vis
+                if not vis:
+                    visualizer.vis_data = [0.0] * visualizer.num_bars
+                    visualizer.update()
 
 
 class _InvisibleHandle(_QSplitterHandle):
@@ -271,7 +281,7 @@ class _SplitterEdge(QWidget):
         self.setFixedWidth(self._W)
         self.setCursor(_Qt2.CursorShape.SizeHorCursor)
         self.setMouseTracking(True)
-        self.setStyleSheet("background: red;")  # DEBUG
+
 
     def paintEvent(self, event):
         pass
@@ -624,10 +634,12 @@ class SonarPlayer(
         if event.type() == QEvent.Type.WindowStateChange:
             minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized)
 
+            vis_section_visible = getattr(self, '_vis_section', None) and self._vis_section._content.isVisible()
+            vis_active = (not minimized) and bool(vis_section_visible)
             if hasattr(self, 'audio_engine'):
-                self.audio_engine.set_visualizer_active(not minimized)
+                self.audio_engine.set_visualizer_active(vis_active)
             if hasattr(self, 'visualizer'):
-                self.visualizer.visualizer_enabled = not minimized
+                self.visualizer.visualizer_enabled = vis_active
 
             if hasattr(self, 'smooth_timer'):
                 if minimized:

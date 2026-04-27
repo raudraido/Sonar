@@ -169,6 +169,7 @@ struct AudioEngine {
     float vis_snapshot[4096] = {};  
     std::mutex vis_snapshot_mutex;  
     std::complex<float> fft_working_buf[8192] = {};
+    std::atomic<float> current_vu_rms{0.0f};
 };
 
 static AudioEngine engine;
@@ -259,6 +260,17 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
     } else {
         engine.buffer.read(out, frameCount);
     }
+    
+    // --- ADD THIS BLOCK: True Time-Domain RMS for VU Meter ---
+    float sum_squares = 0.0f;
+    for (ma_uint32 i = 0; i < frameCount; i++) {
+        // Proper Mono Summation: (L + R) / 2
+        float mono = (out[i * CHANNELS] + out[i * CHANNELS + 1]) * 0.5f;
+        sum_squares += mono * mono;
+    }
+    float true_rms = std::sqrt(sum_squares / frameCount);
+    engine.current_vu_rms.store(true_rms, std::memory_order_relaxed);
+    // ---------------------------------------------------------
     
     // FFT Visualizer — skip entirely when nobody is watching (e.g. minimized)
     static int fft_skip = 0;
@@ -703,6 +715,12 @@ extern "C" {
         std::lock_guard<std::mutex> lock(engine.vis_snapshot_mutex);
         for (int i = 0; i < 4096; ++i) output[i] = engine.vis_snapshot[i];
     }
+
+    // --- VU Meter ---
+    EXPORT float get_vu_rms() {
+        return engine.current_vu_rms.load(std::memory_order_relaxed);
+    }
+    // ----------------------------------------
 
     EXPORT void set_scratch_mode(int mode) {
         bool active = (mode == 1);

@@ -4,7 +4,8 @@ import math
 
 from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect
 from PyQt6.QtGui import (
-    QPainter, QColor, QBrush, QLinearGradient, QPen, QGradient,
+    QPainter, QColor, QBrush, QLinearGradient, QRadialGradient,
+    QPen, QGradient,
     QIcon, QPixmap
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent
@@ -71,7 +72,14 @@ class AudioVisualizer(QWidget):
         self.audio_engine = audio_engine
 
         self.visualizer_enabled = True # The Master Switch
+        self.vis_mode = 0              # 0 = bars, 1 = VU meter
         self.master_color = QColor("#1db954") # Default fallback color
+
+        # VU meter ballistic state
+        self._vu_rms       = 0.0   # smoothed RMS in linear domain
+        self._vu_bg        = QPixmap(resource_path("img/vuM.png"))
+        self._raw_vis_data = []
+        self._vu_debug_frame = 0
 
         self.num_bars = NUM_BARS
         self.vis_data = [0.0] * self.num_bars
@@ -121,6 +129,7 @@ class AudioVisualizer(QWidget):
         self._floor_pen_width = -1
 
         self.audio_engine.visualizerDataReady.connect(self.update_data)
+        self.audio_engine.vuDataReady.connect(self.update_vu_data)
 
         # 4. GHOST TOGGLE BUTTON SETUP
         self.btn_toggle_vis = QPushButton(self)
@@ -244,10 +253,7 @@ class AudioVisualizer(QWidget):
         return super().eventFilter(obj, event)
 
     def toggle_mode(self):
-        self.visualizer_enabled = not self.visualizer_enabled
-        self.audio_engine.set_visualizer_active(self.visualizer_enabled)
-        if not self.visualizer_enabled:
-            self.vis_data = [0.0] * self.num_bars  # Clear bars so widget paints blank once, then stops receiving updates
+        self.vis_mode = (self.vis_mode + 1) % 2
         self.update()
 
     def resizeEvent(self, event):
@@ -286,6 +292,9 @@ class AudioVisualizer(QWidget):
         if not getattr(self, 'visualizer_enabled', True) or not raw:
             return
 
+        # Store raw FFT magnitudes for VU meter (no tilt/boost/smoothing)
+        self._raw_vis_data = raw
+
         n = len(raw)
         EXP = 0.55
 
@@ -310,6 +319,19 @@ class AudioVisualizer(QWidget):
 
         self.update()
 
+    
+    def update_vu_data(self, true_rms: float):
+        if not getattr(self, 'visualizer_enabled', True):
+            return
+            
+        # Store the clean time-domain RMS
+        self._raw_vu_rms = true_rms
+        
+        # Only trigger a repaint if we are actually looking at the VU meter
+        if self.vis_mode == 1:
+            self.update()
+    # -----------------------------
+    
     # ── Painting ──────────────────────────────────────────────────────────────
 
     def _rebuild_floor_pen(self, w):
@@ -321,12 +343,20 @@ class AudioVisualizer(QWidget):
         self._floor_pen_width = w
 
     def paintEvent(self, event):
-        # KILL SWITCH: Prevents Qt from rendering anything if disabled
         if not getattr(self, 'visualizer_enabled', True):
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if self.vis_mode == 0:
+            self._paint_bars(painter)
+        else:
+            self._paint_vu_meter(painter)
+
+        painter.end()
+
+    def _paint_bars(self, painter):
         painter.setPen(Qt.PenStyle.NoPen)
 
         W, H   = self.width(), self.height()
@@ -337,21 +367,110 @@ class AudioVisualizer(QWidget):
         gap    = (slot_w - bar_w) / 2
         radius = min(bar_w * 0.5, 4.5)
 
-        # ── Bars ──────────────────────────────────────────────────────────────
         for i in range(self.num_bars):
-            val     = self.vis_data[i]
-            bar_h   = max(2.0, val * H * HEIGHT_SCALE)
-            x       = i * slot_w + gap
-            y_top   = BASE_Y - bar_h
-
+            val   = self.vis_data[i]
+            bar_h = max(2.0, val * H * HEIGHT_SCALE)
+            x     = i * slot_w + gap
+            y_top = BASE_Y - bar_h
             painter.setBrush(self.bar_brushes[i])
             painter.drawRoundedRect(QRectF(x, y_top, bar_w, bar_h), radius, radius)
 
-        # ── Baseline floor line — use cached pen, rebuild only if width changed ──
         if self._floor_pen is None or self._floor_pen_width != W:
             self._rebuild_floor_pen(W)
-
         painter.setPen(self._floor_pen)
         painter.drawLine(QPointF(0, BASE_Y), QPointF(W, BASE_Y))
 
-        painter.end()
+    def _paint_vu_meter(self, painter):
+        W, H = self.width(), self.height()
+
+        # ── Draw background image (preserve aspect ratio, letterbox/pillarbox) ──
+        if not self._vu_bg.isNull():
+            iw, ih  = self._vu_bg.width(), self._vu_bg.height()
+            scale   = min(W / iw, H / ih)
+            dw, dh  = int(iw * scale), int(ih * scale)
+            dx, dy  = (W - dw) // 2, (H - dh) // 2
+            painter.drawPixmap(dx, dy, dw, dh, self._vu_bg)
+        else:
+            dx, dy, dw, dh = 0, 0, W, H
+
+        # ── Geometry calibrated to vuM.png (995×503) via pixel scan + circle fit ─
+        # Arc clusters found at: (327,127),(390,112),(475,103),(500,103),(579,110),(654,119)
+        # Circle fit (algebraic least-squares): cx=502.7, cy=774.9, R=671.8
+        # Fractions: cx/995=0.5052, cy/503=1.5406 (pivot below image), R/995=0.6752
+        # HALF_SPAN = asin((502.7-38)/671.8) ≈ 30.5°  (was 44° — critically wrong)
+        HALF_SPAN = math.radians(30.5)
+        R   = dw * 0.675
+        px  = dx + dw * 0.505
+        py  = dy + dh * 0.205 + R     # pivot ~1.54× image height below top
+        R_ndl = R * 0.970             # needle reaches near the scale arc
+
+        def pt(angle, r):
+            return QPointF(px + r * math.sin(angle), py - r * math.cos(angle))
+
+        # t-values derived from measured cluster x-positions on image scale marks
+        MARKS = [
+            (-20, 0.000), (-10, 0.149), (-7, 0.252), (-5, 0.341),
+            (-3,  0.438), (-2,  0.529), (-1, 0.617), ( 0, 0.713),
+            ( 1,  0.799), ( 2,  0.885), ( 3, 1.000),
+        ]
+
+        def db2a(db):
+            db = max(-20.0, min(3.0, db))
+            for i in range(len(MARKS) - 1):
+                d0, t0 = MARKS[i]; d1, t1 = MARKS[i + 1]
+                if d0 <= db <= d1:
+                    f = (db - d0) / (d1 - d0)
+                    t = t0 + f * (t1 - t0)
+                    return -HALF_SPAN + t * HALF_SPAN * 2.0
+            return HALF_SPAN
+
+        # Grab the raw time-domain RMS from C++
+        rms_instant = getattr(self, '_raw_vu_rms', 0.0)
+
+        # ── 1. Electrical Smoothing (The Circuit) ───────────────────────────────
+        ALPHA = 0.948
+        if not hasattr(self, '_vu_rms'):
+            self._vu_rms = 0.0
+            
+        self._vu_rms = ALPHA * self._vu_rms + (1.0 - ALPHA) * rms_instant
+        
+        # Calculate the Target Decibels (+10 offset for modern music)
+        db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + 10.0
+            
+        # Calculate exactly where the audio wants the needle to point
+        target_a  = db2a(max(-20.0, min(3.0, db_level)))
+
+        # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
+        # This determines how "heavy" the needle is. 
+        # Lower number = heavier/smoother. Higher number = lighter/faster.
+        NEEDLE_SPEED = 0.15 
+
+        if not hasattr(self, '_current_a'):
+            self._current_a = target_a
+            
+        # The needle glides toward the target instead of snapping to it instantly,
+        # completely destroying any high-frequency micro-vibrations.
+        self._current_a += (target_a - self._current_a) * NEEDLE_SPEED
+        
+        # Feed the smoothed angle to the drawing function
+        needle_a = self._current_a
+
+        # ── Needle ────────────────────────────────────────────────────────────
+        tip  = pt(needle_a, R_ndl)
+        base = QPointF(px, py)
+        off  = QPointF(1.0, 0.8)
+        painter.setPen(QPen(QColor(0, 0, 0, 45), 2.0,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(base + off, tip + off)
+        painter.setPen(QPen(QColor(18, 15, 10), 1.5,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(base, tip)
+
+        # ── Pivot ─────────────────────────────────────────────────────────────
+        pr = max(3.0, dh * 0.034)
+        rg = QRadialGradient(px - pr * 0.38, py - pr * 0.38, pr * 2.0)
+        rg.setColorAt(0.0, QColor(110, 100, 84))
+        rg.setColorAt(1.0, QColor(24, 20, 14))
+        painter.setBrush(QBrush(rg))
+        painter.setPen(QPen(QColor(10, 8, 5), 1.0))
+        painter.drawEllipse(base, pr, pr)

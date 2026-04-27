@@ -3509,7 +3509,8 @@ class TracksBrowser(QWidget):
 
     def _show_track_info(self, track):
         client = getattr(self, 'client', None)
-        accent = getattr(self, 'current_accent', '#1DB954')
+        win = self.window()
+        accent = getattr(win, 'master_color', None) or getattr(self, 'current_accent', '#1DB954')
         album_data = {
             'id': track.get('albumId'),
             'title': track.get('album', ''),
