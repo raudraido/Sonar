@@ -8,7 +8,7 @@ from PyQt6.QtGui import (
     QPen, QGradient, QPainterPath,
     QIcon, QPixmap
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent
+from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent, QSettings
 
 
 import os
@@ -81,6 +81,8 @@ class AudioVisualizer(QWidget):
         self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
         self._raw_vis_data = []
         self._vu_debug_frame = 0
+        _s = QSettings("Sonar", "Visualizer")
+        self._vu_ref_level = int(_s.value("vu_ref_level", -18))
 
         self.num_bars = NUM_BARS
         self.vis_data = [0.0] * self.num_bars
@@ -181,6 +183,17 @@ class AudioVisualizer(QWidget):
         self._init_opacity_effect()
         self.btn_toggle_vis.hide()  # Hidden until mouse enters the widget
 
+        # 5. REF LEVEL PILL BUTTON
+        self.btn_ref_level = QPushButton(f"{self._vu_ref_level} dBFS", self)
+        self.btn_ref_level.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ref_level.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_ref_level.setFixedSize(76, 22)
+        self.btn_ref_level.clicked.connect(self._reset_ref_level)
+        self.btn_ref_level.installEventFilter(self)
+        self.ref_opacity = None
+        self.ref_anim = None
+        self.btn_ref_level.hide()
+
         # Apply initial button style with default color
         self.set_master_color(self.master_color.name())
 
@@ -243,6 +256,24 @@ class AudioVisualizer(QWidget):
             }}
         """)
 
+        self.btn_ref_level.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(0, 0, 0, 80);
+                border: 1px solid rgb({dim_r}, {dim_g}, {dim_b});
+                border-radius: 11px;
+                color: rgba(220, 220, 220, 180);
+                font-size: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba({r}, {g}, {b}, 40);
+                border: 1px solid rgb({r}, {g}, {b});
+                color: rgb(255, 255, 255);
+            }}
+            QPushButton:pressed {{
+                background-color: rgba({r}, {g}, {b}, 20);
+            }}
+        """)
+
     def eventFilter(self, obj, event):
         if obj == self.btn_toggle_vis:
             if event.type() == QEvent.Type.Enter:
@@ -251,40 +282,97 @@ class AudioVisualizer(QWidget):
             elif event.type() == QEvent.Type.Leave:
                 if hasattr(self, 'dim_icon'):
                     self.btn_toggle_vis.setIcon(self.dim_icon)
+        elif obj == self.btn_ref_level:
+            if event.type() == QEvent.Type.Wheel:
+                self.wheelEvent(event)
+                return True
         return super().eventFilter(obj, event)
 
     def toggle_mode(self):
         self.vis_mode = (self.vis_mode + 1) % 2
+        if self.vis_mode == 0 and self.ref_opacity is not None:
+            self.ref_anim.stop()
+            self.ref_opacity.setOpacity(0.0)
+            self.btn_ref_level.setGraphicsEffect(None)
+            self.btn_ref_level.hide()
+            self.ref_opacity = None
+            self.ref_anim = None
         self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Rebuild floor line pen now that width has changed
         self._rebuild_floor_pen(self.width())
+        W, H = self.width(), self.height()
+        # Only position toggle button when it hasn't been re-parented to _SectionWidget
+        if self.btn_toggle_vis.parent() is self:
+            self.btn_toggle_vis.move(W - self.btn_toggle_vis.width() - 8, 8)
+        self.btn_ref_level.move((W - self.btn_ref_level.width()) // 2,
+                                H - self.btn_ref_level.height() - 8)
 
     def enterEvent(self, event):
-        if self.btn_toggle_vis.parent() is not self:
-            super().enterEvent(event)
-            return
-        if self.toggle_opacity is None:
-            self._init_opacity_effect()
-        self.hover_anim.stop()
-        self.hover_anim.setEndValue(1.0)
-        self.hover_anim.start()
+        # Toggle button — only when it hasn't been re-parented to _SectionWidget
+        if self.btn_toggle_vis.parent() is self:
+            if self.toggle_opacity is None:
+                self._init_opacity_effect()
+            self.hover_anim.stop()
+            self.hover_anim.setEndValue(1.0)
+            self.hover_anim.start()
+        # Ref level pill — always managed here regardless of re-parenting
+        if self.vis_mode == 1:
+            if self.ref_opacity is None:
+                self._init_ref_opacity_effect()
+            self.ref_anim.stop()
+            self.ref_anim.setEndValue(1.0)
+            self.ref_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if self.btn_toggle_vis.parent() is not self:
-            super().leaveEvent(event)
-            return
-        if self.toggle_opacity is None:
-            super().leaveEvent(event)
-            return
-        self.hover_anim.stop()
-        self.hover_anim.setEndValue(0.0)
-        self.hover_anim.start()
+        if self.btn_toggle_vis.parent() is self and self.toggle_opacity is not None:
+            self.hover_anim.stop()
+            self.hover_anim.setEndValue(0.0)
+            self.hover_anim.start()
+        if self.ref_opacity is not None:
+            self.ref_anim.stop()
+            self.ref_anim.setEndValue(0.0)
+            self.ref_anim.start()
         super().leaveEvent(event)
 
+
+    def wheelEvent(self, event):
+        if self.vis_mode != 1:
+            super().wheelEvent(event)
+            return
+        step = 1 if event.angleDelta().y() > 0 else -1
+        new_val = max(-18, min(0, self._vu_ref_level + step))
+        if new_val != self._vu_ref_level:
+            self._vu_ref_level = new_val
+            self._update_ref_btn_text()
+            QSettings("Sonar", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+        event.accept()
+
+    def _init_ref_opacity_effect(self):
+        self.btn_ref_level.show()
+        self.ref_opacity = QGraphicsOpacityEffect(self.btn_ref_level)
+        self.ref_opacity.setOpacity(0.0)
+        self.btn_ref_level.setGraphicsEffect(self.ref_opacity)
+        self.ref_anim = QPropertyAnimation(self.ref_opacity, b"opacity")
+        self.ref_anim.setDuration(250)
+        self.ref_anim.finished.connect(self._on_ref_anim_finished)
+
+    def _on_ref_anim_finished(self):
+        if self.ref_opacity and self.ref_opacity.opacity() == 0.0:
+            self.btn_ref_level.setGraphicsEffect(None)
+            self.btn_ref_level.hide()
+            self.ref_opacity = None
+            self.ref_anim = None
+
+    def _update_ref_btn_text(self):
+        self.btn_ref_level.setText(f"{self._vu_ref_level} dBFS")
+
+    def _reset_ref_level(self):
+        self._vu_ref_level = -18
+        self._update_ref_btn_text()
+        QSettings("Sonar", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
 
     # ── Data processing ───────────────────────────────────────────────────────
 
@@ -445,8 +533,7 @@ class AudioVisualizer(QWidget):
             
         self._vu_rms = ALPHA * self._vu_rms + (1.0 - ALPHA) * rms_instant
         
-        # Calculate the Target Decibels (+10 offset for modern music)
-        db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + 9.0
+        db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + (-self._vu_ref_level)
 
         # Calculate exactly where the audio wants the needle to point
         target_a  = db2a(max(-20.0, min(3.0, db_level)))

@@ -492,8 +492,10 @@ class SpotlightSearch(QWidget):
     def hide_search(self):
         if hasattr(self, '_search_worker') and self._search_worker.isRunning():
             self._search_worker.is_cancelled = True
+            self._search_worker.finished.connect(self._search_worker.deleteLater)
         if hasattr(self, '_play_artist_worker') and self._play_artist_worker.isRunning():
             self._play_artist_worker.is_cancelled = True
+            self._play_artist_worker.finished.connect(self._play_artist_worker.deleteLater)
             try: self._play_artist_worker.tracks_ready.disconnect()
             except: pass
         self.input.clear()
@@ -544,9 +546,12 @@ class SpotlightSearch(QWidget):
         client = getattr(self.parent_window, 'navidrome_client', None)
         if not client: return
 
-        # Cancel previous worker if still running
+        # Cancel previous worker — keep a reference until the thread exits to avoid
+        # "QThread: Destroyed while thread is still running" crash.
         if hasattr(self, '_search_worker') and self._search_worker.isRunning():
-            self._search_worker.is_cancelled = True
+            old = self._search_worker
+            old.is_cancelled = True
+            old.finished.connect(old.deleteLater)
 
         self._search_worker = SearchWorker(client, query)
         self._search_worker.results_ready.connect(self._on_results)
