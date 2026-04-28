@@ -911,7 +911,14 @@ class _CastPopup(QFrame):
     def __init__(self, parent=None):
         # Created once at startup and reused — no per-click HWND creation flash.
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # Tool window so it floats above QQuickWidget (QML/OpenGL) surfaces,
+        # which always composite on top of regular child widgets.
+        self.setWindowFlags(
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._anchor_bottom = None   # global Y of popup bottom edge, set in show_near
         self._on_close_cb = None
         self._active_ids  = set()
         self._rows: dict  = {}
@@ -920,13 +927,8 @@ class _CastPopup(QFrame):
         self.setObjectName('CastPopup')
         self.setMinimumWidth(320)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setStyleSheet(
-            'QFrame#CastPopup {'
-            '  background: #111;'
-            '  border: 1px solid #2a2a2a;'
-            '  border-radius: 12px;'
-            '}'
-        )
+        # Background and border are painted in paintEvent so WA_TranslucentBackground works.
+        self.setStyleSheet('QFrame#CastPopup { background: transparent; }')
 
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 8)
@@ -1089,19 +1091,37 @@ class _CastPopup(QFrame):
                 'color:#444; font-size:12px; padding:10px 14px; background:transparent;'
             )
             self._lay.addWidget(lbl)
-        self.adjustSize()
+        if self.isVisible():
+            self._reposition()
+        else:
+            self.adjustSize()
 
     def update_device_state(self, dev_id: str, active: bool, volume: int = 50):
         row = self._rows.get(dev_id)
         if row:
             row.set_active(active, volume)
-            self.adjustSize()
+            if self.isVisible():
+                self._reposition()
+            else:
+                self.adjustSize()
         if active:
             self._active_ids.add(dev_id)
         else:
             self._active_ids.discard(dev_id)
 
     # ── Show / dismiss ────────────────────────────────────────────────────
+
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter, QPainterPath, QPen
+        from PyQt6.QtCore import QRectF
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12.0, 12.0)
+        painter.fillPath(path, QColor('#111111'))
+        painter.setPen(QPen(QColor('#2a2a2a'), 1.0))
+        painter.drawPath(path)
+        painter.end()
 
     def show_near(self, button):
         from PyQt6.QtCore import QPoint, QTimer
@@ -1113,19 +1133,38 @@ class _CastPopup(QFrame):
         w = max(hint.width(), self.minimumWidth(), 320)
         h = hint.height() if hint.height() > 0 else 200
 
-        g = button.mapTo(self.parent(), QPoint(0, 0))
+        # Global coords — required because the popup is now a top-level Tool window.
+        g = button.mapToGlobal(QPoint(0, 0))
         x = g.x() + button.width() // 2 - w // 2
         y = g.y() - h - 8
-        pw = self.parent().width()
-        x = max(8, min(x, pw - w - 8))
-        y = max(8, y)
+        if self.parent():
+            par = self.parent()
+            pg  = par.mapToGlobal(QPoint(0, 0))
+            x   = max(pg.x() + 8, min(x, pg.x() + par.width() - w - 8))
+            y   = max(pg.y() + 8, y)
 
         self.resize(w, h)
         self.move(x, y)
+        self._anchor_bottom = y + h   # keep bottom edge fixed when height changes later
         self.show()
         self.raise_()
 
         QTimer.singleShot(300, lambda: QApplication.instance().installEventFilter(self))
+
+    def _reposition(self):
+        """Resize to sizeHint and re-anchor the bottom edge above the button."""
+        from PyQt6.QtCore import QPoint
+        self.layout().activate()
+        new_h = self.sizeHint().height()
+        if new_h <= 0:
+            new_h = self.height()
+        new_y = (self._anchor_bottom - new_h) if self._anchor_bottom is not None else self.y()
+        if self.parent():
+            par = self.parent()
+            pg  = par.mapToGlobal(QPoint(0, 0))
+            new_y = max(pg.y() + 8, new_y)
+        self.resize(self.width(), new_h)
+        self.move(self.x(), new_y)
 
     def _dismiss(self):
         from PyQt6.QtWidgets import QApplication
