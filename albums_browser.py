@@ -676,41 +676,47 @@ class GridItemDelegate(QStyledItemDelegate):
 
         painter.restore()
 
+_DETAIL_ARTIST_SEP_RE = re.compile(
+    r'( /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. )'
+)
+
 class ClickableArtistLabel(QWidget):
     artist_clicked = pyqtSignal(str)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.artists = []
-        self.artist_rects = []
+        self._parts = []       # list of (text, is_separator)
+        self.artist_rects = [] # list of (text, QRect) for non-separators only
         self.hovered_artist = None
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(20)
         self.setMaximumHeight(30)
-        
+
     def setText(self, text):
         if not text or text == "Loading...":
-            self.artists = [text] if text else []
+            self._parts = [(text, False)] if text else []
         else:
-            self.artists = [a.strip() for a in text.split(" • ") if a.strip()]
+            self._parts = [
+                (p, bool(_DETAIL_ARTIST_SEP_RE.match(p)))
+                for p in _DETAIL_ARTIST_SEP_RE.split(text) if p
+            ]
         self.artist_rects = []
+        self.hovered_artist = None
         self.updateGeometry()
         self.update()
-    
+
     def text(self):
-        return " • ".join(self.artists) if self.artists else ""
-    
+        return "".join(p for p, _ in self._parts)
+
     def sizeHint(self):
         font = QFont()
         font.setPointSize(11)
         font.setBold(True)
         fm = QFontMetrics(font)
         text = self.text()
-        width = fm.horizontalAdvance(text) if text else 100
-        height = fm.height() + 4
-        return QSize(width, height)
-    
+        return QSize(fm.horizontalAdvance(text) if text else 100, fm.height() + 4)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -722,25 +728,18 @@ class ClickableArtistLabel(QWidget):
         x = 0
         y = fm.ascent() + 2
         self.artist_rects = []
-        for i, artist in enumerate(self.artists):
-            is_hovered = (self.hovered_artist == artist)
-            painter.setPen(QColor("#cccccc"))
+        for text, is_sep in self._parts:
+            is_hovered = (not is_sep and self.hovered_artist == text)
             font.setUnderline(is_hovered)
             painter.setFont(font)
-            width = fm.horizontalAdvance(artist)
-            rect = QRect(x, 0, width, self.height())
-            self.artist_rects.append((artist, rect))
-            painter.drawText(x, y, artist)
-            x += width
-            if i < len(self.artists) - 1:
-                painter.setPen(QColor("#777"))
-                font.setUnderline(False)
-                painter.setFont(font)
-                separator = " • "
-                painter.drawText(x, y, separator)
-                x += fm.horizontalAdvance(separator)
+            painter.setPen(QColor("#777777") if is_sep else QColor("#cccccc"))
+            w = fm.horizontalAdvance(text)
+            if not is_sep:
+                self.artist_rects.append((text, QRect(x, 0, w, self.height())))
+            painter.drawText(x, y, text)
+            x += w
         painter.end()
-    
+
     def mouseMoveEvent(self, event):
         pos = event.pos()
         old_hovered = self.hovered_artist
@@ -751,15 +750,14 @@ class ClickableArtistLabel(QWidget):
                 break
         if old_hovered != self.hovered_artist:
             self.update()
-    
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.pos()
             for artist, rect in self.artist_rects:
-                if rect.contains(pos):
+                if rect.contains(event.pos()):
                     self.artist_clicked.emit(artist)
                     break
-    
+
     def leaveEvent(self, event):
         if self.hovered_artist is not None:
             self.hovered_artist = None
