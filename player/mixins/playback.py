@@ -517,11 +517,18 @@ class PlaybackMixin:
             self.audio_engine.lib.preload_network_stream(next_track['stream_url'].encode('utf-8'))
     
     def _media_stop(self):
-        # Turn off the motor when media completely stops
+        self.audio_engine.stop()
+
         if hasattr(self, 'seek_bar'):
             self.seek_bar.is_playing = False
-            
-        self.audio_engine.stop()
+            self.seek_bar.update_position(0)
+
+        if hasattr(self, 'visualizer'):
+            self.visualizer.vis_data = [0.0] * self.visualizer.num_bars
+            self.visualizer._raw_vu_rms = 0.0
+            self.visualizer.update()
+
+        self.refresh_ui_styles(scroll_to_current=False)
         self.update_window_title()
 
     def get_next_index_calculated(self):

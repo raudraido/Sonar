@@ -276,7 +276,7 @@ class VisualsMixin:
         vol_img = "img/volume_mute.png" if self.is_muted else "img/volume.png"
         self.vol_icon_label.setPixmap(get_cached_icon(vol_img, "#888888" if self.is_muted else mc).pixmap(24, 24))
 
-        for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.import_btn, "img/import.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png")]:
+        for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.import_btn, "img/import.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png"), (self.btn_stop, "img/stop.png")]:
             btn.setIcon(get_cached_icon(icon_name, mc))
         cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
         self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
@@ -313,7 +313,7 @@ class VisualsMixin:
         self.btn_shuffle.setStyleSheet(toggle_style); self.btn_repeat.setStyleSheet(toggle_style)
         
         side_btn_style = "QPushButton { background: transparent; border: none; border-radius: 20px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }"
-        for btn in [self.settings_btn, self.import_btn, self.btn_prev, self.btn_next]: btn.setStyleSheet(side_btn_style)
+        for btn in [self.settings_btn, self.import_btn, self.btn_prev, self.btn_next, self.btn_stop]: btn.setStyleSheet(side_btn_style)
 
         # 2. Define the Buttons CSS
         modern_dark_style = f"""

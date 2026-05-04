@@ -1027,6 +1027,11 @@ class SonarPlayer(
         self.settings_btn.clicked.connect(self.open_settings)
         self.settings_btn.setToolTip("Settings")
 
+        self.btn_stop = QPushButton("")
+        self.btn_stop.setFixedSize(40, 40)
+        self.btn_stop.clicked.connect(self._media_stop)
+        self.btn_stop.setToolTip("Stop")
+
         self.btn_shuffle = StatusButton("")
         self.btn_shuffle.setCheckable(True)
         self.btn_shuffle.setFixedSize(40, 40)
@@ -1097,6 +1102,7 @@ class SonarPlayer(
         self.controls_layout = QHBoxLayout()
         self.controls_layout.setSpacing(20)
         self.controls_layout.addStretch()
+        self.controls_layout.addWidget(self.btn_stop)
         self.controls_layout.addWidget(self.btn_shuffle)
         self.controls_layout.addWidget(self.btn_prev)
         self.controls_layout.addWidget(self.btn_play)
@@ -1175,7 +1181,7 @@ class SonarPlayer(
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
-        for w in [self.import_btn, self.settings_btn, self.cast_btn, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
+        for w in [self.import_btn, self.settings_btn, self.cast_btn, self.btn_stop, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             w.setCursor(Qt.CursorShape.PointingHandCursor)
             w.installEventFilter(self)
