@@ -91,6 +91,45 @@ class CenteredSquareWrapper(QWidget):
         print(f"[ART] wrapper={w} art_section={art_section.width() if art_section else '?'} left_widget={left_widget.width() if left_widget else '?'} h={h} side={side}")
         super().resizeEvent(event)
 
+class _DragGrip(QWidget):
+    """Grip handle that appears on section hover; lets the user drag sections to reorder."""
+    drag_moved = pyqtSignal(int)   # global Y while dragging
+    drag_ended = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setFixedSize(28, 28)
+        self._active = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._active = True
+            self.grabMouse()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._active:
+            self.drag_moved.emit(self.mapToGlobal(event.pos()).y())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._active:
+            self._active = False
+            self.releaseMouse()
+            self.drag_ended.emit()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _event):
+        p = _QPainter(self)
+        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(_QColor(140, 140, 140), 1.5))
+        cx, cy = self.width() // 2, self.height() // 2
+        for dy in (-4, 0, 4):
+            p.drawLine(cx - 7, cy + dy, cx + 7, cy + dy)
+        p.end()
+
+
 class _SectionWidget(QWidget):
     """Left-panel section — hide/unhide button fades in on hover, exact scrubber pattern."""
 
@@ -138,8 +177,12 @@ class _SectionWidget(QWidget):
         self._btn.setToolTip("Hide")
         self._toggle_opacity = None
         self._hover_anim = None
+        self._drag_grip = _DragGrip(self)
+        self._drag_opacity = None
+        self._drag_anim = None
         self._init_opacity_effect()
         self._btn.hide()
+        self._drag_grip.hide()
 
     def _current_dim(self):
         return self._hide_dim if self._content.isVisible() else self._show_dim
@@ -182,6 +225,13 @@ class _SectionWidget(QWidget):
             self._companion_anim = QPropertyAnimation(self._companion_opacity, b"opacity")
             self._companion_anim.setDuration(250)
 
+        self._drag_grip.show()
+        self._drag_opacity = QGraphicsOpacityEffect(self._drag_grip)
+        self._drag_opacity.setOpacity(0.0)
+        self._drag_grip.setGraphicsEffect(self._drag_opacity)
+        self._drag_anim = QPropertyAnimation(self._drag_opacity, b"opacity")
+        self._drag_anim.setDuration(250)
+
     def _on_anim_finished(self):
         if self._toggle_opacity and self._toggle_opacity.opacity() == 0.0:
             self._btn.setGraphicsEffect(None)
@@ -193,6 +243,10 @@ class _SectionWidget(QWidget):
                 self._companion_btn.hide()
                 self._companion_opacity = None
                 self._companion_anim = None
+            self._drag_grip.setGraphicsEffect(None)
+            self._drag_grip.hide()
+            self._drag_opacity = None
+            self._drag_anim = None
 
     def eventFilter(self, obj, event):
         if obj is self._btn:
@@ -212,6 +266,10 @@ class _SectionWidget(QWidget):
             self._companion_anim.stop()
             self._companion_anim.setEndValue(1.0)
             self._companion_anim.start()
+        if self._drag_anim is not None:
+            self._drag_anim.stop()
+            self._drag_anim.setEndValue(1.0)
+            self._drag_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -225,6 +283,10 @@ class _SectionWidget(QWidget):
             self._companion_anim.stop()
             self._companion_anim.setEndValue(0.0)
             self._companion_anim.start()
+        if self._drag_anim is not None:
+            self._drag_anim.stop()
+            self._drag_anim.setEndValue(0.0)
+            self._drag_anim.start()
         super().leaveEvent(event)
 
     def resizeEvent(self, event):
@@ -232,6 +294,7 @@ class _SectionWidget(QWidget):
         self._btn.move(self.width() - self._btn.width() - 10, 5)
         if self._companion_btn is not None:
             self._companion_btn.move(self._btn.x() - self._companion_btn.width() - 8, 5)
+        self._drag_grip.move(10, 5)
 
     def _toggle(self):
         vis = not self._content.isVisible()
@@ -719,18 +782,14 @@ class SonarPlayer(
         self._splitter.setChildrenCollapsible(False)
 
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
-        _left_widget = _LeftPanelWidget()
-        #_left_widget.setMinimumWidth(0)
-        left_panel = QVBoxLayout(_left_widget)
-        left_panel.setContentsMargins(8, 0, 8, 0) #LEFT panel (Album/Visualizer/Info) left margin
-        left_panel.setSpacing(0)
-        left_panel.addSpacing(38 if sys.platform == "win32" else 42)
+        self._left_widget = _LeftPanelWidget()
+        self._left_panel = QVBoxLayout(self._left_widget)
+        self._left_panel.setContentsMargins(8, 8, 8, 8)
+        self._left_panel.setSpacing(0)
 
         # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
         self._art_section = _SectionWidget(self.art_container, 'art', self)
-        left_panel.addWidget(self._art_section, 2)
-        left_panel.addSpacing(8)
 
         # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
@@ -745,7 +804,7 @@ class SonarPlayer(
         vis_layout.setSpacing(0)
         vis_layout.addWidget(self.visualizer)
 
-        self._vis_section = _SectionWidget(vis_container, 'vis', self)
+        self._vis_section  = _SectionWidget(vis_container, 'vis', self)
         btn_vis = self.visualizer.btn_toggle_vis
         # Tear down AudioVisualizer's opacity effect before re-parenting
         btn_vis.setGraphicsEffect(None)
@@ -755,7 +814,6 @@ class SonarPlayer(
         btn_vis.setParent(self._vis_section)
         btn_vis.raise_()
         self._vis_section._companion_btn = btn_vis
-        left_panel.addWidget(self._vis_section, 1)
 
         # Section 3: Track info (25%)
         text_info_container = QWidget()
@@ -805,7 +863,18 @@ class SonarPlayer(
         info_centering_layout.addStretch(1)
 
         self._info_section = _SectionWidget(info_centering, 'info', self)
-        left_panel.addWidget(self._info_section, 1)
+
+        # Wire drag-to-reorder
+        self._section_widgets = {'art': self._art_section, 'vis': self._vis_section, 'info': self._info_section}
+        _default_order = ['art', 'vis', 'info']
+        _saved = self.settings.value('section_order', ','.join(_default_order))
+        self._section_order = _saved.split(',')
+        if set(self._section_order) != {'art', 'vis', 'info'}:
+            self._section_order = list(_default_order)
+        for key, sec in self._section_widgets.items():
+            sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
+            sec._drag_grip.drag_ended.connect(self._on_left_drag_end)
+        self._rebuild_left_layout(self._section_order)
 
         # Restore section visibility (deferred so layout has computed heights first)
         for sec, key in [(self._art_section, 'art'), (self._vis_section, 'vis'), (self._info_section, 'info')]:
@@ -992,7 +1061,7 @@ class SonarPlayer(
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
 
-        self._splitter.addWidget(_left_widget)
+        self._splitter.addWidget(self._left_widget)
         self._splitter.addWidget(_right_widget)
         self._splitter.setStretchFactor(0, 35)
         self._splitter.setStretchFactor(1, 65)
@@ -1239,6 +1308,40 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
+
+    # ── Left panel drag-to-reorder ────────────────────────────────────────────
+
+    def _rebuild_left_layout(self, order):
+        while self._left_panel.count():
+            self._left_panel.takeAt(0)
+        _stretch = {'art': 2, 'vis': 1, 'info': 1}
+        for i, key in enumerate(order):
+            self._left_panel.addWidget(self._section_widgets[key], _stretch[key])
+            if i < len(order) - 1:
+                self._left_panel.addSpacing(8)
+        self._section_order = list(order)
+
+    def _on_left_drag_move(self, global_y, src_key):
+        order = list(self._section_order)
+        src_idx = order.index(src_key)
+        target_idx = len(order)
+        for i, key in enumerate(order):
+            w = self._section_widgets[key]
+            mid_global = w.mapToGlobal(QPoint(0, w.height() // 2)).y()
+            if global_y < mid_global:
+                target_idx = i
+                break
+        if target_idx == src_idx or target_idx == src_idx + 1:
+            return
+        new_order = list(order)
+        new_order.pop(src_idx)
+        insert_at = target_idx if target_idx < src_idx else target_idx - 1
+        new_order.insert(insert_at, src_key)
+        if new_order != self._section_order:
+            self._rebuild_left_layout(new_order)
+
+    def _on_left_drag_end(self):
+        self.settings.setValue('section_order', ','.join(self._section_order))
 
     # ── Cast ──────────────────────────────────────────────────────────────────
 
