@@ -2449,18 +2449,19 @@ class TracksBrowser(QWidget):
             for i, t in enumerate(tracks):
                 items_to_add.append(self.create_track_item(t, offset + i + 1))
 
-            self.tree.addTopLevelItems(items_to_add)
+            FIRST = 30
+            self.tree.addTopLevelItems(items_to_add[:FIRST])
 
         if self.tree.topLevelItemCount() > 0:
             from PyQt6.QtCore import QItemSelectionModel
             focus_idx = 0
-            
+
             if getattr(self, 'pending_focus_direction', 'top') == 'bottom':
                 focus_idx = self.tree.topLevelItemCount() - 1
-            self.pending_focus_direction = 'top' 
-            
+            self.pending_focus_direction = 'top'
+
             self.tree.setCurrentItem(self.tree.topLevelItem(focus_idx), 0, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
-            
+
             if focus_idx > 0:
                 self.tree.verticalScrollBar().setValue(self.tree.verticalScrollBar().maximum())
             else:
@@ -2471,6 +2472,13 @@ class TracksBrowser(QWidget):
 
         if not getattr(self, 'album_mode_id', None):
             self.tree.setUpdatesEnabled(True)
+            _tail = items_to_add[FIRST:]
+            if _tail:
+                _w = self.live_worker
+                QTimer.singleShot(0, lambda items=_tail, w=_w: (
+                    self.tree.addTopLevelItems(items)
+                    if not getattr(w, 'is_cancelled', True) else None
+                ))
         self.start_cover_loader(tracks)
 
         # Kick off filter values worker in background after first data load,
