@@ -542,17 +542,156 @@ extern "C" {
         ma_device_start(&engine.device);
     }
 
+    // ── Port of Mixxx BeatUtils (beatutils.cpp) ──────────────────────────────
+    // All beat positions and lengths are in audio frames (doubles).
+
+    static float bpm_try_snap(float mn, float center, float mx, float fraction) {
+        float snap = roundf(center * fraction) / fraction;
+        return (snap > mn && snap < mx) ? snap : -1.0f;
+    }
+    static float bpm_round(float mn, float center, float mx) {
+        float s;
+        if ((s = bpm_try_snap(mn, center, mx, 1.0f))        > 0) return s;
+        if (center < 85.0f   && (s = bpm_try_snap(mn, center, mx, 2.0f))       > 0) return s;
+        if (center > 127.0f  && (s = bpm_try_snap(mn, center, mx, 2.0f/3.0f)) > 0) return s;
+        if ((s = bpm_try_snap(mn, center, mx, 3.0f))        > 0) return s;
+        if ((s = bpm_try_snap(mn, center, mx, 12.0f))       > 0) return s;
+        return center;
+    }
+
+    struct ConstRegion { double firstBeat; double beatLength; };
+
+    // BeatUtils::retrieveConstRegions — finds phase-coherent tempo regions
+    static std::vector<ConstRegion> retrieve_const_regions(
+            const std::vector<double>& beats) {
+        const double kMaxPhaseErr    = 0.025 * SAMPLE_RATE; // 25 ms in frames
+        const double kMaxPhaseErrSum = 0.1   * SAMPLE_RATE; // 100 ms in frames
+        const int    kMaxOutliers    = 1;
+
+        if (beats.size() < 2) return {};
+
+        int left  = 0;
+        int right = (int)beats.size() - 1;
+        std::vector<ConstRegion> regions;
+
+        while (left < (int)beats.size() - 1) {
+            double meanBL = (beats[right] - beats[left]) / (right - left);
+            int    outliers = 0;
+            double ironed   = beats[left];
+            double errSum   = 0.0;
+            int i = left + 1;
+            for (; i <= right; ++i) {
+                ironed += meanBL;
+                double err = ironed - beats[i];
+                errSum += err;
+                if (fabs(err) > kMaxPhaseErr) {
+                    ++outliers;
+                    if (outliers > kMaxOutliers || i == left + 1) break;
+                }
+                if (fabs(errSum) > kMaxPhaseErrSum) break;
+            }
+            if (i > right) {
+                double borderErr = 0.0;
+                if (right > left + 2) {
+                    double first = beats[left+1] - beats[left];
+                    double last  = beats[right]  - beats[right-1];
+                    borderErr = fabs(first + last - 2.0 * meanBL);
+                }
+                if (borderErr < kMaxPhaseErr / 2.0) {
+                    regions.push_back({beats[left], meanBL});
+                    left  = right;
+                    right = (int)beats.size() - 1;
+                    continue;
+                }
+            }
+            --right;
+        }
+        regions.push_back({beats.back(), 0.0}); // sentinel
+        return regions;
+    }
+
+    // BeatUtils::makeConstBpm — picks BPM from the longest coherent region,
+    // tries to extend it from both ends, then snaps to a clean value.
+    static float make_const_bpm(const std::vector<ConstRegion>& regions) {
+        const double kMaxPhaseErr   = 0.025 * SAMPLE_RATE;
+        const int    kMinBeats      = 16;
+
+        if ((int)regions.size() < 2) return 0.0f;
+
+        // Find longest region
+        int    midIdx  = 0;
+        double longLen = 0.0, longBL = 0.0;
+        for (int i = 0; i < (int)regions.size() - 1; ++i) {
+            double len = regions[i+1].firstBeat - regions[i].firstBeat;
+            if (len > longLen) { longLen = len; longBL = regions[i].beatLength; midIdx = i; }
+        }
+        if (longLen == 0.0) return 0.0f;
+
+        int    longN   = (int)(longLen / longBL + 0.5);
+        double blMin   = longBL - kMaxPhaseErr / longN;
+        double blMax   = longBL + kMaxPhaseErr / longN;
+        int    startIdx = midIdx;
+
+        // Extend toward start
+        for (int i = 0; i < midIdx; ++i) {
+            double len = regions[i+1].firstBeat - regions[i].firstBeat;
+            int    nb  = (int)(len / regions[i].beatLength + 0.5);
+            if (nb < kMinBeats) continue;
+            double tMin = regions[i].beatLength - kMaxPhaseErr / nb;
+            double tMax = regions[i].beatLength + kMaxPhaseErr / nb;
+            if (longBL <= tMin || longBL >= tMax) continue;
+            double newLen  = regions[midIdx+1].firstBeat - regions[i].firstBeat;
+            double rMin    = std::max(blMin, tMin), rMax = std::min(blMax, tMax);
+            int    maxNB   = (int)round(newLen / rMin);
+            int    minNB   = (int)round(newLen / rMax);
+            if (minNB != maxNB) continue;
+            double newBL   = newLen / minNB;
+            if (newBL <= blMin || newBL >= blMax) continue;
+            longLen = newLen; longBL = newBL; longN = minNB;
+            blMin = longBL - kMaxPhaseErr / longN;
+            blMax = longBL + kMaxPhaseErr / longN;
+            startIdx = i;
+            break;
+        }
+
+        // Extend toward end
+        for (int i = (int)regions.size() - 2; i > midIdx; --i) {
+            double len = regions[i+1].firstBeat - regions[i].firstBeat;
+            int    nb  = (int)(len / regions[i].beatLength + 0.5);
+            if (nb < kMinBeats) continue;
+            double tMin = regions[i].beatLength - kMaxPhaseErr / nb;
+            double tMax = regions[i].beatLength + kMaxPhaseErr / nb;
+            if (longBL <= tMin || longBL >= tMax) continue;
+            double newLen  = regions[i+1].firstBeat - regions[startIdx].firstBeat;
+            double rMin    = std::max(blMin, tMin), rMax = std::min(blMax, tMax);
+            int    maxNB   = (int)round(newLen / rMin);
+            int    minNB   = (int)round(newLen / rMax);
+            if (minNB != maxNB) continue;
+            double newBL   = newLen / minNB;
+            if (newBL <= blMin || newBL >= blMax) continue;
+            longLen = newLen; longBL = newBL; longN = minNB;
+            break;
+        }
+
+        blMin = longBL - kMaxPhaseErr / longN;
+        blMax = longBL + kMaxPhaseErr / longN;
+
+        float center = (float)(60.0 * SAMPLE_RATE / longBL);
+        float mn     = (float)(60.0 * SAMPLE_RATE / blMax);
+        float mx     = (float)(60.0 * SAMPLE_RATE / blMin);
+        return bpm_round(mn, center, mx);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     EXPORT float get_file_bpm(const char* path) {
         // Decode to mono — the QM detection function operates on mono frames
         ma_decoder decoder;
         ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
-        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) {
-            return 0.0f;
-        }
+        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return 0.0f;
 
         // Queen Mary tempo tracker parameters (identical to Mixxx defaults)
-        const float kStepSecs    = 0.01161f;   // ~512 samples @ 44.1 kHz
-        const int   kMaxBinHz    = 50;         // window = nextPow2(44100/50) = 1024
+        const float kStepSecs      = 0.01161f;  // ~512 samples @ 44.1 kHz
+        const int   kMaxBinHz      = 50;        // window = nextPow2(44100/50) = 1024
         const int   stepSizeFrames = (int)(SAMPLE_RATE * kStepSecs);
         int windowSize = 1;
         while (windowSize < SAMPLE_RATE / kMaxBinHz) windowSize <<= 1;
@@ -568,56 +707,71 @@ extern "C" {
 
         DetectionFunction df(dfCfg);
 
-        // Circular ring buffer for the sliding window
-        std::vector<double> ring(windowSize, 0.0);
-        std::vector<double> frame(windowSize);
+        // Mixxx's DownmixAndOverlapHelper: pre-center first frame with silence
+        std::vector<double> win_buf(windowSize, 0.0);
+        int write_pos = windowSize / 2;
         std::vector<double> detResults;
+        std::vector<float>  readBuf(CHUNK_SIZE);
 
-        int samples_total = 0;
-        int step_counter  = 0;
-        std::vector<float> readBuf(CHUNK_SIZE);
+        auto feed = [&](const float* src, size_t n) {
+            size_t inRead = 0;
+            while (inRead < n) {
+                size_t avail  = (size_t)(windowSize - write_pos);
+                size_t toCopy = std::min(n - inRead, avail);
+                if (src)
+                    for (size_t i = 0; i < toCopy; i++)
+                        win_buf[write_pos + i] = (double)src[inRead + i];
+                else
+                    for (size_t i = 0; i < toCopy; i++)
+                        win_buf[write_pos + i] = 0.0;
+                write_pos += (int)toCopy;
+                inRead    += toCopy;
+                if (write_pos == windowSize) {
+                    detResults.push_back(df.processTimeDomain(win_buf.data()));
+                    for (int j = 0; j < windowSize - stepSizeFrames; j++)
+                        win_buf[j] = win_buf[j + stepSizeFrames];
+                    write_pos -= stepSizeFrames;
+                }
+            }
+        };
 
         while (true) {
             ma_uint64 n = 0;
             ma_decoder_read_pcm_frames(&decoder, readBuf.data(), CHUNK_SIZE, &n);
             if (n == 0) break;
-
-            for (ma_uint64 i = 0; i < n; i++) {
-                ring[samples_total % windowSize] = (double)readBuf[i];
-                ++samples_total;
-                ++step_counter;
-
-                if (samples_total >= windowSize && step_counter >= stepSizeFrames) {
-                    // Linearise circular buffer: oldest sample first
-                    int oldest = samples_total % windowSize;
-                    for (int j = 0; j < windowSize; j++)
-                        frame[j] = ring[(oldest + j) % windowSize];
-                    detResults.push_back(df.processTimeDomain(frame.data()));
-                    step_counter = 0;
-                }
-            }
+            feed(readBuf.data(), n);
         }
         ma_decoder_uninit(&decoder);
 
+        // Finalize: flush remaining samples with silence (same as Mixxx finalize())
+        size_t silenceNeeded = std::max((size_t)(windowSize - write_pos),
+                                        (size_t)(windowSize / 2 - 1));
+        feed(nullptr, silenceNeeded);
+
         if ((int)detResults.size() < 6) return 0.0f;
 
-        // Skip the first 2 frames (noise artifact) — same as Mixxx
+        // Skip first 2 frames (noise artifact) — same as Mixxx
         std::vector<double> df_vals(detResults.begin() + 2, detResults.end());
 
-        // Beat period estimation via comb-filter Viterbi
+        // Beat period estimation (comb-filter Viterbi)
         std::vector<int> beatPeriod(df_vals.size() / 128 + 1);
         TempoTrackV2 tt((float)SAMPLE_RATE, stepSizeFrames);
         tt.calculateBeatPeriod(df_vals, beatPeriod);
 
-        // BPM = 60 * sampleRate / (median_period * stepSize)
-        std::vector<int> valid;
-        for (int p : beatPeriod) if (p > 0) valid.push_back(p);
-        if (valid.empty()) return 0.0f;
+        // Refined beat positions in df-frame units
+        std::vector<double> rawBeats;
+        tt.calculateBeats(df_vals, beatPeriod, rawBeats);
+        if (rawBeats.size() < 2) return 0.0f;
 
-        std::sort(valid.begin(), valid.end());
-        int medPeriod = valid[valid.size() / 2];
+        // Convert to audio frames (matches Mixxx's FramePos conversion)
+        std::vector<double> beatFrames;
+        beatFrames.reserve(rawBeats.size());
+        for (double b : rawBeats)
+            beatFrames.push_back(b * stepSizeFrames + stepSizeFrames / 2);
 
-        return (float)SAMPLE_RATE * 60.0f / ((float)medPeriod * (float)stepSizeFrames);
+        // Mixxx's makeConstBpm pipeline: find longest coherent region → snap
+        auto regions = retrieve_const_regions(beatFrames);
+        return make_const_bpm(regions);
     }
 
     EXPORT void stream_start() {
