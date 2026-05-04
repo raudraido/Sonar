@@ -27,7 +27,20 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import OrderedDict
 
 import os as _os
+import platform as _platform
+from datetime import datetime as _datetime
+
+_PLATFORM_WINDOWS = _platform.system() == "Windows"
 _COVER_WORKERS = min(6, (_os.cpu_count() or 2) + 2)
+_PLATFORM_LINUX = _platform.system() == "Linux"
+
+def _trim_glibc_heap():
+    """Ask glibc to return freed memory to the OS (Linux only)."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 
@@ -2151,6 +2164,8 @@ class TracksBrowser(QWidget):
         except: pass
         try: self.client._api_cache.cache.clear()
         except: pass
+        try: self.client._page_cache.clear()
+        except: pass
         self._col_filter_values = {}  # invalidate popup cache; keep _col_id_map so active filters still resolve
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setToolTip("Refresh library from server")
@@ -2338,8 +2353,8 @@ class TracksBrowser(QWidget):
             server_filters=server_params or None,
         )
         self.live_worker.results_ready.connect(self.on_worker_finished)
-        
-        self.skeleton_timer.start(75) 
+
+        self.show_skeleton_ui()
         self.live_worker.start()
 
     def on_worker_finished(self, tracks, total_items, total_pages, target_page):
@@ -2347,10 +2362,9 @@ class TracksBrowser(QWidget):
         if self.sender() and getattr(self.sender(), 'is_cancelled', False):
             return
 
-        self.skeleton_timer.stop()
         self.tree.setUpdatesEnabled(False)
         self.tree.clear()
-        
+
         for i in range(13): self.tree.setItemDelegateForColumn(i, None)
         self.tree.setItemDelegateForColumn(1, self.combined_delegate)
         self.tree.setItemDelegateForColumn(3, self.artist_delegate)
@@ -2359,8 +2373,11 @@ class TracksBrowser(QWidget):
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
         self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
         
-        self.total_items = total_items
-        self.total_pages = total_pages
+        # Only update total/pages from a successful (non-empty) response so a
+        # transient error never resets total_pages to 1 and breaks navigation.
+        if total_items > 0 or not getattr(self, 'total_items', 0):
+            self.total_items = total_items
+            self.total_pages = total_pages
         self.current_page = target_page
         
         # 👇 🟢 THE BATCHING FIX: Collect all items into a list!
@@ -2511,16 +2528,27 @@ class TracksBrowser(QWidget):
                     self.tb_cover_worker.queue.append(cid_str)
 
     def on_tb_cover_loaded(self, cover_id, image_data):
-        # 🟢 Safely build the QPixmap on the main thread where it belongs!
         from PyQt6.QtGui import QPixmap
+        from PyQt6.QtCore import Qt
         pixmap = QPixmap()
         pixmap.loadFromData(image_data)
-        
+        if not pixmap.isNull():
+            cover_size = 40 if getattr(getattr(self, 'combined_delegate', None), 'is_album_mode', False) else 65
+            pixmap = pixmap.scaled(cover_size, cover_size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+
         if hasattr(self, 'combined_delegate'):
-            # 🟢 THE FIX: Use .set() for LRUCache!
             self.combined_delegate.cover_cache.set(str(cover_id), pixmap)
             self.tree.viewport().update()
-   
+
+        # On Linux/glibc, freed memory isn't returned to the OS automatically.
+        # Debounce a malloc_trim call so it fires once after the cover batch settles.
+        if _PLATFORM_LINUX:
+            if not hasattr(self, '_trim_timer'):
+                self._trim_timer = QTimer(self)
+                self._trim_timer.setSingleShot(True)
+                self._trim_timer.timeout.connect(_trim_glibc_heap)
+            self._trim_timer.start(2000)
+
     def create_track_item(self, t, index_label):
         item = QTreeWidgetItem()
         
@@ -2588,10 +2616,8 @@ class TracksBrowser(QWidget):
         created_raw = t.get('created') or ''
         if created_raw:
             try:
-                from datetime import datetime
-                import platform
-                dt = datetime.fromisoformat(created_raw.replace('Z', '+00:00'))
-                fmt = '%#d %b %Y' if platform.system() == 'Windows' else '%-d %b %Y'
+                dt = _datetime.fromisoformat(created_raw.replace('Z', '+00:00'))
+                fmt = '%#d %b %Y' if _PLATFORM_WINDOWS else '%-d %b %Y'
                 date_str = dt.strftime(fmt)
             except Exception:
                 try:

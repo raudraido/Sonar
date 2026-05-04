@@ -69,6 +69,9 @@ class SubsonicClient:
         self._scan_status_cache = None
 
         self._auth_lock = threading.Lock()
+        self._page_cache = {}      # key → (timestamp, tracks, total_count)
+        self._page_cache_lock = threading.Lock()
+        self._PAGE_CACHE_TTL = 120 # seconds
 
         import requests
         from requests.adapters import HTTPAdapter
@@ -436,6 +439,16 @@ class SubsonicClient:
             params.update(server_filters)
 
         try:
+            def _freeze(v):
+                return tuple(sorted(v)) if isinstance(v, list) else v
+            sf = tuple(sorted((k, _freeze(v)) for k, v in (server_filters or {}).items()))
+            cache_key = (sort_by, order, start, end, query or '', sf)
+            now = time.time()
+            with self._page_cache_lock:
+                cached = self._page_cache.get(cache_key)
+            if cached and now - cached[0] < self._PAGE_CACHE_TTL:
+                return cached[1], cached[2]
+
             r = requests.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
 
             if r.status_code == 401:
@@ -449,13 +462,16 @@ class SubsonicClient:
 
             total_count = int(r.headers.get('X-Total-Count', len(data)))
 
-            # Navidrome's native API returns items that map perfectly to our UI parser
             clean_tracks = []
             for item in data:
-                # Add a fallback for cover_id since native uses 'coverArt'
                 if 'coverArt' in item and 'cover_id' not in item:
                     item['cover_id'] = item['coverArt']
                 clean_tracks.append(self._parse_song_data(item))
+
+            with self._page_cache_lock:
+                self._page_cache[cache_key] = (now, clean_tracks, total_count)
+                if len(self._page_cache) > 40:
+                    del self._page_cache[next(iter(self._page_cache))]
 
             return clean_tracks, total_count
         except Exception as e:
@@ -882,7 +898,7 @@ class SubsonicClient:
             'duration': dur_str,
             'duration_ms': sec * 1000,
             'stream_url': self._build_stream_url(s.get('id')),
-            'cover_id': s.get('coverArt') or s.get('cover_id'),
+            'cover_id': s.get('coverArt') or s.get('cover_id') or s.get('id'),
             'starred': 'starred' in s or 'favorite' in s,
             'path': s.get('path'),
             'genre': display_genre,
