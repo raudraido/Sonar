@@ -728,6 +728,7 @@ class PlaybackMixin:
             current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
             if track_id == current_track_id:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
+                self.now_playing_widget.set_bpm(bpm)
         else:
             self.file_type_label.setText(self.current_file_type_text) # Just MP3 if it fails
     

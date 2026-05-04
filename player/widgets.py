@@ -83,7 +83,13 @@ class _ArtLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._hovered = False
+        self._accent = QColor(255, 255, 255)
         self.setMouseTracking(True)
+
+    def set_accent_color(self, color_str):
+        self._accent = QColor(color_str)
+        if self._hovered:
+            self.update()
 
     def enterEvent(self, event):
         self._hovered = True
@@ -95,26 +101,39 @@ class _ArtLabel(QLabel):
         self.update()
         super().leaveEvent(event)
 
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if not self._hovered:
-            return
+    def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # dim overlay
-        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
-        # upward arrow centred near the top
-        cx = self.width() / 2
-        cy = self.height() / 2 - 4
-        aw, ah = 10, 7
-        path = QPainterPath()
-        path.moveTo(cx,        cy - ah)
-        path.lineTo(cx + aw,   cy + ah)
-        path.lineTo(cx - aw,   cy + ah)
-        path.closeSubpath()
-        p.setBrush(QColor(255, 255, 255, 220))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawPath(path)
+
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), 6, 6)
+        p.setClipPath(clip)
+
+        pix = self.pixmap()
+        if pix and not pix.isNull():
+            scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            p.drawPixmap(x, y, scaled)
+        else:
+            p.fillRect(self.rect(), QColor("#222"))
+
+        if self._hovered:
+            p.fillRect(self.rect(), QColor(0, 0, 0, 80))
+            cx = self.width() / 2
+            cy = self.height() / 2 - 4
+            aw, ah = 10, 7
+            arrow = QPainterPath()
+            arrow.moveTo(cx,       cy - ah)
+            arrow.lineTo(cx + aw,  cy + ah)
+            arrow.lineTo(cx - aw,  cy + ah)
+            arrow.closeSubpath()
+            accent = QColor(self._accent)
+            accent.setAlpha(220)
+            p.setBrush(accent)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawPath(arrow)
+
         p.end()
 
     def mousePressEvent(self, event):
@@ -136,7 +155,7 @@ class NowPlayingFooterWidget(QWidget):
 
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setFixedHeight(74)
+        self.setFixedHeight(94)
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 5, 0, 5)
@@ -144,7 +163,7 @@ class NowPlayingFooterWidget(QWidget):
         
         # 1. Tiny Cover Art
         self.art_label = _ArtLabel()
-        self.art_label.setFixedSize(64, 64)
+        self.art_label.setFixedSize(84, 84)
         self.art_label.setStyleSheet("background-color: #222; border-radius: 4px; border: 1px solid #333;")
         self.art_label.setScaledContents(True)
         self.art_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -185,9 +204,15 @@ class NowPlayingFooterWidget(QWidget):
         self.album_lbl = FooterClickableLabel("")
         self.album_lbl.clicked.connect(lambda _: self.album_clicked.emit())
 
+        # BPM
+        self.bpm_lbl = QLabel("")
+        self.bpm_lbl.setStyleSheet("font-size: 12px; color: #777; background: transparent;")
+        self.bpm_lbl.hide()
+
         text_layout.addWidget(self.title_lbl)
         text_layout.addWidget(self.artist_widget)
         text_layout.addWidget(self.album_lbl)
+        text_layout.addWidget(self.bpm_lbl)
         
         layout.addWidget(self.art_label)
         layout.addWidget(text_container, 1)
@@ -232,7 +257,18 @@ class NowPlayingFooterWidget(QWidget):
         else:
             self.art_label.clear()
             self.art_label.hide()
-            
+
+    def set_file_type(self, file_type):
+        self._file_type = file_type
+
+    def set_bpm(self, bpm):
+        ft = f" ᛫ {self._file_type}" if getattr(self, '_file_type', None) else ""
+        if bpm is None:
+            self.bpm_lbl.setText(f"***.* BPM{ft}")
+        else:
+            self.bpm_lbl.setText(f"{bpm:.1f} BPM{ft}")
+        self.bpm_lbl.show()
+
 
 
 class FooterClickableLabel(QLabel):

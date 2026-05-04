@@ -56,6 +56,7 @@ class VisualsMixin:
             self.master_color = dominant_color
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
             if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.master_color)
+            self.now_playing_widget.art_label.set_accent_color(self.master_color)
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 raw_artist = track.get('artist', 'Unknown')
@@ -266,6 +267,8 @@ class VisualsMixin:
         self._last_theme_key = theme_key
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
+
+        self.now_playing_widget.art_label.set_accent_color(mc)
 
         for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None), getattr(self, '_info_section', None)]:
             if _sec: _sec.set_master_color(mc)
@@ -647,6 +650,7 @@ class VisualsMixin:
 
             # 3. Update the Bottom "Now Playing" Widget
             if hasattr(self, 'now_playing_widget'):
+                self.now_playing_widget.set_file_type(self.current_file_type_text)
                 self.now_playing_widget.update_info(
                     title=title,
                     artist=artist,
@@ -662,9 +666,11 @@ class VisualsMixin:
                 # INSTANT LOAD FROM CACHE!
                 bpm = self.bpm_cache[track_id]
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
+                self.now_playing_widget.set_bpm(bpm)
             else:
                 # Not cached. Show loading text and start the worker
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
+                self.now_playing_widget.set_bpm(None)
                 
                 # Safely kill the old worker if the user skips tracks quickly
                 if hasattr(self, 'bpm_worker') and self.bpm_worker.isRunning():

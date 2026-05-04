@@ -1122,7 +1122,7 @@ class SonarPlayer(
         self.footer_container.setStyleSheet("QWidget#FooterBar { background-color: rgba(11, 11, 11, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
 
         main_footer_layout = QHBoxLayout(self.footer_container)
-        main_footer_layout.setContentsMargins(20, 0, 20, 0)
+        main_footer_layout.setContentsMargins(8, 0, 20, 0)
         main_footer_layout.setSpacing(0)
 
         footer_left = QWidget()
