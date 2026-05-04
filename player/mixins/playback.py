@@ -317,28 +317,34 @@ class PlaybackMixin:
             if len(visible_indices) > 1:
                 new_idx = self.current_index
                 while new_idx == self.current_index: new_idx = random.choice(visible_indices)
-                self.current_index = new_idx
-            else: self.current_index = visible_indices[0]
+            else:
+                new_idx = visible_indices[0]
         else:
             if self.current_index in visible_indices:
-                current_pos = visible_indices.index(self.current_index); next_pos = (current_pos + 1) % len(visible_indices); self.current_index = visible_indices[next_pos]
-            else: self.current_index = visible_indices[0]
-        self.play_song(self.current_index)
-    
+                current_pos = visible_indices.index(self.current_index)
+                next_pos = (current_pos + 1) % len(visible_indices)
+                new_idx = visible_indices[next_pos]
+            else:
+                new_idx = visible_indices[0]
+        # Record history BEFORE mutating current_index so play_song sees the right old value
+        if self.current_index != -1 and self.current_index != new_idx:
+            self.history.append(self.current_index)
+        self.current_index = new_idx
+        self.play_song(self.current_index, record_history=False)
+
     def play_prev(self):
-        if self.is_shuffle and self.history:
+        # Always use history so back retraces the exact path forward (shuffle or not)
+        if self.history:
             prev_idx = self.history.pop()
             self.play_song(prev_idx, record_history=False)
             return
 
+        # No history yet — fall back to sequential previous
         visible_indices = self.get_visible_indices()
         if not visible_indices: return
-        
-        target_index = -1
         if self.current_index in visible_indices:
             current_pos = visible_indices.index(self.current_index)
-            prev_pos = (current_pos - 1) % len(visible_indices)
-            target_index = visible_indices[prev_pos]
+            target_index = visible_indices[(current_pos - 1) % len(visible_indices)]
         else:
             target_index = visible_indices[0]
         self.play_song(target_index, record_history=False)
