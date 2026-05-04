@@ -117,33 +117,36 @@ def build():
             print("ERROR: g++ not found. Install it with: sudo apt install g++ libcurl4-openssl-dev")
         return
 
-    # Auto-detect SoundTouch
-    soundtouch_src = glob.glob("SoundTouch/*.cpp")
-    has_st_source = len(soundtouch_src) > 0
-    soundtouch_compile_str = "SoundTouch/*.cpp" if has_st_source else ""
-    soundtouch_link_str = "" if has_st_source else "-L ./SoundTouch -lSoundTouch"
+    # qm-dsp sources (Queen Mary beat tracker — replaces SoundTouch BPMDetect)
+    qm_sources = " ".join([
+        "qm-dsp/dsp/onsets/DetectionFunction.cpp",
+        "qm-dsp/dsp/tempotracking/TempoTrackV2.cpp",
+        "qm-dsp/dsp/transforms/FFT.cpp",
+        "qm-dsp/dsp/phasevocoder/PhaseVocoder.cpp",
+        "qm-dsp/maths/MathUtilities.cpp",
+        "qm-dsp/ext/kissfft/kiss_fft.c",
+        "qm-dsp/ext/kissfft/tools/kiss_fftr.c",
+    ])
 
     current_os = platform.system()
     print(f"Detected Platform: {current_os}")
-
-    if has_st_source:
-        print("SoundTouch source detected — compiling directly.")
-    else:
-        print("No SoundTouch source — linking pre-compiled library.")
+    print("Using Queen Mary qm-dsp for BPM detection.")
 
     curl_inc, curl_lib, curl_bin = find_curl_flags()
 
+    qm_defines = "-Dkiss_fft_scalar=double"
+
     if current_os == "Windows":
         output_filename = "audio_core.dll"
-        flags = f"-O2 -static-libgcc -static-libstdc++ -Wl,--export-all-symbols -I . {curl_inc} {soundtouch_link_str} {curl_lib}"
+        flags = f"-O2 -static-libgcc -static-libstdc++ -Wl,--export-all-symbols -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
     elif current_os == "Darwin":
         output_filename = "audio_core.dylib"
-        flags = f"-O2 -fPIC -dynamiclib -I . {curl_inc} {soundtouch_link_str} {curl_lib}"
+        flags = f"-O2 -fPIC -dynamiclib -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
     else:
         output_filename = "audio_core.so"
-        flags = f"-O2 -fPIC -I . {curl_inc} {soundtouch_link_str} {curl_lib}"
+        flags = f"-O2 -fPIC -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
 
-    cmd = f"g++ -shared -o {output_filename} audio_core.cpp {soundtouch_compile_str} {flags}"
+    cmd = f"g++ -shared -o {output_filename} audio_core.cpp {qm_sources} {flags}"
     print(f"Executing: {cmd}")
 
     result = subprocess.run(cmd, shell=True)

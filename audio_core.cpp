@@ -14,7 +14,8 @@
 #include <complex>
 #include <cmath>
 #include <curl/curl.h>
-#include "SoundTouch/BPMDetect.h"
+#include "qm-dsp/dsp/onsets/DetectionFunction.h"
+#include "qm-dsp/dsp/tempotracking/TempoTrackV2.h"
 
 std::atomic<int> current_stream_session{0};
 std::atomic<int> current_preload_session{0};
@@ -542,24 +543,81 @@ extern "C" {
     }
 
     EXPORT float get_file_bpm(const char* path) {
+        // Decode to mono — the QM detection function operates on mono frames
         ma_decoder decoder;
-        ma_decoder_config config = ma_decoder_config_init(ma_format_f32, CHANNELS, SAMPLE_RATE); 
+        ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
         if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) {
-            return 0.0f; // Decode failed
+            return 0.0f;
         }
-        
-        soundtouch::BPMDetect bpmDetector(CHANNELS, SAMPLE_RATE);
-        std::vector<float> temp_buf(CHUNK_SIZE * CHANNELS);
-        
+
+        // Queen Mary tempo tracker parameters (identical to Mixxx defaults)
+        const float kStepSecs    = 0.01161f;   // ~512 samples @ 44.1 kHz
+        const int   kMaxBinHz    = 50;         // window = nextPow2(44100/50) = 1024
+        const int   stepSizeFrames = (int)(SAMPLE_RATE * kStepSecs);
+        int windowSize = 1;
+        while (windowSize < SAMPLE_RATE / kMaxBinHz) windowSize <<= 1;
+
+        DFConfig dfCfg;
+        dfCfg.DFType              = DF_COMPLEXSD;
+        dfCfg.stepSize            = stepSizeFrames;
+        dfCfg.frameLength         = windowSize;
+        dfCfg.dbRise              = 3;
+        dfCfg.adaptiveWhitening   = false;
+        dfCfg.whiteningRelaxCoeff = -1;
+        dfCfg.whiteningFloor      = -1;
+
+        DetectionFunction df(dfCfg);
+
+        // Circular ring buffer for the sliding window
+        std::vector<double> ring(windowSize, 0.0);
+        std::vector<double> frame(windowSize);
+        std::vector<double> detResults;
+
+        int samples_total = 0;
+        int step_counter  = 0;
+        std::vector<float> readBuf(CHUNK_SIZE);
+
         while (true) {
-            ma_uint64 frames_read = 0;
-            ma_decoder_read_pcm_frames(&decoder, temp_buf.data(), CHUNK_SIZE, &frames_read);
-            if (frames_read == 0) break; // EOF reached
-            bpmDetector.inputSamples(temp_buf.data(), (int)frames_read);
+            ma_uint64 n = 0;
+            ma_decoder_read_pcm_frames(&decoder, readBuf.data(), CHUNK_SIZE, &n);
+            if (n == 0) break;
+
+            for (ma_uint64 i = 0; i < n; i++) {
+                ring[samples_total % windowSize] = (double)readBuf[i];
+                ++samples_total;
+                ++step_counter;
+
+                if (samples_total >= windowSize && step_counter >= stepSizeFrames) {
+                    // Linearise circular buffer: oldest sample first
+                    int oldest = samples_total % windowSize;
+                    for (int j = 0; j < windowSize; j++)
+                        frame[j] = ring[(oldest + j) % windowSize];
+                    detResults.push_back(df.processTimeDomain(frame.data()));
+                    step_counter = 0;
+                }
+            }
         }
-        
         ma_decoder_uninit(&decoder);
-        return bpmDetector.getBpm();
+
+        if ((int)detResults.size() < 6) return 0.0f;
+
+        // Skip the first 2 frames (noise artifact) — same as Mixxx
+        std::vector<double> df_vals(detResults.begin() + 2, detResults.end());
+
+        // Beat period estimation via comb-filter Viterbi
+        std::vector<int> beatPeriod(df_vals.size() / 128 + 1);
+        TempoTrackV2 tt((float)SAMPLE_RATE, stepSizeFrames);
+        tt.calculateBeatPeriod(df_vals, beatPeriod);
+
+        // BPM = 60 * sampleRate / (median_period * stepSize)
+        std::vector<int> valid;
+        for (int p : beatPeriod) if (p > 0) valid.push_back(p);
+        if (valid.empty()) return 0.0f;
+
+        std::sort(valid.begin(), valid.end());
+        int medPeriod = valid[valid.size() / 2];
+
+        return (float)SAMPLE_RATE * 60.0f / ((float)medPeriod * (float)stepSizeFrames);
     }
 
     EXPORT void stream_start() {
