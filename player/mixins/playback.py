@@ -521,12 +521,12 @@ class PlaybackMixin:
 
         if hasattr(self, 'seek_bar'):
             self.seek_bar.is_playing = False
-            self.seek_bar.update_position(0)
+            self.seek_bar.position_ms = 0
+            self.seek_bar.current_index = 0.0
+            self.seek_bar.update()
 
         if hasattr(self, 'visualizer'):
-            self.visualizer.vis_data = [0.0] * self.visualizer.num_bars
-            self.visualizer._raw_vu_rms = 0.0
-            self.visualizer.update()
+            self.visualizer.reset()
 
         self.refresh_ui_styles(scroll_to_current=False)
         self.update_window_title()

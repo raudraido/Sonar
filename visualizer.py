@@ -412,13 +412,21 @@ class AudioVisualizer(QWidget):
     def update_vu_data(self, true_rms: float):
         if not getattr(self, 'visualizer_enabled', True):
             return
-            
+
         # Store the clean time-domain RMS
         self._raw_vu_rms = true_rms
-        
+
         # Only trigger a repaint if we are actually looking at the VU meter
         if self.vis_mode == 1:
             self.update()
+
+    def reset(self):
+        """Zero all bar heights, VU smoothing, and needle position instantly."""
+        self.vis_data    = [0.0] * self.num_bars
+        self._raw_vu_rms = 0.0
+        self._vu_rms     = 0.0
+        self._current_a  = -math.radians(30.5)  # leftmost needle angle (–20 dB)
+        self.update()
     # -----------------------------
     
     # ── Painting ──────────────────────────────────────────────────────────────
