@@ -513,9 +513,9 @@ class AudioVisualizer(QWidget):
 
         # t-values derived from measured cluster x-positions on image scale marks
         MARKS = [
-            (-20, 0.000), (-10, 0.149), (-7, 0.252), (-5, 0.341),
-            (-3,  0.438), (-2,  0.529), (-1, 0.617), ( 0, 0.713),
-            ( 1,  0.799), ( 2,  0.885), ( 3, 1.000),
+            (-20, 0.000), (-10, 0.140), (-7, 0.248), (-5, 0.341),
+            (-3,  0.458), (-2,  0.529), (-1, 0.612), ( 0, 0.709),
+            ( 1,  0.799), ( 2,  0.898), ( 3, 0.990),
         ]
 
         def db2a(db):
@@ -549,7 +549,7 @@ class AudioVisualizer(QWidget):
         # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
         # This determines how "heavy" the needle is. 
         # Lower number = heavier/smoother. Higher number = lighter/faster.
-        NEEDLE_SPEED = 0.25 
+        NEEDLE_SPEED = 0.8 
 
         if not hasattr(self, '_current_a'):
             self._current_a = target_a
