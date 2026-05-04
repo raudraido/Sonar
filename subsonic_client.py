@@ -888,7 +888,8 @@ class SubsonicClient:
             'genre': display_genre,
             'year': str(s.get('year', ''))[:4],
             'play_count': s.get('playCount', 0),
-            'bitRate': s.get('bitRate', 0)
+            'bitRate': s.get('bitRate', 0),
+            'bpm': s.get('bpm', 0),
         }
 
     def _build_stream_url(self, song_id):

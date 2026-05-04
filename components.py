@@ -497,6 +497,14 @@ class PaginationFooter(QWidget):
         self.btn_layout.addWidget(self._create_btn(">", self.current_page + 1, enabled=(self.current_page < self.total_pages)))
 
 
+def _fmt_bpm(raw):
+    try:
+        v = int(float(raw))
+        return str(v) if v > 0 else ''
+    except (TypeError, ValueError):
+        return ''
+
+
 class TrackInfoDialog(QDialog):
     """Shows detailed metadata for a single track, with async enrichment via getSong."""
 
@@ -654,6 +662,7 @@ class TrackInfoDialog(QDialog):
             ('Duration',       t.get('duration', '')),
             ('Is compilation', '__bool__:' + str(bool(t.get('compilation')))),
             ('Codec',          t.get('suffix', '') or t.get('codec', '')),
+            ('BPM',            _fmt_bpm(t.get('bpm'))),
             ('Bitrate',        (str(t.get('bitRate', '')) + ' kbps') if t.get('bitRate') else ''),
             ('Sample rate',    str(t.get('samplingRate', '') or '')),
             ('Bit depth',      str(t.get('bitDepth', '') or '')),
@@ -917,6 +926,7 @@ class TrackInfoDialog(QDialog):
             'Release year':    str(raw.get('year', '') or ''),
             'Genres':          raw.get('genre', ''),
             'Codec':           raw.get('suffix', ''),
+            'BPM':             _fmt_bpm(raw.get('bpm')),
             'Bitrate':         (str(raw.get('bitRate', '')) + ' kbps') if raw.get('bitRate') else '',
             'Sample rate':     str(raw.get('samplingRate', '') or ''),
             'Bit depth':       str(raw.get('bitDepth', '') or ''),
