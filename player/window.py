@@ -770,11 +770,11 @@ class SonarPlayer(
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 16, 0, 0) #TAB window top margin
+        main_layout.setContentsMargins(0, 0, 0, 0) #TAB window top margin
         main_layout.setSpacing(0)
 
         content = QHBoxLayout()
-        content.setContentsMargins(0, 0, 8, 8) #TAB window right and bottom margins
+        content.setContentsMargins(0, 8, 8, 8) #TAB window right, top and bottom margins
         content.setSpacing(0)
 
         self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
@@ -784,7 +784,7 @@ class SonarPlayer(
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
         self._left_widget = _LeftPanelWidget()
         self._left_panel = QVBoxLayout(self._left_widget)
-        self._left_panel.setContentsMargins(8, 8, 8, 8)
+        self._left_panel.setContentsMargins(8, 0, 8, 0)
         self._left_panel.setSpacing(0)
 
         # Section 1: Album art (50%)
@@ -1242,6 +1242,7 @@ class SonarPlayer(
         self._queue_panel.close_requested.connect(self._toggle_queue_panel)
         self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
         self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
+        self._queue_panel.reordered.connect(self._queue_reordered)
         self._queue_panel.hide()
         if self.settings.value('queue_panel_visible', 'false') == 'true':
             QTimer.singleShot(0, lambda: (self._queue_panel.show(),
@@ -1421,6 +1422,23 @@ class SonarPlayer(
         for i in range(self.tree.topLevelItemCount()):
             self.tree.topLevelItem(i).setText(0, str(i + 1))
         self._refresh_queue_panel()
+
+    def _queue_reordered(self, new_tracks: list, new_current: int):
+        clean = [{k: v for k, v in t.items() if not k.startswith('_')} for t in new_tracks]
+        self.playlist_data = clean
+        self.current_index = new_current
+        self.history.clear()
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        for i, track in enumerate(clean):
+            item = self._build_tree_item(track)
+            item.setText(0, str(i + 1))
+            self.tree.addTopLevelItem(item)
+        self.tree.blockSignals(False)
+        self.refresh_ui_styles()
+        self.update_indicator()
+        if hasattr(self, '_now_playing_panel'):
+            self._now_playing_panel.update_status()
 
     def _queue_toggle_favorite(self, idx: int):
         if not (0 <= idx < len(self.playlist_data)):

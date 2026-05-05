@@ -254,6 +254,7 @@ class QueuePanel(QWidget):
     close_requested  = pyqtSignal()
     artist_clicked   = pyqtSignal(str)
     favorite_toggled = pyqtSignal(int)   # playlist index
+    reordered        = pyqtSignal(list, int)  # new track list, new current index
 
     _MIN_H = 180
     _MAX_H = 900
@@ -361,6 +362,13 @@ class QueuePanel(QWidget):
         self._list.customContextMenuRequested.connect(self._show_context_menu)
         self._list.viewport().setMouseTracking(True)
         self._list.viewport().installEventFilter(self)
+
+        self._list.setDragEnabled(True)
+        self._list.setAcceptDrops(True)
+        self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._list.setDropIndicatorShown(True)
+        self._list.model().rowsMoved.connect(self._on_rows_moved)
         self._update_list_style()
 
         col.addWidget(self._list)
@@ -472,6 +480,17 @@ class QueuePanel(QWidget):
             vscroll.setValue(saved_pos)
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _on_rows_moved(self):
+        new_tracks = []
+        new_current = -1
+        for i in range(self._list.count()):
+            d = self._list.item(i).data(Qt.ItemDataRole.UserRole)
+            if d:
+                new_tracks.append(d)
+                if d.get('_is_current'):
+                    new_current = i
+        self.reordered.emit(new_tracks, new_current)
 
     def _on_resize_delta(self, delta: int):
         new_h = max(self._MIN_H, min(self._MAX_H, self.height() + delta))

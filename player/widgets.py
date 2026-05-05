@@ -79,6 +79,7 @@ class ElidedLabel(QLabel):
 
 class _ArtLabel(QLabel):
     clicked = pyqtSignal()
+    right_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,6 +140,8 @@ class _ArtLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.right_clicked.emit()
         super().mousePressEvent(event)
 
 
@@ -156,11 +159,11 @@ class NowPlayingFooterWidget(QWidget):
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setFixedHeight(94)
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 5, 0, 5)
         layout.setSpacing(12)
-        
+
         # 1. Tiny Cover Art
         self.art_label = _ArtLabel()
         self.art_label.setFixedSize(84, 84)
@@ -169,6 +172,9 @@ class NowPlayingFooterWidget(QWidget):
         self.art_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.art_label.hide()
         self.art_label.clicked.connect(self.art_clicked)
+        self.art_label.right_clicked.connect(
+            lambda: self.track_right_clicked.emit(self._current_track) if self._current_track else None
+        )
         
         # 2. Text Info Container
         text_container = QWidget()

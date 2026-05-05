@@ -549,7 +549,7 @@ class AudioVisualizer(QWidget):
         # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
         # This determines how "heavy" the needle is. 
         # Lower number = heavier/smoother. Higher number = lighter/faster.
-        NEEDLE_SPEED = 0.8 
+        NEEDLE_SPEED = 0.6 
 
         if not hasattr(self, '_current_a'):
             self._current_a = target_a
