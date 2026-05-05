@@ -766,8 +766,11 @@ class TrackInfoDialog(QDialog):
         lbl.setStyleSheet("background: transparent;")
 
         if callback and text:
-            parts = [p.strip() for p in text.split(separator)] if separator else [text]
-            parts = [p for p in parts if p]
+            if separator:
+                import re as _re
+                parts = [p.strip() for p in _re.split(_re.escape(separator) + r'|,\s+', text) if p.strip()]
+            else:
+                parts = [text]
             sep_html = f' <span style="color:#666;">{separator}</span> ' if separator else ''
             accent = self.accent_color
 

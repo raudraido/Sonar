@@ -677,7 +677,7 @@ class GridItemDelegate(QStyledItemDelegate):
         painter.restore()
 
 _DETAIL_ARTIST_SEP_RE = re.compile(
-    r'( /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. )'
+    r'( /// | • | / |,\s+| feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. )'
 )
 
 class ClickableArtistLabel(QWidget):

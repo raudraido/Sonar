@@ -236,12 +236,11 @@ class NowPlayingFooterWidget(QWidget):
             child = self.artist_layout.takeAt(0)
             if child.widget(): child.widget().deleteLater()
 
-        parts = re.split(r'( /// | • | / | feat\. | Feat\. | vs\. )', artist)
-        
+        parts = re.split(r'( /// | • | / |, | feat\. | Feat\. | vs\. )', artist)
+
         for part in parts:
             if not part: continue
-            #if re.match(r'( • | / | feat\. | vs\. )', part):
-            if re.match(r'( /// | • | / | feat\. | Feat\. | vs\. )', part):
+            if re.match(r'( /// | • | / |, | feat\. | Feat\. | vs\. )', part):
                 sep_lbl = QLabel(part)
                 sep_lbl.setStyleSheet("font-size: 13px; color: #777; background: transparent;")
                 self.artist_layout.addWidget(sep_lbl)
