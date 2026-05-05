@@ -642,6 +642,26 @@ class NavigationMixin:
                 lambda checked, a=art: self.navigate_to_artist(a)
             )
 
+        bpm_cache = getattr(self, 'bpm_cache', {})
+        tid = str(track.get('id', ''))
+        current_bpm = bpm_cache.get(tid) or track.get('bpm') or 0
+        try:
+            current_bpm = float(current_bpm)
+        except (TypeError, ValueError):
+            current_bpm = 0.0
+
+        if current_bpm > 0:
+            def _fmt(v):
+                return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
+            bpm_menu = menu.addMenu("Adjust BPM")
+            bpm_menu.setStyleSheet(menu.styleSheet())
+            for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
+                                 ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
+                new_val = current_bpm * mult
+                bpm_menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
+                    lambda checked=False, v=new_val: self._on_footer_bpm_adjusted(v)
+                )
+
         menu.addSeparator()
         menu.addAction("Get Info").triggered.connect(lambda: self._show_footer_track_info(track))
 
@@ -658,10 +678,15 @@ class NavigationMixin:
             'coverArt': track.get('coverArt'),
         }
         client = getattr(self, 'navidrome_client', None) or getattr(self, 'client', None)
+        bpm_cache = getattr(self, 'bpm_cache', {})
+        tid = str(track.get('id', ''))
+        detected_bpm = bpm_cache.get(tid)
+        track['_id3_bpm'] = track.get('_id3_bpm') or track.get('bpm')
         dlg = TrackInfoDialog(
             track, client=client, accent_color=accent, parent=self,
             on_artist_click=lambda name: self.navigate_to_artist(name),
             on_album_click=lambda _: self.navigate_to_album(album_data),
+            detected_bpm=detected_bpm,
         )
         dlg.exec()
 

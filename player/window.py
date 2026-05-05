@@ -1205,6 +1205,7 @@ class SonarPlayer(
         self.now_playing_widget.title_clicked.connect(self.on_footer_title_click)
         self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
         self.now_playing_widget.art_clicked.connect(self._toggle_queue_panel)
+        self.now_playing_widget.bpm_adjusted.connect(self._on_footer_bpm_adjusted)
         left_layout.addWidget(self.now_playing_widget)
         
         footer_center = QWidget()
@@ -1422,6 +1423,26 @@ class SonarPlayer(
         for i in range(self.tree.topLevelItemCount()):
             self.tree.topLevelItem(i).setText(0, str(i + 1))
         self._refresh_queue_panel()
+
+    def _on_footer_bpm_adjusted(self, new_bpm: float):
+        rounded = round(new_bpm, 1)
+        if not (0 <= self.current_index < len(self.playlist_data)):
+            return
+        track_id = str(self.playlist_data[self.current_index].get('id') or
+                       self.playlist_data[self.current_index].get('path', ''))
+        # Update every matching entry in playlist_data
+        for t in self.playlist_data:
+            if str(t.get('id') or t.get('path', '')) == track_id:
+                t['bpm'] = rounded
+        if track_id and hasattr(self, 'bpm_cache'):
+            self.bpm_cache[track_id] = rounded
+            self.save_bpm_cache()
+        self.now_playing_widget.set_bpm(rounded)
+        self.file_type_label.setText(
+            f"{getattr(self, 'current_file_type_text', '')}   •   {rounded:.1f} BPM"
+        )
+        if hasattr(self, 'tracks_browser') and track_id:
+            self.tracks_browser.refresh_track_bpm(track_id, rounded)
 
     def _queue_reordered(self, new_tracks: list, new_current: int):
         clean = [{k: v for k, v in t.items() if not k.startswith('_')} for t in new_tracks]

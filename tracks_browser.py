@@ -2445,6 +2445,15 @@ class TracksBrowser(QWidget):
             if hasattr(self, 'footer'):
                 self.footer.render_pagination(self.current_page, self.total_pages)
 
+            # Detected BPM always beats the ID3 tag value
+            win = self.window()
+            bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
+            if bpm_cache:
+                for t in tracks:
+                    tid = str(t.get('id', ''))
+                    if tid in bpm_cache:
+                        t['bpm'] = bpm_cache[tid]
+
             offset = (self.current_page - 1) * self.page_size
             for i, t in enumerate(tracks):
                 items_to_add.append(self.create_track_item(t, offset + i + 1))
@@ -2670,6 +2679,20 @@ class TracksBrowser(QWidget):
             t.update({k: fresh.get(k, t.get(k)) for k in ('title', 'artist', 'album', 'year')})
             break
         self.tree.viewport().update()
+
+    def refresh_track_bpm(self, track_id, bpm):
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            d = item.data(0, Qt.ItemDataRole.UserRole)
+            if not d or d.get('type') != 'track':
+                continue
+            t = d.get('data', {})
+            if str(t.get('id', '')) != str(track_id):
+                continue
+            t['bpm'] = bpm
+            bpm_str = str(int(round(bpm))) if bpm > 0 else ''
+            item.setText(12, bpm_str)
+            break
 
     def update_playing_status(self, playing_id, is_playing, color_hex):
         """Highlights the playing track with the animated GIF, matching the Now Playing tab."""
@@ -3540,6 +3563,36 @@ class TracksBrowser(QWidget):
             for art in artists: goto_menu.addAction(f"Artist: {art}").triggered.connect(lambda checked, a=art: self.switch_to_artist_tab.emit(a))
 
         if not is_multi:
+            _win = self.window()
+            _bpm_cache = getattr(_win, 'bpm_cache', {}) if _win else {}
+            _sid = str(first_track.get('id', ''))
+            raw_bpm = _bpm_cache.get(_sid) or first_track.get('bpm') or 0
+            try:
+                current_bpm = float(raw_bpm)
+            except (TypeError, ValueError):
+                current_bpm = 0.0
+
+            if current_bpm > 0:
+                def _fmt(v):
+                    return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
+
+                bpm_menu = QMenu("Adjust BPM", menu)
+                bpm_menu.setStyleSheet(menu.styleSheet())
+                multipliers = [
+                    ("Half",   0.5),
+                    ("2/3",    2/3),
+                    ("3/4",    3/4),
+                    ("4/3",    4/3),
+                    ("3/2",    3/2),
+                    ("Double", 2.0),
+                ]
+                for label, mult in multipliers:
+                    new_val = current_bpm * mult
+                    bpm_menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
+                        lambda checked=False, v=new_val, t=first_track: self._apply_bpm(t, v)
+                    )
+                menu.addMenu(bpm_menu)
+
             menu.addSeparator()
             action_info = menu.addAction("Get Info")
             action_info.triggered.connect(lambda: self._show_track_info(first_track))
@@ -3556,10 +3609,44 @@ class TracksBrowser(QWidget):
              action_fav.triggered.connect(lambda: self.toggle_track_favorite(first_track, selected_items[0]))
         menu.exec(self.tree.mapToGlobal(pos))
 
+    def _apply_bpm(self, track, new_bpm):
+        rounded = round(new_bpm, 1)
+        track['bpm'] = rounded
+        song_id = str(track.get('id', ''))
+
+        win = self.window()
+        if song_id and hasattr(win, 'bpm_cache'):
+            win.bpm_cache[song_id] = rounded
+            if hasattr(win, 'save_bpm_cache'):
+                win.save_bpm_cache()
+            # Update matching entries in playlist_data
+            if hasattr(win, 'playlist_data'):
+                for t in win.playlist_data:
+                    if str(t.get('id', '')) == song_id:
+                        t['bpm'] = rounded
+            # Refresh footer if this is the current track
+            if hasattr(win, 'current_index') and hasattr(win, 'playlist_data'):
+                idx = win.current_index
+                if 0 <= idx < len(win.playlist_data):
+                    if str(win.playlist_data[idx].get('id', '')) == song_id:
+                        if hasattr(win, 'now_playing_widget'):
+                            win.now_playing_widget.set_bpm(rounded)
+                        if hasattr(win, 'file_type_label') and hasattr(win, 'current_file_type_text'):
+                            win.file_type_label.setText(
+                                f"{win.current_file_type_text}   •   {rounded:.1f} BPM"
+                            )
+
+        self.refresh_track_bpm(song_id, rounded)
+
     def _show_track_info(self, track):
         client = getattr(self, 'client', None)
         win = self.window()
         accent = getattr(win, 'master_color', None) or getattr(self, 'current_accent', '#1DB954')
+        bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
+        tid = str(track.get('id', ''))
+        detected_bpm = bpm_cache.get(tid)
+        # Store original ID3 BPM separately so the dialog can show both
+        track['_id3_bpm'] = track.get('_id3_bpm') or track.get('bpm')
         album_data = {
             'id': track.get('albumId'),
             'title': track.get('album', ''),
@@ -3570,6 +3657,7 @@ class TracksBrowser(QWidget):
             track, client=client, accent_color=accent, parent=self,
             on_artist_click=lambda name: self.switch_to_artist_tab.emit(name),
             on_album_click=lambda _: self.switch_to_album_tab.emit(album_data),
+            detected_bpm=detected_bpm,
         )
         dlg.exec()
         

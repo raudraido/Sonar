@@ -720,17 +720,25 @@ class PlaybackMixin:
     def _on_bpm_calculated(self, bpm, track_id):
         """Receives the float from C++, caches it, and appends it to the UI."""
         if bpm > 0:
-            # 1. Save it to our permanent memory
             self.bpm_cache[track_id] = bpm
             self.save_bpm_cache()
-            
-            # 2. Only update the UI if the user hasn't skipped to a different song
+
+            # Update the track dict in playlist_data so it carries the detected value
+            for t in self.playlist_data:
+                if str(t.get('id') or t.get('path', '')) == track_id:
+                    t['bpm'] = bpm
+                    break
+
+            # Push to tracks browser row if visible
+            if hasattr(self, 'tracks_browser'):
+                self.tracks_browser.refresh_track_bpm(track_id, bpm)
+
             current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
             if track_id == current_track_id:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
                 self.now_playing_widget.set_bpm(bpm)
         else:
-            self.file_type_label.setText(self.current_file_type_text) # Just MP3 if it fails
+            self.file_type_label.setText(self.current_file_type_text)
     
     def import_music(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Open Music Files", "", "Audio Files (*.mp3 *.flac *.wav *.ogg *.m4a)")

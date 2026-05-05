@@ -511,13 +511,14 @@ class TrackInfoDialog(QDialog):
     _update_signal = pyqtSignal(dict)
 
     def __init__(self, track: dict, client=None, accent_color='#1DB954', parent=None,
-                 on_artist_click=None, on_album_click=None):
+                 on_artist_click=None, on_album_click=None, detected_bpm=None):
         super().__init__(parent)
         self.track = track
         self.client = client
         self.accent_color = accent_color
         self.on_artist_click = on_artist_click
         self.on_album_click = on_album_click
+        self.detected_bpm = detected_bpm
         self._value_labels = {}
 
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
@@ -662,7 +663,8 @@ class TrackInfoDialog(QDialog):
             ('Duration',       t.get('duration', '')),
             ('Is compilation', '__bool__:' + str(bool(t.get('compilation')))),
             ('Codec',          t.get('suffix', '') or t.get('codec', '')),
-            ('BPM',            _fmt_bpm(t.get('bpm'))),
+            ('BPM ID3Tag',     _fmt_bpm(t.get('_id3_bpm'))),
+            ('BPM Detected',   _fmt_bpm(self.detected_bpm)),
             ('Bitrate',        (str(t.get('bitRate', '')) + ' kbps') if t.get('bitRate') else ''),
             ('Sample rate',    str(t.get('samplingRate', '') or '')),
             ('Bit depth',      str(t.get('bitDepth', '') or '')),
@@ -926,7 +928,7 @@ class TrackInfoDialog(QDialog):
             'Release year':    str(raw.get('year', '') or ''),
             'Genres':          raw.get('genre', ''),
             'Codec':           raw.get('suffix', ''),
-            'BPM':             _fmt_bpm(raw.get('bpm')),
+            'BPM ID3Tag':      _fmt_bpm(raw.get('bpm')),
             'Bitrate':         (str(raw.get('bitRate', '')) + ' kbps') if raw.get('bitRate') else '',
             'Sample rate':     str(raw.get('samplingRate', '') or ''),
             'Bit depth':       str(raw.get('bitDepth', '') or ''),

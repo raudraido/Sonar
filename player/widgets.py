@@ -151,6 +151,7 @@ class NowPlayingFooterWidget(QWidget):
     title_clicked = pyqtSignal()
     art_clicked = pyqtSignal()
     track_right_clicked = pyqtSignal(object)  # emits the current track dict
+    bpm_adjusted = pyqtSignal(float)           # emits the new BPM value
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -211,8 +212,12 @@ class NowPlayingFooterWidget(QWidget):
         self.album_lbl.clicked.connect(lambda _: self.album_clicked.emit())
 
         # BPM
+        self._current_bpm = None
         self.bpm_lbl = QLabel("")
         self.bpm_lbl.setStyleSheet("font-size: 12px; color: #777; background: transparent;")
+        self.bpm_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bpm_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.bpm_lbl.customContextMenuRequested.connect(self._show_bpm_menu)
         self.bpm_lbl.hide()
 
         text_layout.addWidget(self.title_lbl)
@@ -268,12 +273,37 @@ class NowPlayingFooterWidget(QWidget):
         self._file_type = file_type
 
     def set_bpm(self, bpm):
+        self._current_bpm = bpm
         ft = f" ᛫ {self._file_type}" if getattr(self, '_file_type', None) else ""
         if bpm is None:
             self.bpm_lbl.setText(f"***.* BPM{ft}")
         else:
             self.bpm_lbl.setText(f"{bpm:.1f} BPM{ft}")
         self.bpm_lbl.show()
+
+    def _show_bpm_menu(self):
+        if not self._current_bpm or self._current_bpm <= 0:
+            return
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QCursor
+
+        def _fmt(v):
+            s = f"{v:.2f}".rstrip('0').rstrip('.')
+            return f"{s} BPM"
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
+            "QMenu::item { padding: 6px 25px; }"
+            "QMenu::item:selected { background-color: #333; }"
+        )
+        for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
+                             ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
+            new_val = self._current_bpm * mult
+            menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
+                lambda checked=False, v=new_val: self.bpm_adjusted.emit(v)
+            )
+        menu.exec(QCursor.pos())
 
 
 
