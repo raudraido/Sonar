@@ -8,7 +8,7 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
 ---
 
@@ -26,16 +26,16 @@ Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https
 
 ## Features
 
-- **Gapless playback** — tracks cross-fade seamlessly via the C++ engine
+- **Gapless playback** — tracks cross-fade seamlessly via the C++ audio engine
 - **Waveform scrubber** — real-time waveform display with turntable scratch mode
-- **BPM detection** — automatic BPM analysis cached per track (via SoundTouch Audio Processing Library)
-
-- **Dynamic theming** — accent colour extracted from album art
+- **BPM detection** — automatic BPM analysis cached per track (via QM DSP Library)
+- **Dynamic theming** — accent colour extracted from album art, or pick your own
 - **Spotlight search** — global search across artists, albums, and tracks
 - **Media key support** — play/pause/next/prev via keyboard media keys (Windows & Linux)
 - **Crossfade backgrounds** — blurred album art as the window background
-- **Now Playing queue** — drag-to-reorder, favourite toggling, column resize
+- **Now Playing queue** — drag-to-reorder, favourite toggling, context menus
 - **Reorganizable tabs** — reorder browser tabs to match your workflow
+- **Cast support** — stream to Chromecast and AirPlay devices
 
 ---
 
@@ -110,10 +110,6 @@ On first launch you will be prompted to enter your Navidrome server URL, usernam
 
 ---
 
-
-
----
-
 ## Building a Standalone Executable
 
 ```bash
@@ -151,4 +147,32 @@ Pull requests are welcome. Please open an issue first for anything larger than a
 
 ## License
 
-MIT
+Sonar is free software released under the **GNU General Public License v3.0**.  
+See [LICENSE](LICENSE) for the full license text.
+
+This means you are free to use, study, modify, and distribute Sonar, provided
+that any distributed version (modified or not) is also released under the GPL-3.0.
+
+---
+
+## Third-Party Acknowledgements
+
+Sonar is built on the shoulders of several excellent open-source libraries.  
+See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full list of
+dependencies and their respective copyright notices and licenses.
+
+Key dependencies include:
+
+| Library | License | Purpose |
+|---------|---------|---------|
+| [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | GPL-3.0 | UI framework |
+| [miniaudio](https://miniaud.io/) | MIT-0 / Public Domain | Audio playback engine |
+| [mutagen](https://mutagen.readthedocs.io/) | GPL-2.0+ | Audio tag reading |
+| [Pillow](https://python-pillow.org/) | HPND | Image processing |
+| [requests](https://requests.readthedocs.io/) | Apache-2.0 | HTTP / Navidrome API |
+| [qm-dsp](https://github.com/c4dm/qm-dsp) | GPL-2.0 | BPM detection |
+| [pychromecast](https://github.com/home-assistant-libs/pychromecast) | MIT | Chromecast support |
+| [pyatv](https://pyatv.dev/) | MIT | AirPlay support |
+| [keyring](https://github.com/jaraco/keyring) | MIT | Secure credential storage |
+| [psutil](https://github.com/giampaolo/psutil) | BSD-3-Clause | Memory monitoring |
+| [pynput](https://github.com/moses-palmer/pynput) | LGPL-3.0 | Media key support |
