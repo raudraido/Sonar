@@ -829,6 +829,8 @@ class SettingsWindow(QWidget):
             self.parent.refresh_ui_styles()
             if hasattr(self.parent, 'visualizer'):
                 self.parent.visualizer.bar_color = QColor(self.parent.master_color)
+            if hasattr(self.parent, '_queue_panel'):
+                self.parent._queue_panel.set_accent_color(self.parent.master_color)
             if hasattr(self.parent, 'seek_bar'):
                 self.parent.seek_bar._user_picked = True
                 self.parent.seek_bar.update()

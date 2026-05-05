@@ -269,6 +269,7 @@ class VisualsMixin:
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
         if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
+        if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
         self.now_playing_widget.art_label.set_accent_color(mc)
 
