@@ -1244,7 +1244,7 @@ class SonarPlayer(
         self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
         self._queue_panel.reordered.connect(self._queue_reordered)
         self._queue_panel.hide()
-        if self.settings.value('queue_panel_visible', 'false') == 'true':
+        if self.settings.value('queue_panel_visible', 'true') == 'true':
             QTimer.singleShot(0, lambda: (self._queue_panel.show(),
                                           self._reposition_queue_panel(),
                                           self._queue_panel.raise_()))
@@ -1375,8 +1375,8 @@ class SonarPlayer(
         if not hasattr(self, '_queue_panel') or not hasattr(self, 'footer_container'):
             return
         footer_h = self.footer_container.height()
-        panel_w  = int(self.settings.value('queue_panel_width', 420))
-        panel_h  = int(self.settings.value('queue_panel_height', 420))
+        panel_w  = int(self.settings.value('queue_panel_width', 445))
+        panel_h  = int(self.settings.value('queue_panel_height', 452))
         margin_l = 8   # align with left content margin
         margin_b = 8    # gap above footer
         margin_t = 8    # gap below top edge

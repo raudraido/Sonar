@@ -23,14 +23,15 @@ class WaveformScrubber(QWidget):
     position_updated = pyqtSignal(int)
     mode_toggled = pyqtSignal(int)
 
-    def __init__(self, master_color="#1db954", parent=None):
+    def __init__(self, master_color="#fafafada", parent=None):
         super().__init__(parent)
         self.setFixedHeight(60)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         self.master_color = QColor(master_color)
-        
+        self._user_picked = False
+
         self.base_pixels_per_sample = 1.5
         self.pixels_per_sample = self.base_pixels_per_sample
         
@@ -406,7 +407,7 @@ class WaveformScrubber(QWidget):
         painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
 
         max_bar_height = (height / 2.0) * 0.90 
-        base_hue = self.master_color.hue() if self.master_color.hue() >= 0 else 150 
+        base_hue = self.master_color.hue() if self.master_color.hue() >= 0 else (0 if self._user_picked else 150)
 
         # --- MODE 0: HEAVY DJ SCRATCH WAVEFORM ---
         if self.display_mode == 0:
@@ -449,7 +450,9 @@ class WaveformScrubber(QWidget):
 
                         hue_shift = int(20 * raw_val)
                         final_hue = (base_hue + hue_shift) % 360
-                        saturation = int(255 * max(0.3, 1.0 - (raw_val * 0.6)))
+                        sat_base = self.master_color.saturation() if self._user_picked else 255
+                        sat_min  = 0.0 if self._user_picked else 0.3
+                        saturation = int(sat_base * max(sat_min, 1.0 - (raw_val * 0.6)))
 
                         key = (final_hue, saturation, brightness, alpha)
                         rgba = self._color_cache.get(key)

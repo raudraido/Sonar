@@ -54,6 +54,7 @@ class VisualsMixin:
         
         if self.dynamic_color:
             self.master_color = dominant_color
+            if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
             if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.master_color)
             self.now_playing_widget.art_label.set_accent_color(self.master_color)
@@ -267,6 +268,7 @@ class VisualsMixin:
         self._last_theme_key = theme_key
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
+        if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
 
         self.now_playing_widget.art_label.set_accent_color(mc)
 
