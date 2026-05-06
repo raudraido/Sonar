@@ -60,7 +60,7 @@ from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
 from queue_panel import QueuePanel
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
-from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT, QSplitterHandle as _QSplitterHandle
+from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
 from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
 
@@ -133,7 +133,7 @@ class _DragGrip(QWidget):
 class _SectionWidget(QWidget):
     """Left-panel section — hide/unhide button fades in on hover, exact scrubber pattern."""
 
-    def __init__(self, content, key, main_window, parent=None):
+    def __init__(self, content, key, main_window, parent=None, show_controls=False):
         super().__init__(parent)
         self._content = content
         self._key = key
@@ -145,44 +145,48 @@ class _SectionWidget(QWidget):
         lo.setSpacing(0)
         lo.addWidget(content)
 
-        self._btn = QPushButton(self)
-        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._btn.setIconSize(QSize(16, 16))
-        self._btn.setFixedSize(28, 28)
-        self._btn.clicked.connect(self._toggle)
-        self._btn.installEventFilter(self)
-
-        # Build dim (#515151) and bright (#ffffff) variants for both icons
-        def _tint(path, color):
-            raw = QPixmap(resource_path(path))
-            if raw.isNull():
-                return QIcon()
-            out = QPixmap(raw.size())
-            out.fill(Qt.GlobalColor.transparent)
-            p = _QPainter(out)
-            p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-            p.drawPixmap(0, 0, raw)
-            p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(out.rect(), QColor(color))
-            p.end()
-            return QIcon(out)
-
-        self._hide_dim    = _tint("img/hide.png",   "#515151")
-        self._hide_bright = _tint("img/hide.png",   "#ffffff")
-        self._show_dim    = _tint("img/unhide.png", "#515151")
-        self._show_bright = _tint("img/unhide.png", "#ffffff")
-
-        self._btn.setIcon(self._hide_dim)
-        self._btn.setToolTip("Hide")
         self._toggle_opacity = None
         self._hover_anim = None
-        self._drag_grip = _DragGrip(self)
         self._drag_opacity = None
         self._drag_anim = None
-        self._init_opacity_effect()
-        self._btn.hide()
-        self._drag_grip.hide()
+
+        if show_controls:
+            self._btn = QPushButton(self)
+            self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self._btn.setIconSize(QSize(16, 16))
+            self._btn.setFixedSize(28, 28)
+            self._btn.clicked.connect(self._toggle)
+            self._btn.installEventFilter(self)
+
+            def _tint(path, color):
+                raw = QPixmap(resource_path(path))
+                if raw.isNull():
+                    return QIcon()
+                out = QPixmap(raw.size())
+                out.fill(Qt.GlobalColor.transparent)
+                p = _QPainter(out)
+                p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+                p.drawPixmap(0, 0, raw)
+                p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
+                p.fillRect(out.rect(), QColor(color))
+                p.end()
+                return QIcon(out)
+
+            self._hide_dim    = _tint("img/hide.png",   "#515151")
+            self._hide_bright = _tint("img/hide.png",   "#ffffff")
+            self._show_dim    = _tint("img/unhide.png", "#515151")
+            self._show_bright = _tint("img/unhide.png", "#ffffff")
+
+            self._btn.setIcon(self._hide_dim)
+            self._btn.setToolTip("Hide")
+            self._drag_grip = _DragGrip(self)
+            self._init_opacity_effect()
+            self._btn.hide()
+            self._drag_grip.hide()
+        else:
+            self._btn = None
+            self._drag_grip = None
 
     def _current_dim(self):
         return self._hide_dim if self._content.isVisible() else self._show_dim
@@ -191,6 +195,8 @@ class _SectionWidget(QWidget):
         return self._hide_bright if self._content.isVisible() else self._show_bright
 
     def set_master_color(self, mc):
+        if self._btn is None:
+            return
         r, g, b = QColor(mc).red(), QColor(mc).green(), QColor(mc).blue()
         dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
         self._btn.setStyleSheet(f"""
@@ -257,6 +263,9 @@ class _SectionWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def enterEvent(self, event):
+        if self._btn is None:
+            super().enterEvent(event)
+            return
         if self._toggle_opacity is None:
             self._init_opacity_effect()
         self._hover_anim.stop()
@@ -291,6 +300,8 @@ class _SectionWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._btn is None:
+            return
         self._btn.move(self.width() - self._btn.width() - 10, 5)
         if self._companion_btn is not None:
             self._companion_btn.move(self._btn.x() - self._companion_btn.width() - 8, 5)
@@ -314,84 +325,8 @@ class _SectionWidget(QWidget):
                     visualizer.update()
 
 
-class _InvisibleHandle(_QSplitterHandle):
-    def paintEvent(self, event):
-        pass
-        
-    def sizeHint(self):
-        # Force the splitter handle to truly take up 0 pixels
-        from PyQt6.QtCore import QSize
-        return QSize(0, 0)
-
-
-class _GripSplitter(QSplitter):
-    """QSplitter whose built-in handle is invisible and non-interactive.
-    Resizing is handled entirely by _SplitterEdge on the right panel."""
-    def createHandle(self):
-        h = _InvisibleHandle(self.orientation(), self)
-        h.setAttribute(_Qt2.WidgetAttribute.WA_TransparentForMouseEvents)
-        return h
-
-
-class _SplitterEdge(QWidget):
-    """8-px overlay at the left edge of the right panel. Drag to resize."""
-    _W = 6
-
-    def __init__(self, splitter, parent_panel):
-        super().__init__(parent_panel)
-        self._splitter = splitter
-        self._press_x = None
-        self.setFixedWidth(self._W)
-        self.setCursor(_Qt2.CursorShape.SizeHorCursor)
-        self.setMouseTracking(True)
-
-
-    def paintEvent(self, event):
-        pass
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_x = event.globalPosition().toPoint().x()
-
-    def mouseMoveEvent(self, event):
-        if self._press_x is not None:
-            gx = event.globalPosition().toPoint().x()
-            delta = gx - self._press_x
-            self._press_x = gx
-            sizes = self._splitter.sizes()
-            total = sizes[0] + sizes[1]
-            new_left = max(1, min(total - 200, sizes[0] + delta))
-            self._splitter.setSizes([new_left, total - new_left])
-
-    def mouseReleaseEvent(self, event):
-        self._press_x = None
-
-
 class _LeftPanelWidget(QWidget):
-    """Left panel — overrides minimumSizeHint so QSplitter lets it shrink to 8 px."""
-    def minimumSizeHint(self):
-        s = super().minimumSizeHint()
-        return QSize(256, s.height())
-
-
-class _RightPanelWidget(QWidget):
-    """Right panel with a left-edge resize handle overlay — right where the tabs start."""
-
-    def __init__(self, splitter):
-        super().__init__()
-        self._edge = _SplitterEdge(splitter, self)
-
-    def minimumSizeHint(self):
-        # This tells the QSplitter to ignore the massive minimum width of the tabs
-        # and allows you to crush the right panel all the way down to 8 pixels.
-        return QSize(8, 8)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._edge.setGeometry(0, 0, _SplitterEdge._W, self.height())
-        self._edge.raise_()
-        hw = self._edge._splitter.handleWidth()
-        #print(f"[RIGHT_PANEL] x={self.x()} width={self.width()} handle={hw} gap={self.x() - (self.parent().width() - self.width() - hw)}")
+    pass
 
 
 class _TooltipLabel(_QFrame):
@@ -773,18 +708,25 @@ class SonarPlayer(
         main_layout.setContentsMargins(0, 0, 0, 0) #TAB window top margin
         main_layout.setSpacing(0)
 
-        content = QHBoxLayout()
-        content.setContentsMargins(0, 8, 8, 8) #TAB window right, top and bottom margins
-        content.setSpacing(0)
+        body = QHBoxLayout()
+        body.setContentsMargins(8, 0, 8, 0)
+        body.setSpacing(8)
 
-        self._splitter = _GripSplitter(Qt.Orientation.Horizontal)
-        self._splitter.setHandleWidth(0)
-        self._splitter.setChildrenCollapsible(False)
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 8, 0, 8)
+        content.setSpacing(8)
+
+        self._splitter = None  # removed — layout is now fixed-width, not resizable
 
         # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
         self._left_widget = _LeftPanelWidget()
+        self._left_widget.setObjectName('LeftPanel')
+        self._left_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._left_widget.setStyleSheet(
+            '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 5px; }'
+        )
         self._left_panel = QVBoxLayout(self._left_widget)
-        self._left_panel.setContentsMargins(8, 0, 8, 0)
+        self._left_panel.setContentsMargins(8, 8, 8, 8)
         self._left_panel.setSpacing(0)
 
         # Section 1: Album art (50%)
@@ -815,69 +757,35 @@ class SonarPlayer(
         btn_vis.raise_()
         self._vis_section._companion_btn = btn_vis
 
-        # Section 3: Track info (25%)
-        text_info_container = QWidget()
-        text_info_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        text_info_container.setMaximumWidth(400)
-        text_info_layout = QVBoxLayout(text_info_container)
-        text_info_layout.setContentsMargins(0, 5, 0, 0) # Top margin 15, left margin 0
-        text_info_layout.setSpacing(6)
-
+        # track_title / track_artist / file_type_label / heart_btn exist as detached
+        # widgets so all mixin code that references them keeps working — they just
+        # don't appear in the left panel anymore.
         self.track_title = QLabel("")
-        self.track_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.track_title.setWordWrap(True)
-        self.track_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.track_title.setStyleSheet("font-size: 28px; font-weight: bold; color: white;")
-        text_info_layout.addWidget(self.track_title)
-
         self.track_artist = QLabel("")
-        self.track_artist.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.track_artist.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.track_artist.setStyleSheet("font-size: 18px; color: #888;")
-        text_info_layout.addWidget(self.track_artist)
-
         self.file_type_label = QLabel("")
-        self.file_type_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.file_type_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.file_type_label.setStyleSheet("font-size: 11px; color: #888; font-weight: 600;")
-        text_info_layout.addWidget(self.file_type_label)
-
-        # Heart button back to the left
         self.heart_btn = QPushButton()
-        self.heart_btn.setFixedSize(24, 24)
         self.heart_btn.setFlat(True)
         self.heart_btn.setIconSize(QSize(18, 18))
         self.heart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.heart_btn.setStyleSheet("background: transparent; border: none;")
         self.heart_btn.clicked.connect(self._toggle_now_playing_favorite)
-        text_info_layout.addWidget(self.heart_btn)
-        
-        text_info_layout.addStretch(1)
 
-        info_centering = QWidget()
-        info_centering_layout = QHBoxLayout(info_centering)
-        info_centering_layout.setContentsMargins(0, 0, 0, 0)
-        info_centering_layout.setSpacing(0)
-        info_centering_layout.addStretch(1)
-        info_centering_layout.addWidget(text_info_container, stretch=32)
-        info_centering_layout.addStretch(1)
+        self._info_section = None  # removed from left panel
 
-        self._info_section = _SectionWidget(info_centering, 'info', self)
-
-        # Wire drag-to-reorder
-        self._section_widgets = {'art': self._art_section, 'vis': self._vis_section, 'info': self._info_section}
-        _default_order = ['art', 'vis', 'info']
+        # Wire drag-to-reorder (art + vis only)
+        self._section_widgets = {'art': self._art_section, 'vis': self._vis_section}
+        _default_order = ['art', 'vis']
         _saved = self.settings.value('section_order', ','.join(_default_order))
-        self._section_order = _saved.split(',')
-        if set(self._section_order) != {'art', 'vis', 'info'}:
-            self._section_order = list(_default_order)
+        saved_list = [k for k in _saved.split(',') if k in self._section_widgets]
+        self._section_order = saved_list if len(saved_list) == 2 else list(_default_order)
         for key, sec in self._section_widgets.items():
-            sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
-            sec._drag_grip.drag_ended.connect(self._on_left_drag_end)
+            if sec._drag_grip:
+                sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
+                sec._drag_grip.drag_ended.connect(self._on_left_drag_end)
         self._rebuild_left_layout(self._section_order)
 
         # Restore section visibility (deferred so layout has computed heights first)
-        for sec, key in [(self._art_section, 'art'), (self._vis_section, 'vis'), (self._info_section, 'info')]:
+        for sec, key in [(self._art_section, 'art'), (self._vis_section, 'vis')]:
             if not int(self.settings.value(f'section_{key}_visible', 1)):
                 QTimer.singleShot(0, sec._toggle)
         
@@ -1054,21 +962,34 @@ class SonarPlayer(
         self.add_global_nav(self.tabs.indexOf(self.home_tab), 'home')
 
         # --- RIGHT PANEL (Tabs) ---
-        _right_widget = _RightPanelWidget(self._splitter)
-        _right_widget.setMinimumWidth(0)
+        _right_widget = QWidget()
         right_panel = QVBoxLayout(_right_widget)
         right_panel.setContentsMargins(0, 0, 0, 0)
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
 
-        self._splitter.addWidget(self._left_widget)
-        self._splitter.addWidget(_right_widget)
-        self._splitter.setStretchFactor(0, 35)
-        self._splitter.setStretchFactor(1, 65)
-        print(f"[INIT] splitter.handleWidth()={self._splitter.handleWidth()}")
+        self._left_widget.setFixedWidth(330)
+        content.addWidget(self._left_widget)
+        content.addWidget(_right_widget, 1)
+        body.addLayout(content, 1)
 
-        content.addWidget(self._splitter)
-        main_layout.addLayout(content, 1)
+        # ── Permanent queue sidebar ──────────────────────────────────────────
+        self._queue_container = QWidget()
+        self._queue_container.setFixedWidth(400)
+        _qc_layout = QVBoxLayout(self._queue_container)
+        _qc_layout.setContentsMargins(0, 8, 0, 8)
+        _qc_layout.setSpacing(0)
+        self._queue_panel = QueuePanel(self._queue_container, embedded=True)
+        self._queue_panel.play_index.connect(self._queue_play_at)
+        self._queue_panel.play_next_index.connect(self._queue_play_next_at)
+        self._queue_panel.remove_index.connect(self._queue_remove_at)
+        self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
+        self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
+        self._queue_panel.reordered.connect(self._queue_reordered)
+        _qc_layout.addWidget(self._queue_panel)
+        body.addWidget(self._queue_container)
+
+        main_layout.addLayout(body, 1)
         main_layout.addSpacing(0)
 
         # =========================================================
@@ -1204,7 +1125,7 @@ class SonarPlayer(
         self.now_playing_widget.album_clicked.connect(self.on_footer_album_click)
         self.now_playing_widget.title_clicked.connect(self.on_footer_title_click)
         self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
-        self.now_playing_widget.art_clicked.connect(self._toggle_queue_panel)
+        # art left-click intentionally unbound
         self.now_playing_widget.bpm_adjusted.connect(self._on_footer_bpm_adjusted)
         left_layout.addWidget(self.now_playing_widget)
         
@@ -1235,20 +1156,7 @@ class SonarPlayer(
 
         main_layout.addWidget(self.footer_container)
 
-        # --- FLOATING QUEUE PANEL (overlay, anchored above footer) ---
-        self._queue_panel = QueuePanel(self)
-        self._queue_panel.play_index.connect(self._queue_play_at)
-        self._queue_panel.play_next_index.connect(self._queue_play_next_at)
-        self._queue_panel.remove_index.connect(self._queue_remove_at)
-        self._queue_panel.close_requested.connect(self._toggle_queue_panel)
-        self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
-        self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
-        self._queue_panel.reordered.connect(self._queue_reordered)
-        self._queue_panel.hide()
-        if self.settings.value('queue_panel_visible', 'true') == 'true':
-            QTimer.singleShot(0, lambda: (self._queue_panel.show(),
-                                          self._reposition_queue_panel(),
-                                          self._queue_panel.raise_()))
+        # Queue panel is now a permanent sidebar (see body layout above)
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
@@ -1358,36 +1266,6 @@ class SonarPlayer(
         self._cast_manager.show_picker()
 
     # ── Queue panel helpers ───────────────────────────────────────────────────
-
-    def _toggle_queue_panel(self):
-        visible = not self._queue_panel.isVisible()
-        if visible:
-            self._queue_panel.show()
-            self._reposition_queue_panel()
-            self._queue_panel.raise_()
-            self._refresh_queue_panel()
-        else:
-            self.settings.setValue('queue_panel_height',
-                                   self._queue_panel.height())
-            self._queue_panel.hide()
-        self.settings.setValue('queue_panel_visible', 'true' if visible else 'false')
-
-    def _reposition_queue_panel(self):
-        if not hasattr(self, '_queue_panel') or not hasattr(self, 'footer_container'):
-            return
-        footer_h = self.footer_container.height()
-        panel_w  = int(self.settings.value('queue_panel_width', 445))
-        panel_h  = int(self.settings.value('queue_panel_height', 452))
-        margin_l = 8   # align with left content margin
-        margin_b = 8    # gap above footer
-        margin_t = 8    # gap below top edge
-        max_h = self.height() - footer_h - margin_b - margin_t
-        self._queue_panel._MAX_H = max_h
-        panel_h  = min(panel_h, max_h)
-        panel_h  = max(panel_h, 180)
-        x = margin_l
-        y = self.height() - footer_h - margin_b - panel_h + 1
-        self._queue_panel.setGeometry(x, y, panel_w, panel_h)
 
     def _refresh_queue_panel(self):
         if not hasattr(self, '_queue_panel'):

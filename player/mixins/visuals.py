@@ -57,7 +57,7 @@ class VisualsMixin:
             if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
             if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.master_color)
-            self.now_playing_widget.art_label.set_accent_color(self.master_color)
+            self.now_playing_widget.set_accent_color(self.master_color)
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 raw_artist = track.get('artist', 'Unknown')
@@ -271,9 +271,9 @@ class VisualsMixin:
         if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
-        self.now_playing_widget.art_label.set_accent_color(mc)
+        self.now_playing_widget.set_accent_color(mc)
 
-        for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None), getattr(self, '_info_section', None)]:
+        for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None)]:
             if _sec: _sec.set_master_color(mc)
 
         self.btn_shuffle.master_color = mc; self.btn_repeat.master_color = mc
@@ -401,8 +401,12 @@ class VisualsMixin:
                 f'#QueuePanel {{'
                 f'  background: rgba(14,14,14,{queue_alpha});'
                 f'  border: none;'
-                f'  border-radius: 10px;'
+                f'  border-radius: 5px;'
                 f'}}'
+            )
+        if hasattr(self, '_left_widget'):
+            self._left_widget.setStyleSheet(
+                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-radius: 5px; }}'
             )
 
               

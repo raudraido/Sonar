@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(ls *.dll)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('queue_panel.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

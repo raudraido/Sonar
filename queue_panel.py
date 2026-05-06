@@ -259,8 +259,9 @@ class QueuePanel(QWidget):
     _MIN_H = 180
     _MAX_H = 900
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, embedded=False):
         super().__init__(parent)
+        self._embedded       = embedded
         self._accent_color   = '#cccccc'
         self._settings       = QSettings()
         self._hover_artist   = None  # (row, part_text) currently hovered
@@ -273,7 +274,7 @@ class QueuePanel(QWidget):
             '#QueuePanel {'
             '  background: rgba(14,14,14,0.96);'
             '  border: none;'
-            '  border-radius: 10px;'
+            '  border-radius: 5px;'
             '  outline: none;'
             '}'
         )
@@ -291,10 +292,13 @@ class QueuePanel(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
 
-        # Top resize handle (height)
-        self._handle = _ResizeHandle(self)
-        self._handle.resize_delta.connect(self._on_resize_delta)
-        col.addWidget(self._handle)
+        # Top resize handle (height) — not used in embedded mode
+        if not embedded:
+            self._handle = _ResizeHandle(self)
+            self._handle.resize_delta.connect(self._on_resize_delta)
+            col.addWidget(self._handle)
+        else:
+            self._handle = None
 
         # Header bar
         header = QWidget()
@@ -311,26 +315,34 @@ class QueuePanel(QWidget):
             'color: #ddd; font-weight: bold; font-size: 13px; background: transparent; border: none;'
         )
         hbox.addWidget(lbl)
-        hbox.addStretch()
-
-        self._count_lbl = QLabel('0 tracks')
-        self._count_lbl.setStyleSheet(
-            'color: #555; font-size: 11px; background: transparent; border: none;'
-        )
-        hbox.addWidget(self._count_lbl)
         hbox.addSpacing(8)
 
-        close_btn = QPushButton('×')
-        close_btn.setFixedSize(22, 22)
-        close_btn.setFlat(True)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet(
-            'QPushButton { color: #555; font-size: 17px; line-height: 1;'
-            '              background: transparent; border: none; }'
-            'QPushButton:hover { color: #bbb; }'
+        self._position_lbl = QLabel('')
+        self._position_lbl.setStyleSheet(
+            'color: #555; font-size: 11px; background: transparent; border: none;'
         )
-        close_btn.clicked.connect(self.close_requested)
-        hbox.addWidget(close_btn)
+        hbox.addWidget(self._position_lbl)
+        hbox.addStretch()
+
+        self._duration_lbl = QLabel('')
+        self._duration_lbl.setStyleSheet(
+            'color: #555; font-size: 11px; background: transparent; border: none;'
+        )
+        hbox.addWidget(self._duration_lbl)
+        hbox.addSpacing(8)
+
+        if not embedded:
+            close_btn = QPushButton('×')
+            close_btn.setFixedSize(22, 22)
+            close_btn.setFlat(True)
+            close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            close_btn.setStyleSheet(
+                'QPushButton { color: #555; font-size: 17px; line-height: 1;'
+                '              background: transparent; border: none; }'
+                'QPushButton:hover { color: #bbb; }'
+            )
+            close_btn.clicked.connect(self.close_requested)
+            hbox.addWidget(close_btn)
 
         col.addWidget(header)
 
@@ -374,10 +386,13 @@ class QueuePanel(QWidget):
         col.addWidget(self._list)
         root.addWidget(content, 1)
 
-        # ── Right-edge resize handle (width) ──────────────────────────────────
-        self._right_handle = _ResizeHandleRight(self)
-        self._right_handle.resize_delta.connect(self._on_width_delta)
-        root.addWidget(self._right_handle)
+        # ── Right-edge resize handle (width) — not used in embedded mode ─────
+        if not embedded:
+            self._right_handle = _ResizeHandleRight(self)
+            self._right_handle.resize_delta.connect(self._on_width_delta)
+            root.addWidget(self._right_handle)
+        else:
+            self._right_handle = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -402,6 +417,9 @@ class QueuePanel(QWidget):
         self._accent_color = color
         self._update_list_style()
         self._list.viewport().update()
+        self._duration_lbl.setStyleSheet(
+            f'color: {color}; font-size: 11px; background: transparent; border: none;'
+        )
 
     def toggle_favorite_at(self, idx: int):
         item = self._list.item(idx)
@@ -468,7 +486,27 @@ class QueuePanel(QWidget):
             self._list.addItem(item)
 
         n = len(playlist_data)
-        self._count_lbl.setText(f'{n} track{"s" if n != 1 else ""}')
+        pos = (current_index + 1) if 0 <= current_index < n else 0
+        self._position_lbl.setText(f'{pos}/{n}' if n else '0/0')
+
+        total_sec = 0
+        for t in playlist_data:
+            dur = t.get('duration') or t.get('duration_ms')
+            try:
+                if isinstance(dur, (int, float)):
+                    total_sec += int(dur / 1000) if dur > 9999 else int(dur)
+                elif dur and ':' in str(dur):
+                    parts = str(dur).split(':')
+                    if len(parts) == 2:
+                        total_sec += int(parts[0]) * 60 + int(parts[1])
+                    elif len(parts) == 3:
+                        total_sec += int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            except (ValueError, TypeError):
+                pass
+        h, rem = divmod(total_sec, 3600)
+        m, s   = divmod(rem, 60)
+        self._duration_lbl.setText(f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}')
+
         self._list.blockSignals(False)
 
         if 0 <= current_index < self._list.count():
@@ -600,7 +638,7 @@ class QueuePanel(QWidget):
         menu.addSeparator()
 
         # Add to Playlist submenu
-        main = self.parent()
+        main = self.window()
         track_id = str(track.get('id', ''))
         if track_id and main:
             add_menu = QMenu("Add to Playlist", menu)

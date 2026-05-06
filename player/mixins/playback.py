@@ -107,8 +107,7 @@ class PlaybackMixin:
             self.playlist_cover_worker.queue_covers([cid])
         if hasattr(self, '_now_playing_panel'):
             self._now_playing_panel.update_status()
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
 
     def play_track_next(self, track_data):
         self._normalise_duration(track_data)
@@ -132,8 +131,7 @@ class PlaybackMixin:
             self.playlist_cover_worker.queue_covers([cid])
         if hasattr(self, '_now_playing_panel'):
             self._now_playing_panel.update_status()
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
 
     _BATCH_CHUNK = 100   # items inserted per frame
 
@@ -413,8 +411,7 @@ class PlaybackMixin:
         self.preload_next()
         self.refresh_ui_styles(scroll_to_current=False)
         self.update_window_title()
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
        
     def on_track_finished(self):
         # Safety 1: If a gapless transition just happened, ignore this "End" signal.
@@ -470,8 +467,7 @@ class PlaybackMixin:
             self.visual_update_timer.start(350)
             self.preload_next()
             self._cast_relay_track(track)
-            if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-                self._refresh_queue_panel()
+            self._refresh_queue_panel()
     
     def preload_next(self):
         """
@@ -786,8 +782,7 @@ class PlaybackMixin:
         self.update_indicator()
         if hasattr(self, '_now_playing_panel'):
             self._now_playing_panel.update_status()
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
 
     def sync_data_after_drag(self):
         playing_track = None
@@ -860,8 +855,7 @@ class PlaybackMixin:
         
         # 3. Redraw the living GIF at its perfect new location!
         self.update_indicator(scroll_to_current=False)
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
       
     def on_queue_item_clicked(self, item, column):
         if column == 7: 

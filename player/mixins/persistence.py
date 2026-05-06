@@ -30,8 +30,6 @@ class PersistenceMixin:
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
             
-            if hasattr(self, '_splitter'):
-                self.settings.setValue('splitter_state', self._splitter.saveState().toHex().data().decode())
             if getattr(self, 'static_bg_path', None):
                 self.settings.setValue('static_bg_path', self.static_bg_path)
             else:
@@ -64,17 +62,6 @@ class PersistenceMixin:
         except Exception as e:
             print(f"Window size restore error: {e}")
 
-        try:
-            splitter_hex = self.settings.value('splitter_state')
-            if splitter_hex and hasattr(self, '_splitter'):
-                from PyQt6.QtCore import QByteArray, QTimer
-                state = QByteArray.fromHex(splitter_hex.encode())
-                QTimer.singleShot(0, lambda: self._splitter.restoreState(state))
-            elif hasattr(self, '_splitter'):
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._splitter.setSizes([460, 1157]))
-        except Exception as e:
-            print(f"Splitter restore error: {e}")
 
         try:
             saved_json = self.settings.value('current_playlist')
@@ -189,8 +176,7 @@ class PersistenceMixin:
         except Exception as e:
             print(f"Error restoring previous track state: {e}")
 
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._refresh_queue_panel()
+        self._refresh_queue_panel()
 
     def test_navidrome_fetch(self):
         client = self.navidrome_client
@@ -437,10 +423,6 @@ class PersistenceMixin:
         # 4. Keep the sync overlay pinned to the bottom right corner
         if hasattr(self, 'sync_overlay') and self.sync_overlay.isVisible():
             self.sync_overlay.move(self.width() - self.sync_overlay.width() - 30, self.height() - self.sync_overlay.height() - 95)
-
-        # 5. Keep the floating queue panel anchored above footer
-        if hasattr(self, '_queue_panel') and self._queue_panel.isVisible():
-            self._reposition_queue_panel()
 
         super().resizeEvent(event)
 

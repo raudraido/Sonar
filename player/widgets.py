@@ -28,6 +28,7 @@ class ElidedLabel(QLabel):
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self._full_text = text
+        self._base_color = "white"
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setMouseTracking(True)
 
@@ -53,20 +54,20 @@ class ElidedLabel(QLabel):
     def enterEvent(self, event):
         from PyQt6.QtGui import QCursor
         if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
-            self.setStyleSheet("color: white; background: transparent; text-decoration: underline;")
+            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: underline;")
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.setStyleSheet("color: white; background: transparent; text-decoration: none;")
+        self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: none;")
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
     def mouseMoveEvent(self, event):
         if event.pos().x() <= self._text_w():
-            self.setStyleSheet("color: white; background: transparent; text-decoration: underline;")
+            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: underline;")
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setStyleSheet("color: white; background: transparent; text-decoration: none;")
+            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: none;")
             self.setCursor(Qt.CursorShape.ArrowCursor)
         super().mouseMoveEvent(event)
 
@@ -83,24 +84,10 @@ class _ArtLabel(QLabel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._hovered = False
         self._accent = QColor(255, 255, 255)
-        self.setMouseTracking(True)
 
     def set_accent_color(self, color_str):
         self._accent = QColor(color_str)
-        if self._hovered:
-            self.update()
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self.update()
-        super().leaveEvent(event)
 
     def paintEvent(self, _event):
         p = QPainter(self)
@@ -119,28 +106,10 @@ class _ArtLabel(QLabel):
         else:
             p.fillRect(self.rect(), QColor("#222"))
 
-        if self._hovered:
-            p.fillRect(self.rect(), QColor(0, 0, 0, 80))
-            cx = self.width() / 2
-            cy = self.height() / 2 - 4
-            aw, ah = 10, 7
-            arrow = QPainterPath()
-            arrow.moveTo(cx,       cy - ah)
-            arrow.lineTo(cx + aw,  cy + ah)
-            arrow.lineTo(cx - aw,  cy + ah)
-            arrow.closeSubpath()
-            accent = QColor(self._accent)
-            accent.setAlpha(220)
-            p.setBrush(accent)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawPath(arrow)
-
         p.end()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        elif event.button() == Qt.MouseButton.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             self.right_clicked.emit()
         super().mousePressEvent(event)
 
@@ -170,7 +139,7 @@ class NowPlayingFooterWidget(QWidget):
         self.art_label.setFixedSize(84, 84)
         self.art_label.setStyleSheet("background-color: #222; border-radius: 4px; border: 1px solid #333;")
         self.art_label.setScaledContents(True)
-        self.art_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.art_label.setCursor(Qt.CursorShape.ArrowCursor)
         self.art_label.hide()
         self.art_label.clicked.connect(self.art_clicked)
         self.art_label.right_clicked.connect(
@@ -257,6 +226,13 @@ class NowPlayingFooterWidget(QWidget):
         else:
             self.album_lbl.hide()
             
+    def set_accent_color(self, color: str):
+        self.art_label.set_accent_color(color)
+        self.title_lbl._base_color = color
+        self.title_lbl.setStyleSheet(
+            f"color: {color}; background: transparent;"
+        )
+
     def set_track(self, track):
         self._current_track = track
 
