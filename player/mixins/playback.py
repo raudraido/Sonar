@@ -377,6 +377,8 @@ class PlaybackMixin:
 
         self.refresh_ui_styles()
         self.update_window_title()
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.update_playing_state(self.audio_engine.is_playing)
 
     def play_global_album(self):
         if hasattr(self.global_album_view, 'current_album_id') and self.global_album_view.current_album_id: 
@@ -526,6 +528,8 @@ class PlaybackMixin:
 
         self.refresh_ui_styles(scroll_to_current=False)
         self.update_window_title()
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.update_playing_state(False)
 
     def get_next_index_calculated(self):
         visible_indices = self.get_visible_indices()

@@ -11,7 +11,7 @@ NowPlayingPanel – Wrapper that adds a header bar with:
 """
 
 import json
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 
 from PyQt6.QtWidgets import (
     QTreeWidget, QWidget, QVBoxLayout, QHBoxLayout,
@@ -447,6 +447,9 @@ class NowPlayingPanel(QWidget):
     def set_accent_color(self, color: str, alpha: float = 0.3):
         self._current_accent = color
         self._current_alpha  = alpha
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
+        self._scroll_reveal.color = color
 
         # Tree stylesheet (matches TracksBrowser style)
         self.tree.setStyleSheet(f"""

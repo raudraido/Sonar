@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QThread, QTimer,
                           QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl, QPoint)
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
@@ -478,6 +478,9 @@ class PlaylistDetailView(QWidget):
             {scrollbar_css(color, hide_horizontal=True)}
         """
         self.scroll_area.setStyleSheet(scrollbar_style)
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
+        self._scroll_reveal.color = color
         self.track_list.set_accent_color(color, alpha)
         
         import os

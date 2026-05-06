@@ -10,7 +10,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
 from PyQt6.QtWidgets import QStyledItemDelegate
 
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 from tracks_browser import MiddleClickScroller
 
 
@@ -1114,6 +1114,9 @@ class HomeView(QWidget):
 
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
+        self._scroll_reveal.color = color
 
         self.scroll.setStyleSheet(f"""
             QScrollArea#HomeScroll {{

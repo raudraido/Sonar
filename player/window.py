@@ -1267,7 +1267,8 @@ class SonarPlayer(
             return
         color = getattr(self, 'master_color', '#cccccc')
         self._queue_panel.set_accent_color(color)
-        self._queue_panel.refresh(self.playlist_data, self.current_index)
+        self._queue_panel.refresh(self.playlist_data, self.current_index,
+                                  is_playing=getattr(self.audio_engine, 'is_playing', False))
 
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):

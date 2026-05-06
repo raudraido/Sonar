@@ -1,6 +1,6 @@
 import re
 import os
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 import time
 import json
 import math
@@ -3774,7 +3774,10 @@ class TracksBrowser(QWidget):
             
         self.current_accent = color
         self.current_alpha = alpha
-        
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
+        self._scroll_reveal.color = color
+
         # 🟢 FREEZE THE UI: Prevents all layout jumping and stylesheet flickering!
         self.setUpdatesEnabled(False)
         try:

@@ -22,6 +22,9 @@ Rectangle {
     }
 
     property string accentColor: "#1db954"
+    property bool isScrollActive: false
+
+    Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
     Connections {
         target: artistBridge
@@ -129,7 +132,7 @@ Rectangle {
 
         Timer { interval: 200; running: true; repeat: false; onTriggered: grid.forceLayout() }
 
-        onContentYChanged: reportScroll()
+        onContentYChanged: { reportScroll(); root.isScrollActive = true; scrollHideTimer.restart() }
         onHeightChanged: reportScroll()
 
         function reportScroll() {
@@ -290,7 +293,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         active: true
-        width: 13
+        width: 10
 
         property real fixedLength: 50
         size: height > 0 ? (fixedLength / height) : 0
@@ -307,13 +310,13 @@ Rectangle {
         }
 
         contentItem: Rectangle {
-            radius: 5
-            color: vbar.pressed ? root.accentColor : (vbar.hovered ? root.accentColor : "#333333")
+            radius: 3
+            color: root.accentColor
+            opacity: (vbar.pressed || vbar.hovered || root.isScrollActive) ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 200 } }
         }
 
-        background: Rectangle {
-            color: Qt.rgba(0, 0, 0, 0.05)
-        }
+        background: Rectangle { color: "transparent" }
     } // <-- End of ScrollBar
 
     

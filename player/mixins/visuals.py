@@ -8,11 +8,45 @@ import time
 from version import __version__
 
 from PyQt6.QtWidgets import QApplication, QAbstractItemView, QLabel, QListWidget
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter
 
 from player import resource_path
 from player.workers import BlurWorker, BPMWorker, CoverLoaderWorker
+
+class _ScrollRevealFilter(QObject):
+    """Shows the scrollbar handle in master color while scrolling, hides it after idle."""
+
+    def __init__(self, scrollbar, parent=None):
+        super().__init__(parent)
+        self._sb = scrollbar
+        self.color = '#cccccc'
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(600)
+        self._timer.timeout.connect(self._hide)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            self._show()
+            self._timer.start()
+        return False
+
+    def _show(self):
+        self._sb.setStyleSheet(
+            f"QScrollBar::handle:vertical {{ background: {self.color}; border-radius: 3px; min-height: 30px; }}"
+        )
+
+    def _hide(self):
+        self._sb.setStyleSheet("")
+
+
+def install_scroll_reveal(viewport, scrollbar):
+    """Attach a _ScrollRevealFilter to a scrollable widget's viewport. Returns the filter."""
+    f = _ScrollRevealFilter(scrollbar, scrollbar)
+    viewport.installEventFilter(f)
+    return f
+
 
 def scrollbar_css(color: str, hide_horizontal: bool = False) -> str:
     v = (

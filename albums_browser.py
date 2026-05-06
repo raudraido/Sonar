@@ -1,6 +1,6 @@
 import time
 import os
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 import sys
 import random
 import re
@@ -1029,8 +1029,10 @@ class AlbumDetailView(QWidget):
             {scrollbar_css(color, hide_horizontal=True)}
         """
         self.scroll_area.setStyleSheet(scrollbar_style)
-        
-        
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
+        self._scroll_reveal.color = color
+
         icon_path = resource_path("img/shuffle.png")
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)

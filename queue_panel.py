@@ -8,9 +8,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QSettings, QEvent
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen
+from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie
 import re
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
@@ -151,23 +151,25 @@ class _QueueDelegate(QStyledItemDelegate):
         elif option.state & QStyle.StateFlag.State_MouseOver:
             painter.fillRect(r, QColor(255, 255, 255, 8))
 
-        # Accent left bar for current track
-        if is_current:
-            painter.fillRect(QRect(r.left(), r.top() + 6, 3, r.height() - 12),
-                             QColor(panel._accent_color))
-
-        # Track number
-        f_num = QFont()
-        f_num.setPixelSize(11)
-        f_num.setBold(is_current)
-        painter.setFont(f_num)
-        if is_current:
-            painter.setPen(QColor(panel._accent_color))
-        else:
-            painter.setPen(QColor(100, 100, 100, 90 if is_past else 170))
+        # Track number / playing GIF
         num_rect = QRect(r.left() + 6, r.top(), NUM_W, r.height())
-        painter.drawText(num_rect, Qt.AlignmentFlag.AlignCenter,
-                         str(data.get('_num', '')))
+        if is_current and panel._is_playing:
+            pix = panel._playing_movie.currentPixmap()
+            if not pix.isNull():
+                px = num_rect.left() + (num_rect.width() - pix.width()) // 2
+                py = num_rect.top() + (num_rect.height() - pix.height()) // 2
+                painter.drawPixmap(px, py, pix)
+        else:
+            f_num = QFont()
+            f_num.setPixelSize(11)
+            f_num.setBold(is_current)
+            painter.setFont(f_num)
+            if is_current:
+                painter.setPen(QColor(panel._accent_color))
+            else:
+                painter.setPen(QColor(100, 100, 100, 90 if is_past else 170))
+            painter.drawText(num_rect, Qt.AlignmentFlag.AlignCenter,
+                             str(data.get('_num', '')))
 
         # Duration — normalise seconds int to m:ss if needed
         raw_dur = data.get('duration', '')
@@ -368,6 +370,11 @@ class QueuePanel(QWidget):
             }
         ''')
 
+        self._is_playing = False
+        self._playing_movie = QMovie("img/playing.gif")
+        self._playing_movie.setScaledSize(QSize(30, 30))
+        self._playing_movie.frameChanged.connect(lambda: self._list.viewport().update())
+
         self._delegate = _QueueDelegate(self)
         self._list.setItemDelegate(self._delegate)
         self._list.itemDoubleClicked.connect(self._on_double_clicked)
@@ -417,6 +424,9 @@ class QueuePanel(QWidget):
     def set_accent_color(self, color: str):
         self._accent_color = color
         self._update_list_style()
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self._list.viewport(), self._list.verticalScrollBar())
+        self._scroll_reveal.color = color
         self._list.viewport().update()
         self._duration_lbl.setStyleSheet(
             f'color: {color}; font-size: 11px; background: transparent; border: none;'
@@ -451,7 +461,20 @@ class QueuePanel(QWidget):
             {scrollbar_css(c, hide_horizontal=True)}
         ''')
 
-    def refresh(self, playlist_data: list, current_index: int):
+    def update_playing_state(self, is_playing: bool):
+        self._is_playing = is_playing
+        if is_playing:
+            self._playing_movie.start()
+        else:
+            self._playing_movie.stop()
+        self._list.viewport().update()
+
+    def refresh(self, playlist_data: list, current_index: int, is_playing: bool = False):
+        self._is_playing = is_playing
+        if is_playing:
+            self._playing_movie.start()
+        else:
+            self._playing_movie.stop()
         vscroll    = self._list.verticalScrollBar()
         saved_pos  = vscroll.value()
 

@@ -6,9 +6,12 @@ Rectangle {
     color: "transparent"
     property real bgAlpha: 0.3
     property string accentColor: "#1db954"
+    property bool isScrollActive: false
     property int currentIndex: grid.currentIndex
     property int gridCount: grid.count
     property int gridItemsPerRow: grid.itemsPerRow
+
+    Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
     Connections {
         target: bridge
@@ -55,6 +58,7 @@ Rectangle {
         
         
         boundsBehavior: Flickable.StopAtBounds
+        onContentYChanged: { root.isScrollActive = true; scrollHideTimer.restart() }
 
         MouseArea {
             anchors.fill: parent
@@ -290,31 +294,30 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             active: true
-            width: 13
-            
-            property real fixedLength: 50 
+            width: 10
+
+            property real fixedLength: 50
             size: height > 0 ? (fixedLength / height) : 0
-            
             opacity: grid.contentHeight > grid.height ? 1.0 : 0.0
             Behavior on opacity { NumberAnimation { duration: 250 } }
 
             position: (grid.contentHeight > grid.height) ? (grid.contentY / (grid.contentHeight - grid.height)) * (1.0 - size) : 0
-            
+
             onPositionChanged: {
                 if (pressed) {
                     var scrollPercentage = position / (1.0 - size);
                     grid.contentY = scrollPercentage * (grid.contentHeight - grid.height);
                 }
             }
-            
+
             contentItem: Rectangle {
-                radius: 5
-                color: vbar.pressed ? root.accentColor : (vbar.hovered ? root.accentColor : "#333333")
+                radius: 3
+                color: root.accentColor
+                opacity: (vbar.pressed || vbar.hovered || root.isScrollActive) ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 200 } }
             }
-            
-            background: Rectangle {
-                color: Qt.rgba(0, 0, 0, 0.05)
-            }
+
+            background: Rectangle { color: "transparent" }
         }
     }
 }

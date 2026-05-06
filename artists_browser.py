@@ -1,7 +1,7 @@
 import os
 import json
 import random
-from player.mixins.visuals import scrollbar_css
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 import math
 import re
 from collections import OrderedDict
@@ -1762,7 +1762,10 @@ class ArtistRichDetailView(QWidget):
             QPushButton:hover {{ background-color: white; }}
         """
         self.btn_play.setStyleSheet(play_btn_style)
-        
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
+        self._scroll_reveal.color = color
+
         if hasattr(self, 'btn_shuffle'):
             import os
             from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
