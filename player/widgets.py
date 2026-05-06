@@ -966,30 +966,21 @@ class SquareArtContainer(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 🟢 THE FIX: Strictly lock the visualizer's width to match the square
-        if hasattr(self.main_window, 'visualizer'):
-            side = min(self.width(), self.height())
-            self.main_window.visualizer.setMaximumWidth(side)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         
-        # 1. Find the natural maximum square size
         side = min(self.width(), self.height())
-        
-        # 2. Center it. When the panel shrinks, 'x' gracefully drops to 0, 
-        # leaving you with exactly the 8px margin from your outer layout.
         x = (self.width() - side) // 2
-        y = (self.height() - side) // 2
+        y = 0  # top-aligned — no empty space above the art
         
         rect = QRect(x, y, side, side)
         
         painter.setBrush(QColor("#121212"))
-        # ... (keep all the original drawing logic below here)
         painter.setPen(QPen(QColor("#222222"), 1))
-        painter.drawRoundedRect(rect, 15, 15)
+        painter.drawRoundedRect(rect, 5, 5)
         
         progress = getattr(self.main_window, 'crossfade_progress', 1.0)
         if not hasattr(self, 'scaled_cache'): self.scaled_cache = {}
@@ -1010,7 +1001,7 @@ class SquareArtContainer(QWidget):
             painter.save()
             painter.setOpacity(alpha)
             path = QPainterPath()
-            path.addRoundedRect(QRectF(rect), 15, 15)
+            path.addRoundedRect(QRectF(rect), 5, 5)
             painter.setClipPath(path)
             px_x = x + (side - scaled_pix.width()) // 2
             px_y = y + (side - scaled_pix.height()) // 2

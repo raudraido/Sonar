@@ -736,9 +736,7 @@ class SonarPlayer(
         # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
         self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        
-        # Give it a minimum width so it physically cannot shrink to 0 pixels
-        self.visualizer.setMinimumWidth(150)
+        self.visualizer.setMaximumWidth(16777215)  # reset any previously saved constraint
 
         vis_container = QWidget()
         vis_layout = QHBoxLayout(vis_container)
@@ -774,10 +772,7 @@ class SonarPlayer(
 
         # Wire drag-to-reorder (art + vis only)
         self._section_widgets = {'art': self._art_section, 'vis': self._vis_section}
-        _default_order = ['art', 'vis']
-        _saved = self.settings.value('section_order', ','.join(_default_order))
-        saved_list = [k for k in _saved.split(',') if k in self._section_widgets]
-        self._section_order = saved_list if len(saved_list) == 2 else list(_default_order)
+        self._section_order = ['art', 'vis']
         for key, sec in self._section_widgets.items():
             if sec._drag_grip:
                 sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
