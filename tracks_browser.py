@@ -1,5 +1,6 @@
 import re
 import os
+from player.mixins.visuals import scrollbar_css
 import time
 import json
 import math
@@ -408,16 +409,7 @@ class ColumnFilterPopup(QFrame):
             QPushButton:hover {{ background: rgba(255,255,255,0.1); }}
             QFrame#sort_row {{ background: transparent; }}
             QFrame#sort_row:hover {{ background: rgba(255,255,255,0.07); border-radius: 3px; }}
-            QScrollBar:vertical {{ border: none; background: transparent; width: 10px; margin: 0; }}
-            QScrollBar::handle:vertical {{ background: #333; min-height: 30px; border-radius: 5px; }}
-            QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {accent_color}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-            QScrollBar:horizontal {{ border: none; background: transparent; height: 10px; margin: 0; }}
-            QScrollBar::handle:horizontal {{ background: #333; min-width: 30px; border-radius: 5px; }}
-            QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{ background: {accent_color}; }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+            {scrollbar_css(accent_color)}
         """)
         self.setFixedWidth(240)
 
@@ -3874,17 +3866,7 @@ class TracksBrowser(QWidget):
         row_height = "50px" if getattr(self, 'is_album_mode', False) else "75px"
         
         css = f"""
-        QScrollBar:vertical {{ border: none; background: rgba(0, 0, 0, 0.05); width: 10px; margin: 0; }}
-        QScrollBar::handle:vertical {{ background: #333; min-height: 30px; border-radius: 5px; }}
-        QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {color_hex}; }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-        
-        QScrollBar:horizontal {{ border: none; background: rgba(0, 0, 0, 0.05); height: 10px; margin: 0; }}
-        QScrollBar::handle:horizontal {{ background: #333; min-width: 30px; border-radius: 5px; }}
-        QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{ background: {color_hex}; }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+        {scrollbar_css(color_hex)}
         
         /* 🟢 THE FIX: Alpha injected into QTreeWidget background! */
         QTreeWidget {{ background: rgba(12, 12, 12, {alpha}); border: none; font-size: 10pt; outline: none; }} 

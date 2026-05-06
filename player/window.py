@@ -709,24 +709,24 @@ class SonarPlayer(
         main_layout.setSpacing(0)
 
         body = QHBoxLayout()
-        body.setContentsMargins(8, 0, 8, 0)
-        body.setSpacing(8)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(3) # Space between left and right panels
 
         content = QHBoxLayout()
-        content.setContentsMargins(0, 8, 0, 8)
-        content.setSpacing(8)
+        content.setContentsMargins(0, 0, 0, 2)
+        content.setSpacing(3) # Space between left and right panels
 
-        self._splitter = None  # removed — layout is now fixed-width, not resizable
+        self._splitter = None
 
-        # --- LEFT PANEL (Art / Visualizer / Track Info — three equal sections) ---
+        # --- LEFT PANEL ---
         self._left_widget = _LeftPanelWidget()
         self._left_widget.setObjectName('LeftPanel')
         self._left_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._left_widget.setStyleSheet(
-            '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 5px; }'
+            '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 0px; }'
         )
         self._left_panel = QVBoxLayout(self._left_widget)
-        self._left_panel.setContentsMargins(8, 8, 8, 8)
+        self._left_panel.setContentsMargins(8, 8, 8, 8) #ALBUM ART margins (all sides)
         self._left_panel.setSpacing(0)
 
         # Section 1: Album art (50%)
@@ -959,7 +959,7 @@ class SonarPlayer(
         # --- RIGHT PANEL (Tabs) ---
         _right_widget = QWidget()
         right_panel = QVBoxLayout(_right_widget)
-        right_panel.setContentsMargins(0, 0, 0, 0)
+        right_panel.setContentsMargins(0, 8, 0, 0) # Top margin for the tabs
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
 
@@ -972,7 +972,7 @@ class SonarPlayer(
         self._queue_container = QWidget()
         self._queue_container.setFixedWidth(400)
         _qc_layout = QVBoxLayout(self._queue_container)
-        _qc_layout.setContentsMargins(0, 8, 0, 8)
+        _qc_layout.setContentsMargins(0, 0, 0, 2)
         _qc_layout.setSpacing(0)
         self._queue_panel = QueuePanel(self._queue_container, embedded=True)
         self._queue_panel.play_index.connect(self._queue_play_at)

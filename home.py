@@ -10,6 +10,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
 from PyQt6.QtWidgets import QStyledItemDelegate
 
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
+from player.mixins.visuals import scrollbar_css
 from tracks_browser import MiddleClickScroller
 
 
@@ -1123,16 +1124,7 @@ class HomeView(QWidget):
             }}
             QScrollArea#HomeScroll > QWidget {{ background-color: transparent; }}
             QScrollArea#HomeScroll QWidget  {{ background-color: transparent; }}
-            QScrollBar:vertical {{
-                border: none; background: rgba(0,0,0,0.05); width: 10px; margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: #333; min-height: 30px; border-radius: 5px;
-            }}
-            QScrollBar::handle:vertical:hover,
-            QScrollBar::handle:vertical:pressed {{ background: {color}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-            QScrollBar::add-page:vertical,  QScrollBar::sub-page:vertical {{ background: none; }}
+            {scrollbar_css(color, hide_horizontal=True)}
         """)
 
         if hasattr(self, 'recent_row'):

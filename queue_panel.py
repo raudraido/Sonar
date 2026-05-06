@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QSettings, QEvent
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen
 import re
+from player.mixins.visuals import scrollbar_css
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
@@ -274,7 +275,7 @@ class QueuePanel(QWidget):
             '#QueuePanel {'
             '  background: rgba(14,14,14,0.96);'
             '  border: none;'
-            '  border-radius: 5px;'
+            '  border-radius: 0px;'
             '  outline: none;'
             '}'
         )
@@ -447,25 +448,7 @@ class QueuePanel(QWidget):
             QListWidget::item:selected {{
                 background: rgba(255,255,255,0.06);
             }}
-            QScrollBar:vertical {{
-                border: none;
-                background: rgba(0,0,0,0.05);
-                width: 10px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: #333;
-                min-height: 30px;
-                border-radius: 5px;
-            }}
-            QScrollBar::handle:vertical:hover,
-            QScrollBar::handle:vertical:pressed {{
-                background: {c};
-            }}
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {{ height: 0px; }}
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {{ background: none; }}
+            {scrollbar_css(c, hide_horizontal=True)}
         ''')
 
     def refresh(self, playlist_data: list, current_index: int):

@@ -14,6 +14,27 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter
 from player import resource_path
 from player.workers import BlurWorker, BPMWorker, CoverLoaderWorker
 
+def scrollbar_css(color: str, hide_horizontal: bool = False) -> str:
+    v = (
+        f"QScrollBar:vertical {{ border: none; background: transparent; width: 6px; margin: 0; }}"
+        f"QScrollBar::handle:vertical {{ background: transparent; min-height: 30px; border-radius: 3px; }}"
+        f"QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {color}; }}"
+        f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}"
+        f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}"
+    )
+    if hide_horizontal:
+        h = "QScrollBar:horizontal { height: 0px; }"
+    else:
+        h = (
+            f"QScrollBar:horizontal {{ border: none; background: transparent; height: 6px; margin: 0; }}"
+            f"QScrollBar::handle:horizontal {{ background: transparent; min-width: 30px; border-radius: 3px; }}"
+            f"QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{ background: {color}; }}"
+            f"QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}"
+            f"QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}"
+        )
+    return v + h
+
+
 class VisualsMixin:
     def update_background_threaded(self, path, calc_color=True, raw_data_override=None):
         if self.blur_thread and self.blur_thread.isRunning():
@@ -297,18 +318,18 @@ class VisualsMixin:
 
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
         tabs_css = f"""
-            QTabWidget::pane {{ border: 0; }} 
+            QTabWidget::pane {{ border: 0; }}
             QTabWidget::tab-bar {{ alignment: left; }} /* Removed 'left: 15px' */
-            QTabBar::tab {{ 
-                background: #111; 
-                color: #555; 
+            QTabBar::tab {{
+                background: #111;
+                color: #555;
                 padding: 10px 20px; /* Restored to your original preference */
-                border: none; 
-                font-family: 'sans-serif', sans-serif; 
-                font-weight: bold; 
-                font-size: 13px; 
-                border-top-left-radius: 5px; 
-                border-top-right-radius: 5px; 
+                border: none;
+                font-family: 'sans-serif', sans-serif;
+                font-weight: bold;
+                font-size: 13px;
+                border-top-left-radius: 5px;
+                border-top-right-radius: 5px;
                 margin-right: 4px;
             }}
             QTabBar::tab:selected {{ color: {mc}; background: #181818; border-bottom: 2px solid {mc}; }}
@@ -401,12 +422,12 @@ class VisualsMixin:
                 f'#QueuePanel {{'
                 f'  background: rgba(14,14,14,{queue_alpha});'
                 f'  border: none;'
-                f'  border-radius: 5px;'
+                f'  border-radius: 0px;'
                 f'}}'
             )
         if hasattr(self, '_left_widget'):
             self._left_widget.setStyleSheet(
-                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-radius: 5px; }}'
+                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-radius: 0px; }}'
             )
 
               

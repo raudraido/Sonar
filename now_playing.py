@@ -11,6 +11,7 @@ NowPlayingPanel – Wrapper that adds a header bar with:
 """
 
 import json
+from player.mixins.visuals import scrollbar_css
 
 from PyQt6.QtWidgets import (
     QTreeWidget, QWidget, QVBoxLayout, QHBoxLayout,
@@ -465,16 +466,7 @@ class NowPlayingPanel(QWidget):
                 border-bottom: 1px solid rgba(255,255,255,0.1);
                 padding: 5px; font-weight: bold; text-transform: uppercase; font-size: 11px;
             }}
-            QScrollBar:vertical {{
-                border: none; background: rgba(0,0,0,0.05); width: 10px; margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: #333; min-height: 30px; border-radius: 5px;
-            }}
-            QScrollBar::handle:vertical:hover,
-            QScrollBar::handle:vertical:pressed {{ background: {color}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-            QScrollBar::add-page:vertical,  QScrollBar::sub-page:vertical {{ background: none; }}
+            {scrollbar_css(color, hide_horizontal=True)}
         """)
 
         # Tint burger icon

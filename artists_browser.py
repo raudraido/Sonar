@@ -1,6 +1,7 @@
 import os
 import json
 import random
+from player.mixins.visuals import scrollbar_css
 import math
 import re
 from collections import OrderedDict
@@ -1752,17 +1753,7 @@ class ArtistRichDetailView(QWidget):
         scrollbar_style = f"""
             QScrollArea {{ border: none; background: transparent; }} 
             QWidget {{ background: transparent; }}
-            QScrollBar:vertical {{ border: none; background: rgba(0, 0, 0, 0.05); width: 10px; margin: 0; }} 
-            QScrollBar::handle:vertical {{ background: #333; min-height: 30px; border-radius: 5px; }} 
-            QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {color}; }} 
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }} 
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }} 
-            
-            QScrollBar:horizontal {{ border: none; background: rgba(0, 0, 0, 0.05); height: 10px; margin: 0; }} 
-            QScrollBar::handle:horizontal {{ background: #333; min-width: 30px; border-radius: 5px; }} 
-            QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{ background: {color}; }} 
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }} 
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+            {scrollbar_css(color)}
         """
         self.scroll.setStyleSheet(scrollbar_style)
         
