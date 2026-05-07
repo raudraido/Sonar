@@ -244,7 +244,7 @@ class ArtistInfoPanel(QScrollArea):
             self._apply_image()
 
     def _apply_image(self):
-        if not hasattr(self, "_img_lbl") or not self._raw_pix:
+        if not self._raw_pix or not self._img_lbl:
             return
         w = self.viewport().width() - 16
         if w <= 0:
@@ -270,6 +270,13 @@ class ArtistInfoPanel(QScrollArea):
     # ── builders ──────────────────────────────────────────────────────────────
 
     def _clear(self):
+        # Invalidate image label before deleting widgets so in-flight workers don't crash
+        self._img_lbl = None
+        self._raw_pix = None
+        self._tour_widget = None
+        if self._img_worker and self._img_worker.isRunning():
+            try: self._img_worker.done.disconnect()
+            except: pass
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():

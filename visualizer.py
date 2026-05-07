@@ -306,8 +306,15 @@ class AudioVisualizer(QWidget):
         # Only position toggle button when it hasn't been re-parented to _SectionWidget
         if self.btn_toggle_vis.parent() is self:
             self.btn_toggle_vis.move(W - self.btn_toggle_vis.width() - 8, 8)
+        if not self._vu_bg.isNull():
+            iw, ih = self._vu_bg.width(), self._vu_bg.height()
+            scale = min(W / iw, H / ih)
+            dh = int(ih * scale)
+        else:
+            dh = H
+        btn_bottom = dh - 4
         self.btn_ref_level.move((W - self.btn_ref_level.width()) // 2,
-                                H - self.btn_ref_level.height() - 8)
+                                btn_bottom - self.btn_ref_level.height())
 
     def enterEvent(self, event):
         # Toggle button — only when it hasn't been re-parented to _SectionWidget
@@ -485,7 +492,7 @@ class AudioVisualizer(QWidget):
             iw, ih = self._vu_bg.width(), self._vu_bg.height()
             scale  = min(W / iw, H / ih)
             dw, dh = int(iw * scale), int(ih * scale)
-            dx, dy = (W - dw) // 2, (H - dh) // 2
+            dx, dy = (W - dw) // 2, 0
             radius = 8.0
             path = QPainterPath()
             path.addRoundedRect(QRectF(dx, dy, dw, dh), radius, radius)

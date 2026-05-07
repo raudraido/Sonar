@@ -16,11 +16,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QThread, pyqtSignal, QPropertyAnimation,
     QUrl, QPoint, QPointF, QItemSelectionModel, QRect, QEvent,
-    QRectF, QSettings
+    QRectF, QSettings, QEasingCurve
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QColor, QMouseEvent, QAction, QIcon,
-    QFontMetrics, QCursor,
+    QFontMetrics, QCursor, QPainter,
     QPolygon, QFont, QPen, QBrush, QPainterPath, QPixmapCache,
     QMovie
 )
@@ -144,7 +144,7 @@ class _SectionWidget(QWidget):
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
-        lo.addWidget(content)
+        lo.addWidget(content, 1)
 
         self._toggle_opacity = None
         self._hover_anim = None
@@ -722,17 +722,30 @@ class SonarPlayer(
         self._left_layout.setContentsMargins(8, 8, 8, 8) #ALBUM ART margins (all sides)
         self._left_layout.setSpacing(0)
 
-        # Section 1: Album art (50%)
+        # Album art panel — collapsed by default, animated open by footer expand button
         self.art_container = SquareArtContainer(self)
         self._art_section = _SectionWidget(self.art_container, 'art', self)
+        self._art_section.setMaximumHeight(0)
+        self._art_section.setMinimumHeight(0)
+        self._sidebar_art_visible = False
 
-        # Section 2: Visualizer (25%)
+        # Left-panel art slide animation (height)
+        self._sidebar_art_anim = QPropertyAnimation(self._art_section, b"maximumHeight")
+        self._sidebar_art_anim.setDuration(250)
+        self._sidebar_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._sidebar_art_anim.valueChanged.connect(
+            lambda v: self._art_section.setMinimumHeight(int(v))
+        )
+
+        # (footer art anim and close button set up after now_playing_widget is created below)
+
+        # Visualizer — fills the entire left panel
         self.visualizer = AudioVisualizer(self.audio_engine)
-        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.visualizer.setFixedHeight(170)
+        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.visualizer.setMaximumWidth(16777215)  # reset any previously saved constraint
 
         vis_container = QWidget()
+        vis_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         vis_layout = QHBoxLayout(vis_container)
         vis_layout.setContentsMargins(0, 0, 0, 0)
         vis_layout.setSpacing(0)
@@ -764,19 +777,18 @@ class SonarPlayer(
 
         self._info_section = None  # removed from left panel
 
-        # Wire drag-to-reorder (art + vis only)
+        # Vis fills the panel, art slides in at the bottom
         self._section_widgets = {'art': self._art_section, 'vis': self._vis_section}
-        self._section_order = ['art', 'vis']
+        self._section_order = ['vis', 'art']
         for key, sec in self._section_widgets.items():
             if sec._drag_grip:
                 sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
                 sec._drag_grip.drag_ended.connect(self._on_left_drag_end)
         self._rebuild_left_layout(self._section_order)
 
-        # Restore section visibility (deferred so layout has computed heights first)
-        for sec, key in [(self._art_section, 'art'), (self._vis_section, 'vis')]:
-            if not int(self.settings.value(f'section_{key}_visible', 1)):
-                QTimer.singleShot(0, sec._toggle)
+        # Restore section visibility
+        if not int(self.settings.value('section_vis_visible', 1)):
+            QTimer.singleShot(0, self._vis_section._toggle)
         
         # --- RIGHT PANEL (Tabs & Search) ---
 
@@ -1120,6 +1132,69 @@ class SonarPlayer(
         self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
         # art left-click intentionally unbound
         self.now_playing_widget.bpm_adjusted.connect(self._on_footer_bpm_adjusted)
+        self.now_playing_widget.expand_art_clicked.connect(self._toggle_sidebar_art)
+
+        # Footer art slide animation (width) — needs now_playing_widget to exist
+        self._footer_art_anim = QPropertyAnimation(
+            self.now_playing_widget.art_label, b"maximumWidth"
+        )
+        self._footer_art_anim.setDuration(250)
+        self._footer_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._footer_art_anim.valueChanged.connect(
+            lambda v: self.now_playing_widget.art_label.setMinimumWidth(int(v))
+        )
+
+        # Close button overlaid on the left-panel art (top-right corner, hover-only)
+        self._art_close_btn = QPushButton(self._art_section)
+        self._art_close_btn.setFixedSize(24, 24)
+        self._art_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._art_close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._art_close_btn.setStyleSheet("QPushButton { background: transparent; border: none; }")
+        self._art_close_btn.setIconSize(QSize(16, 16))
+        self._art_close_btn.hide()
+        self._art_close_btn.clicked.connect(self._toggle_sidebar_art)
+        self._art_close_btn.raise_()
+
+        _raw_exp = QPixmap(resource_path("img/expand.png"))
+        if not _raw_exp.isNull():
+            def _mk_icon(pix, color):
+                out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
+                p = QPainter(out); p.drawPixmap(0, 0, pix)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                p.fillRect(out.rect(), QColor(color)); p.end()
+                return QIcon(out)
+            self._close_icon_dim    = _mk_icon(_raw_exp, "#515151")
+            self._close_icon_bright = _mk_icon(_raw_exp, "#ffffff")
+            self._art_close_btn.setIcon(self._close_icon_dim)
+
+        self._art_close_opacity = QGraphicsOpacityEffect(self._art_close_btn)
+        self._art_close_opacity.setOpacity(0.0)
+        self._art_close_btn.setGraphicsEffect(self._art_close_opacity)
+        self._art_close_hover_anim = QPropertyAnimation(self._art_close_opacity, b"opacity")
+        self._art_close_hover_anim.setDuration(180)
+
+        # Dedicated hover filter — not blocked by the keyboard mixin's eventFilter
+        class _ArtHoverFilter(_QObject):
+            def __init__(self_, btn, opacity, anim):
+                super().__init__()
+                self_._btn = btn
+                self_._opacity = opacity
+                self_._anim = anim
+            def eventFilter(self_, _obj, event):
+                if event.type() == _QEvent2.Type.Enter:
+                    self_._anim.stop(); self_._anim.setEndValue(1.0); self_._anim.start()
+                    if hasattr(self, '_close_icon_bright'):
+                        self._art_close_btn.setIcon(self._close_icon_bright)
+                elif event.type() == _QEvent2.Type.Leave:
+                    self_._anim.stop(); self_._anim.setEndValue(0.0); self_._anim.start()
+                    if hasattr(self, '_close_icon_dim'):
+                        self._art_close_btn.setIcon(self._close_icon_dim)
+                return False
+        self._art_hover_filter = _ArtHoverFilter(
+            self._art_close_btn, self._art_close_opacity, self._art_close_hover_anim
+        )
+        self._art_section.installEventFilter(self._art_hover_filter)
+
         left_layout.addWidget(self.now_playing_widget)
         
         footer_center = QWidget()
@@ -1217,7 +1292,7 @@ class SonarPlayer(
     def _rebuild_left_layout(self, order):
         while self._left_layout.count():
             self._left_layout.takeAt(0)
-        _stretch = {'art': 1, 'vis': 0, 'info': 0}
+        _stretch = {'art': 0, 'vis': 1, 'info': 0}
         for i, key in enumerate(order):
             self._left_layout.addWidget(self._section_widgets[key], _stretch[key])
             if i < len(order) - 1:
@@ -1274,6 +1349,66 @@ class SonarPlayer(
                 track.get('artistId') or track.get('artist_id') or '',
                 track.get('artist') or '',
             )
+
+    def _toggle_sidebar_art(self):
+        self._sidebar_art_visible = not self._sidebar_art_visible
+        target = self._left_panel.width() - 16
+        art_lbl = self.now_playing_widget.art_label
+
+        self._sidebar_art_anim.stop()
+        self._footer_art_anim.stop()
+
+        if self._sidebar_art_visible:
+            # Left panel: slide open
+            self._sidebar_art_anim.setStartValue(0)
+            self._sidebar_art_anim.setEndValue(target)
+            # Footer art: slide out to the left
+            self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
+            self._footer_art_anim.setEndValue(0)
+            self.now_playing_widget.set_expand_btn_direction(False)
+            # Show close button once animation finishes
+            self._sidebar_art_anim.finished.connect(self._on_sidebar_art_opened)
+        else:
+            # Hide close button immediately
+            self._art_close_btn.hide()
+            try: self._sidebar_art_anim.finished.disconnect(self._on_sidebar_art_opened)
+            except: pass
+            # Left panel: slide closed
+            self._sidebar_art_anim.setStartValue(self._art_section.maximumHeight())
+            self._sidebar_art_anim.setEndValue(0)
+            # Footer art: slide back in from the left
+            self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
+            self._footer_art_anim.setEndValue(84)
+            self.now_playing_widget.set_expand_btn_direction(True)
+
+        self._sidebar_art_anim.start()
+        self._footer_art_anim.start()
+
+    def _on_sidebar_art_opened(self):
+        try: self._sidebar_art_anim.finished.disconnect(self._on_sidebar_art_opened)
+        except: pass
+        self._update_art_close_btn_style()
+        self._art_close_btn.move(self._art_section.width() - 28, 4)
+        self._art_close_btn.show()
+        self._art_close_btn.raise_()
+
+    def _update_art_close_btn_style(self):
+        c = QColor(self.theme.accent)
+        r, g, b = c.red(), c.green(), c.blue()
+        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
+        self._art_close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba({r},{g},{b},0.1);
+                border: 2px solid rgb({dr},{dg},{db});
+                border-radius: 12px; outline: none;
+            }}
+            QPushButton:hover {{
+                background-color: rgba({r},{g},{b},0.4);
+                border: 2px solid rgb({r},{g},{b});
+            }}
+            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
+            QPushButton::menu-indicator {{ width: 0; image: none; }}
+        """)
 
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):

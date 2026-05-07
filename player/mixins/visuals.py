@@ -86,7 +86,10 @@ class VisualsMixin:
             self.blur_thread.quit()
 
         
-        art_size = min(self.art_container.width(), self.art_container.height()) if hasattr(self, 'art_container') else 500
+        # Use the left panel width as the target art size; fall back to 500 if not available.
+        # Don't use art_container dimensions — it may be collapsed (maxHeight=0).
+        _panel_w = getattr(self, '_left_panel', None)
+        art_size = (_panel_w.width() - 16) if _panel_w and _panel_w.width() > 16 else 500
 
         self.blur_thread = BlurWorker(
             path, 
@@ -336,6 +339,9 @@ class VisualsMixin:
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
         self.now_playing_widget.set_accent_color(mc)
+        self.now_playing_widget.set_expand_btn_style(mc)
+        if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
+            self._update_art_close_btn_style()
 
         for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None)]:
             if _sec: _sec.set_master_color(mc)

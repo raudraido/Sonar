@@ -14,10 +14,11 @@ from PyQt6.QtWidgets import (
     QSlider, QPushButton, QColorDialog, QCheckBox, QApplication,
     QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox
 )
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, pyqtSignal, QSettings, QProcess
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation
+from PyQt6.QtWidgets import QGraphicsOpacityEffect
 from PyQt6.QtGui import (
     QFont, QFontMetrics, QColor, QMouseEvent, QPainter, QPen,
-    QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence
+    QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence, QIcon
 )
 
 from audio_engine import AudioEngine
@@ -120,6 +121,7 @@ class NowPlayingFooterWidget(QWidget):
     title_clicked = pyqtSignal()
     art_clicked = pyqtSignal()
     track_right_clicked = pyqtSignal(object)  # emits the current track dict
+    expand_art_clicked = pyqtSignal()         # upward arrow on footer art clicked
     bpm_adjusted = pyqtSignal(float)           # emits the new BPM value
 
     def __init__(self, parent=None):
@@ -136,7 +138,9 @@ class NowPlayingFooterWidget(QWidget):
 
         # 1. Tiny Cover Art
         self.art_label = _ArtLabel()
-        self.art_label.setFixedSize(84, 84)
+        self.art_label.setFixedHeight(84)
+        self.art_label.setMinimumWidth(84)
+        self.art_label.setMaximumWidth(84)
         self.art_label.setStyleSheet("background-color: #222; border-radius: 4px; border: 1px solid #333;")
         self.art_label.setScaledContents(True)
         self.art_label.setCursor(Qt.CursorShape.ArrowCursor)
@@ -145,6 +149,39 @@ class NowPlayingFooterWidget(QWidget):
         self.art_label.right_clicked.connect(
             lambda: self.track_right_clicked.emit(self._current_track) if self._current_track else None
         )
+
+        # Expand-to-sidebar button — floats over the art, fades in on hover
+        self._expand_btn = QPushButton(self.art_label)
+        self._expand_btn.setFixedSize(24, 24)
+        self._expand_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._expand_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._expand_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+        )
+        self._expand_btn.setIconSize(QSize(16, 16))
+        self._expand_btn.move(84 - 24 - 2, 2)
+        self._expand_btn.clicked.connect(self.expand_art_clicked)
+
+        from player import resource_path as _rp
+        _raw = QPixmap(_rp("img/expand.png"))
+        if not _raw.isNull():
+            def _tint_pix(pix, color):
+                out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
+                p = QPainter(out); p.drawPixmap(0, 0, pix)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                p.fillRect(out.rect(), QColor(color)); p.end()
+                return QIcon(out)
+            self._expand_icon_dim    = _tint_pix(_raw, "#515151")
+            self._expand_icon_bright = _tint_pix(_raw, "#ffffff")
+            self._expand_btn.setIcon(self._expand_icon_dim)
+        self._expand_btn.installEventFilter(self)
+
+        self._expand_btn_opacity = QGraphicsOpacityEffect(self._expand_btn)
+        self._expand_btn_opacity.setOpacity(0.0)
+        self._expand_btn.setGraphicsEffect(self._expand_btn_opacity)
+        self._expand_btn_anim = QPropertyAnimation(self._expand_btn_opacity, b"opacity")
+        self._expand_btn_anim.setDuration(180)
+        self.art_label.installEventFilter(self)
         
         # 2. Text Info Container
         text_container = QWidget()
@@ -243,6 +280,46 @@ class NowPlayingFooterWidget(QWidget):
         else:
             self.art_label.clear()
             self.art_label.hide()
+
+    def eventFilter(self, obj, event):
+        if obj is self.art_label:
+            if event.type() == QEvent.Type.Enter:
+                self._expand_btn_anim.stop()
+                self._expand_btn_anim.setEndValue(1.0)
+                self._expand_btn_anim.start()
+            elif event.type() == QEvent.Type.Leave:
+                self._expand_btn_anim.stop()
+                self._expand_btn_anim.setEndValue(0.0)
+                self._expand_btn_anim.start()
+        elif obj is self._expand_btn:
+            if event.type() == QEvent.Type.Enter:
+                if hasattr(self, '_expand_icon_bright'):
+                    self._expand_btn.setIcon(self._expand_icon_bright)
+            elif event.type() == QEvent.Type.Leave:
+                if hasattr(self, '_expand_icon_dim'):
+                    self._expand_btn.setIcon(self._expand_icon_dim)
+        return super().eventFilter(obj, event)
+
+    def set_expand_btn_direction(self, _up: bool):
+        pass  # direction now conveyed by context; icon is expand.png regardless
+
+    def set_expand_btn_style(self, accent: str):
+        c = QColor(accent)
+        r, g, b = c.red(), c.green(), c.blue()
+        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
+        self._expand_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba({r},{g},{b},0.1);
+                border: 2px solid rgb({dr},{dg},{db});
+                border-radius: 12px; outline: none;
+            }}
+            QPushButton:hover {{
+                background-color: rgba({r},{g},{b},0.4);
+                border: 2px solid rgb({r},{g},{b});
+            }}
+            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
+            QPushButton::menu-indicator {{ width: 0; image: none; }}
+        """)
 
     def set_file_type(self, file_type):
         self._file_type = file_type
