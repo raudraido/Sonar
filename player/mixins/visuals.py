@@ -463,29 +463,31 @@ class VisualsMixin:
 
         # Apply the Footer Opacity Dynamically!
         footer_alpha = self.theme.footer_alpha
-        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgba(11, 11, 11, {footer_alpha}); border-top: 1px solid rgba(255, 255, 255, 0.1); }}")
+        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgba(11, 11, 11, {footer_alpha}); border: none; }}")
 
         # Apply Queue Panel Opacity
+        bw = self.theme.border_width
+        bc = QColor(mc).darker(250).name()  # master color at 50% brightness
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
                 f'  background: rgba(14,14,14,{queue_alpha});'
                 f'  border: none;'
-                f'  border-bottom: 2px solid {mc};'
+                f'  border-bottom: {bw}px solid {bc};'
                 f'  border-radius: 0px;'
                 f'}}'
             )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: 2px solid {mc}; border-radius: 0px; }}'
+                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
             )
         if hasattr(self, '_main_panel'):
             self._main_panel.setStyleSheet(
                 f'#MainPanel {{'
                 f'  background: transparent;'
-                f'  border-left: 2px solid {mc};'
-                f'  border-right: 2px solid {mc};'
-                f'  border-bottom: 2px solid {mc};'
+                f'  border-left: {bw}px solid {bc};'
+                f'  border-right: {bw}px solid {bc};'
+                f'  border-bottom: {bw}px solid {bc};'
                 f'  border-top: none;'
                 f'}}'
             )

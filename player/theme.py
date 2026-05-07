@@ -23,6 +23,9 @@ class Theme:
     footer_alpha: float = 0.85           # footer bar
     panel_alpha: float = 0.96            # left panel + queue sidebar
 
+    # ── Border ───────────────────────────────────────────────────────────────
+    border_width: int = 2                # accent border thickness in px
+
     # ── Background image processing ──────────────────────────────────────────
     blur: float = 2.5                    # blur radius 0 – 5
     overlay: float = 0.25               # darkness overlay 0 – 1
@@ -37,15 +40,21 @@ class Theme:
     def content_bg(self, alpha: float | None = None) -> str:
         return f"rgba({self.panel_color},{alpha if alpha is not None else self.content_alpha})"
 
+    # Fields that are code constants — never saved to or loaded from QSettings.
+    _NO_PERSIST = frozenset({"border_width"})
+
     # ── Serialisation ────────────────────────────────────────────────────────
     def to_json(self) -> str:
-        return json.dumps(dataclasses.asdict(self))
+        d = dataclasses.asdict(self)
+        for k in Theme._NO_PERSIST:
+            d.pop(k, None)
+        return json.dumps(d)
 
     @staticmethod
     def from_json(s: str) -> "Theme":
         try:
             d = json.loads(s)
-            valid = {f.name for f in dataclasses.fields(Theme)}
+            valid = {f.name for f in dataclasses.fields(Theme)} - Theme._NO_PERSIST
             return Theme(**{k: v for k, v in d.items() if k in valid})
         except Exception:
             return Theme()
