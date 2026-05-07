@@ -3,7 +3,11 @@
     "allow": [
       "Bash(ls *.dll)",
       "Bash(python -c ' *)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('queue_panel.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('queue_panel.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(git clone *)",
+      "Bash(dir C:\\\\Users\\\\raido\\\\Desktop\\\\psysonic_ref)",
+      "PowerShell(git clone https://github.com/Psychotoxical/psysonic.git \"$env:USERPROFILE\\\\Desktop\\\\psysonic_ref\" 2>&1 | Select-Object -Last 5)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\Desktop\\\\psysonic_ref\" -Recurse -Name | Select-Object -First 30)"
     ]
   }
 }

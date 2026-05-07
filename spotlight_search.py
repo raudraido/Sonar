@@ -333,6 +333,7 @@ class SpotlightSearch(QWidget):
         self.parent_window = parent_window
         self.parent_window.installEventFilter(self)
         self.db = db
+        self._stale_workers = []   # strong refs to cancelled-but-still-running workers
         self.hide()
 
         # Frameless + always on top at the OS level, same as QQuickWidget
@@ -491,12 +492,16 @@ class SpotlightSearch(QWidget):
 
     def hide_search(self):
         if hasattr(self, '_search_worker') and self._search_worker.isRunning():
-            self._search_worker.is_cancelled = True
-            self._search_worker.finished.connect(self._search_worker.deleteLater)
+            w = self._search_worker
+            w.is_cancelled = True
+            self._stale_workers.append(w)
+            w.finished.connect(lambda ww=w: self._stale_workers.remove(ww) if ww in self._stale_workers else None)
         if hasattr(self, '_play_artist_worker') and self._play_artist_worker.isRunning():
-            self._play_artist_worker.is_cancelled = True
-            self._play_artist_worker.finished.connect(self._play_artist_worker.deleteLater)
-            try: self._play_artist_worker.tracks_ready.disconnect()
+            w = self._play_artist_worker
+            w.is_cancelled = True
+            self._stale_workers.append(w)
+            w.finished.connect(lambda ww=w: self._stale_workers.remove(ww) if ww in self._stale_workers else None)
+            try: w.tracks_ready.disconnect()
             except: pass
         self.input.clear()
         self.list_widget.clear()
@@ -546,12 +551,12 @@ class SpotlightSearch(QWidget):
         client = getattr(self.parent_window, 'navidrome_client', None)
         if not client: return
 
-        # Cancel previous worker — keep a reference until the thread exits to avoid
-        # "QThread: Destroyed while thread is still running" crash.
+        # Cancel previous worker — keep a strong ref until the thread exits.
         if hasattr(self, '_search_worker') and self._search_worker.isRunning():
             old = self._search_worker
             old.is_cancelled = True
-            old.finished.connect(old.deleteLater)
+            self._stale_workers.append(old)
+            old.finished.connect(lambda w=old: self._stale_workers.remove(w) if w in self._stale_workers else None)
 
         self._search_worker = SearchWorker(client, query)
         self._search_worker.results_ready.connect(self._on_results)

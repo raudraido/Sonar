@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QSettings, QEvent
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie
+from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap
 import re
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 
@@ -119,6 +119,85 @@ class _ResizeHandleRight(QWidget):
         p.setBrush(QColor(180, 180, 180, alpha))
         p.drawRoundedRect(2, 0, 4, self.height(), 2, 2)
         p.end()
+
+
+# ── Bottom tab button ────────────────────────────────────────────────────────
+
+class _TabButton(QPushButton):
+    def __init__(self, icon_path, label, parent=None):
+        super().__init__(parent)
+        self._icon_path = icon_path
+        self._accent    = '#ffffff'
+        self._hovered   = False
+
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet('QPushButton { background: transparent; border: none; }')
+
+        inner = QWidget()
+        inner.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        vbox = QVBoxLayout(inner)
+        vbox.setContentsMargins(0, 6, 0, 4)
+        vbox.setSpacing(2)
+        vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._icon_lbl = QLabel()
+        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        vbox.addWidget(self._icon_lbl)
+
+        self._txt_lbl = QLabel(label)
+        self._txt_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._txt_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._txt_lbl.setStyleSheet('background: transparent; font-size: 10px; font-weight: bold;')
+        vbox.addWidget(self._txt_lbl)
+
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.addWidget(inner)
+
+        self.toggled.connect(lambda _: self._refresh())
+        self._refresh()
+
+    def set_accent(self, color):
+        self._accent = color
+        self._refresh()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._refresh()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._refresh()
+        super().leaveEvent(event)
+
+    def _refresh(self):
+        if self.isChecked():
+            color = self._accent
+        elif self._hovered:
+            color = '#aaaaaa'
+        else:
+            color = '#555555'
+
+        self._txt_lbl.setStyleSheet(
+            f'color: {color}; background: transparent; font-size: 10px; font-weight: bold;'
+        )
+        pix = QPixmap(self._icon_path)
+        if not pix.isNull():
+            pix = pix.scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+            out = QPixmap(pix.size())
+            out.fill(Qt.GlobalColor.transparent)
+            p = QPainter(out)
+            p.drawPixmap(0, 0, pix)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(out.rect(), QColor(color))
+            p.end()
+            self._icon_lbl.setPixmap(out)
 
 
 # ── Row delegate ─────────────────────────────────────────────────────────────
@@ -315,21 +394,21 @@ class QueuePanel(QWidget):
 
         lbl = QLabel('Queue')
         lbl.setStyleSheet(
-            'color: #ddd; font-weight: bold; font-size: 13px; background: transparent; border: none;'
+            'color: #ddd; font-weight: bold; font-size: 16px; background: transparent; border: none;'
         )
         hbox.addWidget(lbl)
         hbox.addSpacing(8)
 
-        self._position_lbl = QLabel('')
+        self._position_lbl = QLabel('') # e.g. "3/12"
         self._position_lbl.setStyleSheet(
-            'color: #555; font-size: 11px; background: transparent; border: none;'
+            'color: #555; font-size: 13px; background: transparent; border: none;'
         )
         hbox.addWidget(self._position_lbl)
         hbox.addStretch()
 
         self._duration_lbl = QLabel('')
         self._duration_lbl.setStyleSheet(
-            'color: #555; font-size: 11px; background: transparent; border: none;'
+            'color: #555; font-size: 13px; background: transparent; border: none;'
         )
         hbox.addWidget(self._duration_lbl)
         hbox.addSpacing(8)
@@ -348,6 +427,15 @@ class QueuePanel(QWidget):
             hbox.addWidget(close_btn)
 
         col.addWidget(header)
+
+        # ── Content stack (list / artist info) ───────────────────────────────
+        from artist_info_panel import ArtistInfoPanel
+        self._artist_info_panel = ArtistInfoPanel()
+        self._artist_info_panel.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        self._artist_info_panel.hide()
+        self._navidrome_client = None   # set from outside via set_client()
 
         # Track list
         self._list = QListWidget()
@@ -392,6 +480,43 @@ class QueuePanel(QWidget):
         self._update_list_style()
 
         col.addWidget(self._list)
+        col.addWidget(self._artist_info_panel)
+
+        # ── Bottom tab bar ────────────────────────────────────────────────────
+        bottom_bar = QWidget()
+        bottom_bar.setObjectName('QueueBottomBar')
+        bottom_bar.setFixedHeight(52)
+        bottom_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bottom_bar.setStyleSheet(
+            '#QueueBottomBar { background: transparent; border-top: 1px solid rgba(255,255,255,0.07); }'
+        )
+        bb_layout = QHBoxLayout(bottom_bar)
+        bb_layout.setContentsMargins(0, 0, 0, 0)
+        bb_layout.setSpacing(0)
+
+        from player import resource_path as _rp
+        self.btn_queue  = _TabButton(_rp('img/queue.png'),  'Queue')
+        self.btn_lyrics = _TabButton(_rp('img/lyrics.png'), 'Lyrics')
+        self.btn_info   = _TabButton(_rp('img/info.png'),   'Info')
+        self.btn_queue.setChecked(True)
+
+        # Mutual exclusivity + tab switching
+        _tab_btns = (self.btn_queue, self.btn_lyrics, self.btn_info)
+        for _b in _tab_btns:
+            _b.toggled.connect(lambda checked, src=_b: [
+                other.setChecked(False) for other in _tab_btns if other is not src
+            ] if checked else None)
+
+        self.btn_queue.toggled.connect(lambda on: self._show_tab('queue') if on else None)
+        self.btn_info.toggled.connect(lambda on: self._show_tab('info') if on else None)
+
+        bb_layout.addWidget(self.btn_queue)
+        bb_layout.addWidget(self.btn_lyrics)
+        bb_layout.addWidget(self.btn_info)
+
+        col.addWidget(bottom_bar)
+        self._bottom_bar = bottom_bar
+
         root.addWidget(content, 1)
 
         # ── Right-edge resize handle (width) — not used in embedded mode ─────
@@ -421,8 +546,22 @@ class QueuePanel(QWidget):
         p.end()
         return pix
 
+    def set_client(self, client):
+        self._navidrome_client = client
+
+    def load_track(self, artist_id: str, artist_name: str):
+        self._artist_info_panel.set_accent_color(self._accent_color)
+        self._artist_info_panel.load_track(self._navidrome_client, artist_id, artist_name)
+
+    def _show_tab(self, tab: str):
+        self._list.setVisible(tab == 'queue')
+        self._artist_info_panel.setVisible(tab == 'info')
+
     def set_accent_color(self, color: str):
         self._accent_color = color
+        for _btn in (self.btn_queue, self.btn_lyrics, self.btn_info):
+            _btn.set_accent(color)
+        self._artist_info_panel.set_accent_color(color)
         self._update_list_style()
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self._list.viewport(), self._list.verticalScrollBar())

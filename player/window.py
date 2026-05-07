@@ -728,7 +728,8 @@ class SonarPlayer(
 
         # Section 2: Visualizer (25%)
         self.visualizer = AudioVisualizer(self.audio_engine)
-        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.visualizer.setFixedHeight(170)
         self.visualizer.setMaximumWidth(16777215)  # reset any previously saved constraint
 
         vis_container = QWidget()
@@ -1216,7 +1217,7 @@ class SonarPlayer(
     def _rebuild_left_layout(self, order):
         while self._left_layout.count():
             self._left_layout.takeAt(0)
-        _stretch = {'art': 2, 'vis': 1, 'info': 1}
+        _stretch = {'art': 1, 'vis': 0, 'info': 0}
         for i, key in enumerate(order):
             self._left_layout.addWidget(self._section_widgets[key], _stretch[key])
             if i < len(order) - 1:
@@ -1262,10 +1263,17 @@ class SonarPlayer(
     def _refresh_queue_panel(self):
         if not hasattr(self, '_queue_panel'):
             return
-        color = getattr(self, 'master_color', '#cccccc')
+        color = self.theme.accent
+        self._queue_panel.set_client(getattr(self, 'navidrome_client', None))
         self._queue_panel.set_accent_color(color)
         self._queue_panel.refresh(self.playlist_data, self.current_index,
                                   is_playing=getattr(self.audio_engine, 'is_playing', False))
+        if 0 <= self.current_index < len(self.playlist_data):
+            track = self.playlist_data[self.current_index]
+            self._queue_panel.load_track(
+                track.get('artistId') or track.get('artist_id') or '',
+                track.get('artist') or '',
+            )
 
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):
@@ -1341,7 +1349,7 @@ class SonarPlayer(
         new_state = not current
         track['starred'] = new_state
         if idx == self.current_index and hasattr(self, 'heart_btn'):
-            accent = getattr(self, 'master_color', '#ffffff')
+            accent = self.theme.accent
             self.heart_btn.setIcon(self._make_heart_icon(new_state, accent))
         if hasattr(self, 'navidrome_client') and self.navidrome_client:
             import threading
