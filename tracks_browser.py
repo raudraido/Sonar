@@ -1845,7 +1845,7 @@ class TracksBrowser(QWidget):
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -3889,4 +3889,4 @@ class TracksBrowser(QWidget):
         self.tree.setStyleSheet(css)
         
         # 🟢 ALSO apply the alpha to the outer container so the blank space at the bottom matches!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")

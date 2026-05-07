@@ -1241,7 +1241,7 @@ class ArtistRichDetailView(QWidget):
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -1748,7 +1748,7 @@ class ArtistRichDetailView(QWidget):
         
         self.current_accent = color
         
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
         
         scrollbar_style = f"""
             QScrollArea {{ border: none; background: transparent; }} 
@@ -3136,7 +3136,7 @@ class ArtistGridBrowser(QWidget):
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
             )
 
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)

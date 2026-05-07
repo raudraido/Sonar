@@ -1119,7 +1119,7 @@ class HomeView(QWidget):
 
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
-        self.setStyleSheet(f"#HomePanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#HomePanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 0; }}")
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color

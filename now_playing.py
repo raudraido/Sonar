@@ -329,7 +329,7 @@ class NowPlayingPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("NowPlayingPanel")
         self.setStyleSheet(
-            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{self._current_alpha}); border-radius: 5px; }}"
+            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{self._current_alpha}); border-radius: 0; }}"
         )
 
         root = QVBoxLayout(self)
@@ -449,7 +449,7 @@ class NowPlayingPanel(QWidget):
         self._current_accent = color
         self._current_alpha  = alpha
         self.setStyleSheet(
-            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 5px; }}"
+            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 0; }}"
         )
         self._header.setStyleSheet(
             "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
@@ -463,7 +463,7 @@ class NowPlayingPanel(QWidget):
             QTreeWidget {{
                 background: transparent;
                 font-size: 10pt;
-                border: none; border-radius: 5px; color: #ddd; outline: none;
+                border: none; border-radius: 0; color: #ddd; outline: none;
             }}
             QTreeWidget::item {{
                 height: 50px; background: transparent;

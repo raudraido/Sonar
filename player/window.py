@@ -703,11 +703,11 @@ class SonarPlayer(
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(3) # Space between left and right panels
+        body.setSpacing(0) # Space between Queue and main panel
 
         content = QHBoxLayout()
-        content.setContentsMargins(0, 0, 0, 2)
-        content.setSpacing(3) # Space between left and right panels
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(0) # Space between left panel and main panel
 
         self._splitter = None
 
@@ -968,7 +968,7 @@ class SonarPlayer(
         self._main_panel.setObjectName('MainPanel')
         self._main_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         right_panel = QVBoxLayout(self._main_panel)
-        right_panel.setContentsMargins(0, 8, 0, 0)
+        right_panel.setContentsMargins(2, 8, 2, 2)
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
         _right_widget = self._main_panel
@@ -982,7 +982,7 @@ class SonarPlayer(
         self._queue_panel_container = QWidget()
         self._queue_panel_container.setFixedWidth(400)
         _qc_layout = QVBoxLayout(self._queue_panel_container)
-        _qc_layout.setContentsMargins(0, 0, 0, 2)
+        _qc_layout.setContentsMargins(0, 0, 0, 0) #QUEUE margins (bottom)
         _qc_layout.setSpacing(0)
         self._queue_panel = QueuePanel(self._queue_panel_container, embedded=True)
         self._queue_panel.play_index.connect(self._queue_play_at)

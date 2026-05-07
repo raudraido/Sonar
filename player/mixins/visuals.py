@@ -471,12 +471,23 @@ class VisualsMixin:
                 f'#QueuePanel {{'
                 f'  background: rgba(14,14,14,{queue_alpha});'
                 f'  border: none;'
+                f'  border-bottom: 2px solid {mc};'
                 f'  border-radius: 0px;'
                 f'}}'
             )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-radius: 0px; }}'
+                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: 2px solid {mc}; border-radius: 0px; }}'
+            )
+        if hasattr(self, '_main_panel'):
+            self._main_panel.setStyleSheet(
+                f'#MainPanel {{'
+                f'  background: transparent;'
+                f'  border-left: 2px solid {mc};'
+                f'  border-right: 2px solid {mc};'
+                f'  border-bottom: 2px solid {mc};'
+                f'  border-top: none;'
+                f'}}'
             )
 
               

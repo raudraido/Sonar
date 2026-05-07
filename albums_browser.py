@@ -778,7 +778,7 @@ class AlbumDetailView(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
         
         # 1. MASTER LAYOUT & SCROLL AREA
         main_layout = QVBoxLayout(self)
@@ -1008,7 +1008,7 @@ class AlbumDetailView(QWidget):
     
     def set_accent_color(self, color, alpha=0.3):
         self.track_list.set_accent_color(color, alpha)
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
@@ -1344,7 +1344,7 @@ class LibraryGridBrowser(QWidget):
         # 1: Add the master opacity box to the entire tab!
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
         self.cover_worker = None
         if self.client:
@@ -1966,7 +1966,7 @@ class LibraryGridBrowser(QWidget):
         self.current_alpha = alpha
 
         # Force Python to paint the darkness so the GPU clears its old frames!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"

@@ -138,7 +138,7 @@ class PlaylistDetailView(QWidget):
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -464,7 +464,7 @@ class PlaylistDetailView(QWidget):
     
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
         
         play_btn_style = f"""
             QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
@@ -629,7 +629,7 @@ class PlaylistsBrowser(QWidget):
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("PlaylistsBrowser")
-        self.setStyleSheet("#PlaylistsBrowser { background-color: rgba(12, 12, 12, 0.3); border-radius: 5px; }")
+        self.setStyleSheet("#PlaylistsBrowser { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -1126,7 +1126,7 @@ class PlaylistsBrowser(QWidget):
 
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
-        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
