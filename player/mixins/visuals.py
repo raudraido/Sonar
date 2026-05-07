@@ -266,7 +266,9 @@ class VisualsMixin:
 
     def refresh_ui_styles(self, scroll_to_current=True):
         mc = self.theme.accent
-        alpha = self.theme.content_alpha 
+        if mc.startswith('#') and len(mc) > 7:
+            mc = mc[:7]
+        alpha = self.theme.content_alpha
         rgb = QColor(mc)
 
         if not hasattr(self, 'icon_cache'):

@@ -483,7 +483,7 @@ class SonarPlayer(
                 _vis = json.loads(self.settings.value('visual_settings') or '{}')
             except Exception:
                 _vis = {}
-            _color   = self.settings.value('last_master_color') or "#fafafada"
+            _color   = self.settings.value('last_master_color') or "#fafafa"
             _dynamic = bool(int(self.settings.value('dynamic_color', 1) or 1))
             self.theme = Theme.from_legacy(_vis, _color, _dynamic)
         

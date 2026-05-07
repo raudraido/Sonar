@@ -10,7 +10,7 @@ class Theme:
     name: str = "Default"
 
     # ── Accent colour ────────────────────────────────────────────────────────
-    accent: str = "#fafafada"
+    accent: str = "#fafafa"
     dynamic_accent: bool = True          # follow album art dominant colour
 
     # ── Panel background (RGB components, used in rgba()) ────────────────────
