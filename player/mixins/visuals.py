@@ -81,9 +81,9 @@ class VisualsMixin:
 
         self.blur_thread = BlurWorker(
             path, 
-            self.visual_settings['blur'], 
-            self.visual_settings['overlay'],
-            self.master_color,
+            self.theme.blur, 
+            self.theme.overlay,
+            self.theme.accent,
             calc_color,
             raw_data_override=raw_data_override,
             target_size=self.size(),
@@ -107,16 +107,16 @@ class VisualsMixin:
         # Store cover_id instead of raw bytes — CoverCache already has the data on disk
         self.current_raw_art = raw_art
         
-        if self.dynamic_color:
-            self.master_color = dominant_color
+        if self.theme.dynamic_accent:
+            self.theme.accent = dominant_color
             if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
-            if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.master_color)
-            if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.master_color)
-            self.now_playing_widget.set_accent_color(self.master_color)
+            if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
+            if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
+            self.now_playing_widget.set_accent_color(self.theme.accent)
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 raw_artist = track.get('artist', 'Unknown')
-                formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{self.master_color}; font-size:24px'>•</span> ")
+                formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{self.theme.accent}; font-size:24px'>•</span> ")
                 year = str(track.get('year', '') or '').strip()
                 if year and year != '0':
                     formatted_artist += f"  •  {year}"
@@ -124,7 +124,7 @@ class VisualsMixin:
                 if hasattr(self, 'heart_btn'):
                     raw_state = track.get('starred')
                     is_fav = raw_state.lower() in ('true', '1') if isinstance(raw_state, str) else bool(raw_state)
-                    self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.master_color))
+                    self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.theme.accent))
             self.refresh_ui_styles(scroll_to_current=False)
 
         if not self.current_cover_pixmap.isNull():
@@ -178,9 +178,9 @@ class VisualsMixin:
             return
         worker = BlurWorker(
             path,
-            self.visual_settings['blur'],
-            self.visual_settings['overlay'],
-            self.master_color,
+            self.theme.blur,
+            self.theme.overlay,
+            self.theme.accent,
             calc_color=False,
         )
         def _apply(blurred_qimg, *_):
@@ -253,8 +253,8 @@ class VisualsMixin:
             self.bg_label.setPixmap(_crop_scale(self.bg_label.pixmap(), sz))
 
     def refresh_ui_styles(self, scroll_to_current=True):
-        mc = self.master_color
-        alpha = self.visual_settings['bg_alpha'] 
+        mc = self.theme.accent
+        alpha = self.theme.content_alpha 
         rgb = QColor(mc)
 
         if not hasattr(self, 'icon_cache'):
@@ -313,8 +313,8 @@ class VisualsMixin:
         self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", "#111111"))
 
         
-        footer_alpha = self.visual_settings.get('footer_alpha', 0.85)
-        queue_alpha  = self.visual_settings.get('queue_alpha', 0.96)
+        footer_alpha = self.theme.footer_alpha
+        queue_alpha  = self.theme.panel_alpha
         theme_key = f"{mc}_{alpha}_{footer_alpha}_{queue_alpha}"
         
         if getattr(self, '_last_theme_key', None) == theme_key:
@@ -347,7 +347,7 @@ class VisualsMixin:
             active_tab.set_accent_color(mc, alpha)
             
         if not getattr(self, '_tab_hook_set', False):
-            self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.master_color, self.visual_settings['bg_alpha']) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
+            self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent, self.theme.content_alpha) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
             self._tab_hook_set = True
 
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
@@ -447,8 +447,8 @@ class VisualsMixin:
                 self.btn_fwd.setStyleSheet(modern_dark_style)
 
         # Apply the Footer Opacity Dynamically!
-        footer_alpha = self.visual_settings.get('footer_alpha', 0.85)
-        self.footer_container.setStyleSheet(f"QWidget#FooterBar {{ background-color: rgba(11, 11, 11, {footer_alpha}); border-top: 1px solid rgba(255, 255, 255, 0.1); }}")
+        footer_alpha = self.theme.footer_alpha
+        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgba(11, 11, 11, {footer_alpha}); border-top: 1px solid rgba(255, 255, 255, 0.1); }}")
 
         # Apply Queue Panel Opacity
         if hasattr(self, '_queue_panel'):
@@ -459,8 +459,8 @@ class VisualsMixin:
                 f'  border-radius: 0px;'
                 f'}}'
             )
-        if hasattr(self, '_left_widget'):
-            self._left_widget.setStyleSheet(
+        if hasattr(self, '_left_panel'):
+            self._left_panel.setStyleSheet(
                 f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-radius: 0px; }}'
             )
 
@@ -503,7 +503,7 @@ class VisualsMixin:
             return
             
                     
-        mc = self.master_color
+        mc = self.theme.accent
         rgb = QColor(mc)
 
         # Define styles for the active and inactive rows
@@ -612,7 +612,7 @@ class VisualsMixin:
         """Lightweight update just for the speaker icon."""
         vol_img = "img/volume_mute.png" if self.is_muted else "img/volume.png"
 
-        v_color = "#888888" if self.is_muted else self.master_color
+        v_color = "#888888" if self.is_muted else self.theme.accent
         
         icon_path = resource_path(vol_img)
         if os.path.exists(icon_path):

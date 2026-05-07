@@ -12,7 +12,7 @@ from version import __version__
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
     QSlider, QPushButton, QColorDialog, QCheckBox, QApplication,
-    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog
+    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox
 )
 from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, pyqtSignal, QSettings, QProcess
 from PyQt6.QtGui import (
@@ -573,13 +573,13 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(QLabel("Theme:"))
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
-        self.dynamic_check.setChecked(self.parent.dynamic_color)
+        self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
         self.dynamic_check.stateChanged.connect(self.toggle_dynamic_color)
         layout.addWidget(self.dynamic_check)
 
         self.color_btn = QPushButton("Pick Static Color")
         self.color_btn.clicked.connect(self.pick_global_color)
-        self.color_btn.setStyleSheet(f"background: {self.parent.master_color}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
+        self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
         layout.addWidget(self.color_btn)
 
         # --- STATIC BACKGROUND IMAGE ---
@@ -606,7 +606,7 @@ class SettingsWindow(QWidget):
         layout.addWidget(self.bg_img_name)
 
         layout.addWidget(QLabel("Background:"))
-        _blur_pct = int(min(self.parent.visual_settings['blur'], 5) / 5 * 100)
+        _blur_pct = int(min(self.parent.theme.blur, 5) / 5 * 100)
         self.blur_label = QLabel(f"Blur Radius: {_blur_pct}%")
 
         layout.addWidget(self.blur_label)
@@ -616,42 +616,53 @@ class SettingsWindow(QWidget):
         self.blur_slider.valueChanged.connect(self.update_labels_only)
 
         layout.addWidget(self.blur_slider)
-        self.dark_label = QLabel(f"Darkness Blend: {int(self.parent.visual_settings['overlay'] * 100)}%")
+        self.dark_label = QLabel(f"Darkness Blend: {int(self.parent.theme.overlay * 100)}%")
 
         layout.addWidget(self.dark_label)
         self.dark_slider = QSlider(Qt.Orientation.Horizontal)
         self.dark_slider.setRange(0, 100)
-        self.dark_slider.setValue(int(self.parent.visual_settings['overlay'] * 100))
+        self.dark_slider.setValue(int(self.parent.theme.overlay * 100))
         self.dark_slider.valueChanged.connect(self.update_labels_only)
 
         layout.addWidget(self.dark_slider)
-        self.alpha_label = QLabel(f"Playlist Opacity: {int(self.parent.visual_settings['bg_alpha'] * 100)}%")
+        transparency_group = QGroupBox("Transparency")
+        transparency_group.setStyleSheet("""
+            QGroupBox {
+                color: #888; font-weight: bold; font-size: 11px;
+                border: 1px solid #333; border-radius: 5px; margin-top: 8px;
+                padding-top: 8px;
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; }
+        """)
+        tg_layout = QVBoxLayout(transparency_group)
+        tg_layout.setSpacing(4)
+        tg_layout.setContentsMargins(8, 8, 8, 8)
 
-        layout.addWidget(self.alpha_label)
+        self.alpha_label = QLabel(f"Main Panel: {int((1.0 - self.parent.theme.content_alpha) * 100)}%")
+        tg_layout.addWidget(self.alpha_label)
         self.alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.alpha_slider.setRange(0, 100)
-        self.alpha_slider.setValue(int(self.parent.visual_settings['bg_alpha'] * 100))
+        self.alpha_slider.setValue(int((1.0 - self.parent.theme.content_alpha) * 100))
         self.alpha_slider.valueChanged.connect(self.update_labels_only)
-        layout.addWidget(self.alpha_slider)
+        tg_layout.addWidget(self.alpha_slider)
 
-        # --- THE NEW FOOTER SLIDER HERE
-        self.footer_alpha_label = QLabel(f"Footer Opacity: {int(self.parent.visual_settings.get('footer_alpha', 0.85) * 100)}%")
-        layout.addWidget(self.footer_alpha_label)
-
+        self.footer_alpha_label = QLabel(f"Footer Panel: {int((1.0 - self.parent.theme.footer_alpha) * 100)}%")
+        tg_layout.addWidget(self.footer_alpha_label)
         self.footer_alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.footer_alpha_slider.setRange(0, 100)
-        self.footer_alpha_slider.setValue(int(self.parent.visual_settings.get('footer_alpha', 0.85) * 100))
+        self.footer_alpha_slider.setValue(int((1.0 - self.parent.theme.footer_alpha) * 100))
         self.footer_alpha_slider.valueChanged.connect(self.update_labels_only)
-        layout.addWidget(self.footer_alpha_slider)
+        tg_layout.addWidget(self.footer_alpha_slider)
 
-        self.queue_alpha_label = QLabel(f"Queue Opacity: {int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100)}%")
-        layout.addWidget(self.queue_alpha_label)
-
+        self.queue_alpha_label = QLabel(f"Left/Queue Panel: {int((1.0 - self.parent.theme.panel_alpha) * 100)}%")
+        tg_layout.addWidget(self.queue_alpha_label)
         self.queue_alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.queue_alpha_slider.setRange(0, 100)
-        self.queue_alpha_slider.setValue(int(self.parent.visual_settings.get('queue_alpha', 0.96) * 100))
+        self.queue_alpha_slider.setValue(int((1.0 - self.parent.theme.panel_alpha) * 100))
         self.queue_alpha_slider.valueChanged.connect(self.update_labels_only)
-        layout.addWidget(self.queue_alpha_slider)
+        tg_layout.addWidget(self.queue_alpha_slider)
+
+        layout.addWidget(transparency_group)
 
         # Single debounce timer — restarted on every valueChanged, fires apply_heavy_changes
         # 150ms after the user stops interacting (covers drag, arrow keys, and bar clicks).
@@ -787,7 +798,7 @@ class SettingsWindow(QWidget):
         return False
 
     def toggle_dynamic_color(self):
-        self.parent.dynamic_color = self.dynamic_check.isChecked()
+        self.parent.theme.dynamic_accent = self.dynamic_check.isChecked()
      
     def update_vis_settings(self):
         self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
@@ -825,17 +836,17 @@ class SettingsWindow(QWidget):
 
     def pick_global_color(self):
         self.dynamic_check.setChecked(False) 
-        self.parent.dynamic_color = False
-        color = QColorDialog.getColor(QColor(self.parent.master_color), self, "Choose Master Theme Color")
+        self.parent.theme.dynamic_accent = False
+        color = QColorDialog.getColor(QColor(self.parent.theme.accent), self, "Choose Master Theme Color")
         if color.isValid():
-            self.parent.master_color = color.name()
-            self.color_btn.setStyleSheet(f"background: {self.parent.master_color}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
+            self.parent.theme.accent = color.name()
+            self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
             self._apply_slider_color()
             self.parent.refresh_ui_styles()
             if hasattr(self.parent, 'visualizer'):
-                self.parent.visualizer.bar_color = QColor(self.parent.master_color)
+                self.parent.visualizer.bar_color = QColor(self.parent.theme.accent)
             if hasattr(self.parent, '_queue_panel'):
-                self.parent._queue_panel.set_accent_color(self.parent.master_color)
+                self.parent._queue_panel.set_accent_color(self.parent.theme.accent)
             if hasattr(self.parent, 'seek_bar'):
                 self.parent.seek_bar._user_picked = True
                 self.parent.seek_bar.update()
@@ -843,18 +854,17 @@ class SettingsWindow(QWidget):
     def update_labels_only(self):
         self.blur_label.setText(f"Blur Radius: {self.blur_slider.value()}%")
         self.dark_label.setText(f"Darkness Blend: {self.dark_slider.value()}%")
-        self.alpha_label.setText(f"Playlist Opacity: {self.alpha_slider.value()}%")
-        
-        self.footer_alpha_label.setText(f"Footer Opacity: {self.footer_alpha_slider.value()}%")
-        self.queue_alpha_label.setText(f"Queue Opacity: {self.queue_alpha_slider.value()}%")
-    
+        self.alpha_label.setText(f"Main Panel: {self.alpha_slider.value()}%")
+        self.footer_alpha_label.setText(f"Footer Panel: {self.footer_alpha_slider.value()}%")
+        self.queue_alpha_label.setText(f"Left/Queue Panel: {self.queue_alpha_slider.value()}%")
+
     def apply_heavy_changes(self):
-        self.parent.visual_settings['blur'] = round(self.blur_slider.value() / 100 * 5, 2)
-        self.parent.visual_settings['overlay'] = self.dark_slider.value() / 100.0
-        self.parent.visual_settings['bg_alpha'] = self.alpha_slider.value() / 100.0
-        
-        self.parent.visual_settings['footer_alpha'] = self.footer_alpha_slider.value() / 100.0
-        self.parent.visual_settings['queue_alpha']  = self.queue_alpha_slider.value() / 100.0
+        self.parent.theme.blur = round(self.blur_slider.value() / 100 * 5, 2)
+        self.parent.theme.overlay = self.dark_slider.value() / 100.0
+        self.parent.theme.content_alpha = 1.0 - self.alpha_slider.value() / 100.0
+
+        self.parent.theme.footer_alpha = 1.0 - self.footer_alpha_slider.value() / 100.0
+        self.parent.theme.panel_alpha  = 1.0 - self.queue_alpha_slider.value() / 100.0
 
         if hasattr(self.parent, 'refresh_visuals'): self.parent.refresh_visuals()
 

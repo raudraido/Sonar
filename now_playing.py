@@ -329,7 +329,7 @@ class NowPlayingPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("NowPlayingPanel")
         self.setStyleSheet(
-            "#NowPlayingPanel { background-color: rgba(12,12,12,0.3); border-radius: 5px; }"
+            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{self._current_alpha}); border-radius: 5px; }}"
         )
 
         root = QVBoxLayout(self)
@@ -337,7 +337,8 @@ class NowPlayingPanel(QWidget):
         root.setSpacing(0)
 
         # ── Header bar ────────────────────────────────────────────────────────
-        header = QWidget()
+        self._header = QWidget()
+        header = self._header
         header.setFixedHeight(50)
         header.setStyleSheet(
             "QWidget { background-color: #111; border-top-left-radius: 5px; "
@@ -447,6 +448,12 @@ class NowPlayingPanel(QWidget):
     def set_accent_color(self, color: str, alpha: float = 0.3):
         self._current_accent = color
         self._current_alpha  = alpha
+        self.setStyleSheet(
+            f"#NowPlayingPanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 5px; }}"
+        )
+        self._header.setStyleSheet(
+            "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+        )
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
         self._scroll_reveal.color = color
@@ -454,8 +461,8 @@ class NowPlayingPanel(QWidget):
         # Tree stylesheet (matches TracksBrowser style)
         self.tree.setStyleSheet(f"""
             QTreeWidget {{
-                background: rgba(12, 12, 12, {alpha});
-                font-size: 10pt; 
+                background: transparent;
+                font-size: 10pt;
                 border: none; border-radius: 5px; color: #ddd; outline: none;
             }}
             QTreeWidget::item {{

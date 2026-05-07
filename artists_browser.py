@@ -3131,6 +3131,10 @@ class ArtistGridBrowser(QWidget):
 
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
+        if hasattr(self, 'header_container'):
+            self.header_container.setStyleSheet(
+                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+            )
 
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
 

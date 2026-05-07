@@ -290,8 +290,8 @@ class NavigationMixin:
         else:
              self.global_album_view.load_album(album_data)
              
-        if hasattr(self, 'master_color'):
-            self.global_album_view.set_accent_color(self.master_color, self.visual_settings.get('bg_alpha', 0.3))
+        if hasattr(self, 'theme'):
+            self.global_album_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
 
     def navigate_to_artist(self, artist_data):
         self.add_global_nav(self.global_artist_tab_idx, 'artist', artist_data)
@@ -369,8 +369,8 @@ class NavigationMixin:
         else:
             self.global_artist_view.load_artist(artist_data)
             
-        if hasattr(self, 'master_color'):
-            self.global_artist_view.set_accent_color(self.master_color, self.visual_settings.get('bg_alpha', 0.3))
+        if hasattr(self, 'theme'):
+            self.global_artist_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
         
     def navigate_to_playlist(self, playlist_data, pixmap=None):
         self.add_global_nav(self.global_playlist_tab_idx, 'playlist_detail', playlist_data)
@@ -396,8 +396,8 @@ class NavigationMixin:
         self._pl_worker.results_ready.connect(self.global_playlist_view.populate_view)
         self._pl_worker.start()
         
-        if hasattr(self, 'master_color'):
-            self.global_playlist_view.set_accent_color(self.master_color, self.visual_settings.get('bg_alpha', 0.3))
+        if hasattr(self, 'theme'):
+            self.global_playlist_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
 
     def on_switch_to_artist(self, artist_name):
         """Switches to the Artist tab and loads the requested artist."""
@@ -669,7 +669,7 @@ class NavigationMixin:
 
     def _show_footer_track_info(self, track):
         from components import TrackInfoDialog
-        accent = getattr(self, 'master_color', '#1DB954')
+        accent = getattr(self.theme, 'accent', '#1DB954') if hasattr(self, 'theme') else '#1DB954'
         album_id = track.get('albumId') or track.get('parent')
         album_data = {
             'id': album_id,

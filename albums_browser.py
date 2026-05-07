@@ -803,7 +803,8 @@ class AlbumDetailView(QWidget):
         self.layout.setSpacing(20)
 
         # ─── HEADER ────────────────────────────────────────────────────────────
-        header_container = QWidget()
+        self.header_container = QWidget()
+        header_container = self.header_container
         header_layout = QHBoxLayout(header_container)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(25)
@@ -1008,6 +1009,10 @@ class AlbumDetailView(QWidget):
     def set_accent_color(self, color, alpha=0.3):
         self.track_list.set_accent_color(color, alpha)
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        if hasattr(self, 'header_container'):
+            self.header_container.setStyleSheet(
+                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+            )
         
         # Dynamically style the Album play button with the Master Color!
         play_btn_style = f"""
@@ -1962,6 +1967,10 @@ class LibraryGridBrowser(QWidget):
 
         # Force Python to paint the darkness so the GPU clears its old frames!
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        if hasattr(self, 'header_container'):
+            self.header_container.setStyleSheet(
+                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+            )
 
         # Broadcast BOTH the color and the opacity directly to the QML Engine!
         if hasattr(self, 'grid_bridge'):

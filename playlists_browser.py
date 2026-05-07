@@ -1127,6 +1127,10 @@ class PlaylistsBrowser(QWidget):
     def set_accent_color(self, color, alpha=0.3):
         self.current_accent = color
         self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 5px; }}")
+        if hasattr(self, 'header_container'):
+            self.header_container.setStyleSheet(
+                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+            )
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
             self.grid_bridge.bgAlphaChanged.emit(alpha)

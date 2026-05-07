@@ -53,6 +53,7 @@ from player.widgets import (
     SettingsWindow, StatusButton, SquareArtContainer,
 )
 from player import resource_path
+from player.theme import Theme
 from player.mixins.playback    import PlaybackMixin
 from player.mixins.navigation  import NavigationMixin
 from player.mixins.visuals     import VisualsMixin
@@ -470,25 +471,21 @@ class SonarPlayer(
         self.playback_manager.track_started.connect(self.on_play_started) 
         self.playback_manager.start()
 
-        # --- DEFAULT VISUAL STYLE / COLOR ---
-        self.master_color = "#fafafada"
-        self.dynamic_color = True
+        # --- THEME (single source of truth for all visual settings) ---
         self.static_bg_path = self.settings.value('static_bg_path') or None
-        
-        default_vis = {'blur': 2.5, 'overlay': 0.25, 'bg_alpha': 0.75, 'footer_alpha': 0.75, 'queue_alpha': 0.75}
-        saved_vis = self.settings.value('visual_settings')
-        if saved_vis:
-            try:
-                self.visual_settings = json.loads(saved_vis)
-                # Ensure keys exist for backward compatibility with old saves
-                if 'footer_alpha' not in self.visual_settings:
-                    self.visual_settings['footer_alpha'] = 0.85
-                if 'queue_alpha' not in self.visual_settings:
-                    self.visual_settings['queue_alpha'] = 0.96
-            except:
-                self.visual_settings = default_vis
+
+        _saved_theme = self.settings.value('theme')
+        if _saved_theme:
+            self.theme = Theme.from_json(_saved_theme)
         else:
-            self.visual_settings = default_vis        
+            # Migrate from legacy separate keys
+            try:
+                _vis = json.loads(self.settings.value('visual_settings') or '{}')
+            except Exception:
+                _vis = {}
+            _color   = self.settings.value('last_master_color') or "#fafafada"
+            _dynamic = bool(int(self.settings.value('dynamic_color', 1) or 1))
+            self.theme = Theme.from_legacy(_vis, _color, _dynamic)
         
         self.is_shuffle = False
         self.is_repeat = False
@@ -518,11 +515,7 @@ class SonarPlayer(
 
         
         try:
-            # 1. Instantly apply the last used theme color before the UI builds!
-            
-            saved_color = self.settings.value('last_master_color')
-            if saved_color:
-                self.master_color = saved_color
+            # theme.accent already restored from saved settings above
 
             # 2. Check if we have a saved track
             
@@ -719,15 +712,15 @@ class SonarPlayer(
         self._splitter = None
 
         # --- LEFT PANEL ---
-        self._left_widget = _LeftPanelWidget()
-        self._left_widget.setObjectName('LeftPanel')
-        self._left_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._left_widget.setStyleSheet(
+        self._left_panel = _LeftPanelWidget()
+        self._left_panel.setObjectName('LeftPanel')
+        self._left_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._left_panel.setStyleSheet(
             '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 0px; }'
         )
-        self._left_panel = QVBoxLayout(self._left_widget)
-        self._left_panel.setContentsMargins(8, 8, 8, 8) #ALBUM ART margins (all sides)
-        self._left_panel.setSpacing(0)
+        self._left_layout = QVBoxLayout(self._left_panel)
+        self._left_layout.setContentsMargins(8, 8, 8, 8) #ALBUM ART margins (all sides)
+        self._left_layout.setSpacing(0)
 
         # Section 1: Album art (50%)
         self.art_container = SquareArtContainer(self)
@@ -787,6 +780,7 @@ class SonarPlayer(
         # --- RIGHT PANEL (Tabs & Search) ---
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName('TabsPanel')
         self.tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         
@@ -847,7 +841,7 @@ class SonarPlayer(
         self.album_browser.play_album_signal.connect(self.play_whole_album)
         self.album_browser.queue_track_signal.connect(self.add_track_to_queue)
         self.album_browser.play_next_signal.connect(self.play_track_next)
-        if hasattr(self, 'master_color'): self.album_browser.set_accent_color(self.master_color)
+        if hasattr(self, 'theme'): self.album_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.album_browser, "Albums")
         self.album_browser.album_clicked.connect(self.navigate_to_album)
 
@@ -863,7 +857,7 @@ class SonarPlayer(
         self.artist_browser.play_album_signal.connect(self.play_whole_album)
         self.artist_browser.queue_track_signal.connect(self.add_track_to_queue)
         self.artist_browser.play_next_signal.connect(self.play_track_next)
-        if hasattr(self, 'master_color'): self.artist_browser.set_accent_color(self.master_color)
+        if hasattr(self, 'theme'): self.artist_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.artist_browser, "Artists")
         self.artist_browser.artist_clicked.connect(self.navigate_to_artist)
 
@@ -879,7 +873,7 @@ class SonarPlayer(
         self.playlists_browser.play_next_signal.connect(self.play_track_next)
         self.playlists_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
         self.playlists_browser.playlist_clicked.connect(self.navigate_to_playlist)
-        if hasattr(self, 'master_color'): self.playlists_browser.set_accent_color(self.master_color)
+        if hasattr(self, 'theme'): self.playlists_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.playlists_browser, "Playlists")
 
 
@@ -956,25 +950,28 @@ class SonarPlayer(
         # Initialize History with Home
         self.add_global_nav(self.tabs.indexOf(self.home_tab), 'home')
 
-        # --- RIGHT PANEL (Tabs) ---
-        _right_widget = QWidget()
-        right_panel = QVBoxLayout(_right_widget)
-        right_panel.setContentsMargins(0, 8, 0, 0) # Top margin for the tabs
+        # --- Main Panel (Tabs) ---
+        self._main_panel = QWidget()
+        self._main_panel.setObjectName('MainPanel')
+        self._main_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        right_panel = QVBoxLayout(self._main_panel)
+        right_panel.setContentsMargins(0, 8, 0, 0)
         right_panel.setSpacing(0)
         right_panel.addWidget(self.tabs)
+        _right_widget = self._main_panel
 
-        self._left_widget.setFixedWidth(330)
-        content.addWidget(self._left_widget)
+        self._left_panel.setFixedWidth(330)
+        content.addWidget(self._left_panel)
         content.addWidget(_right_widget, 1)
         body.addLayout(content, 1)
 
         # ── Permanent queue sidebar ──────────────────────────────────────────
-        self._queue_container = QWidget()
-        self._queue_container.setFixedWidth(400)
-        _qc_layout = QVBoxLayout(self._queue_container)
+        self._queue_panel_container = QWidget()
+        self._queue_panel_container.setFixedWidth(400)
+        _qc_layout = QVBoxLayout(self._queue_panel_container)
         _qc_layout.setContentsMargins(0, 0, 0, 2)
         _qc_layout.setSpacing(0)
-        self._queue_panel = QueuePanel(self._queue_container, embedded=True)
+        self._queue_panel = QueuePanel(self._queue_panel_container, embedded=True)
         self._queue_panel.play_index.connect(self._queue_play_at)
         self._queue_panel.play_next_index.connect(self._queue_play_next_at)
         self._queue_panel.remove_index.connect(self._queue_remove_at)
@@ -982,7 +979,7 @@ class SonarPlayer(
         self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
         self._queue_panel.reordered.connect(self._queue_reordered)
         _qc_layout.addWidget(self._queue_panel)
-        body.addWidget(self._queue_container)
+        body.addWidget(self._queue_panel_container)
 
         main_layout.addLayout(body, 1)
         main_layout.addSpacing(0)
@@ -1059,7 +1056,7 @@ class SonarPlayer(
         self.current_time_label = QLabel("0:00")
         
         # SWAP THE SLIDER FOR THE WAVEFORM
-        self.seek_bar = WaveformScrubber(master_color=self.master_color, parent=self)
+        self.seek_bar = WaveformScrubber(master_color=self.theme.accent, parent=self)
         self.seek_bar.seek_requested.connect(self.on_waveform_seek)
         self.seek_bar.mode_toggled.connect(self.on_waveform_toggled)
         
@@ -1102,11 +1099,11 @@ class SonarPlayer(
         self.slider_layout.addWidget(self.seek_bar, 1)
         self.slider_layout.addWidget(self.total_time_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.footer_container = QWidget()
-        self.footer_container.setObjectName("FooterBar")
-        self.footer_container.setStyleSheet("QWidget#FooterBar { background-color: rgba(11, 11, 11, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
+        self._footer_panel = QWidget()
+        self._footer_panel.setObjectName("FooterPanel")
+        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgba(11, 11, 11, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
 
-        main_footer_layout = QHBoxLayout(self.footer_container)
+        main_footer_layout = QHBoxLayout(self._footer_panel)
         main_footer_layout.setContentsMargins(8, 0, 20, 0)
         main_footer_layout.setSpacing(0)
 
@@ -1149,7 +1146,7 @@ class SonarPlayer(
         main_footer_layout.addWidget(footer_center, 2)
         main_footer_layout.addWidget(footer_right, 1)
 
-        main_layout.addWidget(self.footer_container)
+        main_layout.addWidget(self._footer_panel)
 
         # Queue panel is now a permanent sidebar (see body layout above)
 
@@ -1217,13 +1214,13 @@ class SonarPlayer(
     # ── Left panel drag-to-reorder ────────────────────────────────────────────
 
     def _rebuild_left_layout(self, order):
-        while self._left_panel.count():
-            self._left_panel.takeAt(0)
+        while self._left_layout.count():
+            self._left_layout.takeAt(0)
         _stretch = {'art': 2, 'vis': 1, 'info': 1}
         for i, key in enumerate(order):
-            self._left_panel.addWidget(self._section_widgets[key], _stretch[key])
+            self._left_layout.addWidget(self._section_widgets[key], _stretch[key])
             if i < len(order) - 1:
-                self._left_panel.addSpacing(8)
+                self._left_layout.addSpacing(8)
         self._section_order = list(order)
 
     def _on_left_drag_move(self, global_y, src_key):

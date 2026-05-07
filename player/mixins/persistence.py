@@ -23,8 +23,7 @@ class PersistenceMixin:
             self.settings.setValue('current_playlist', json.dumps(self.playlist_data))
             self.settings.setValue('saved_current_index', str(self.current_index))
             self.settings.setValue('saved_position', str(self.seek_bar.position_ms))
-            self.settings.setValue('last_master_color', self.master_color)
-            self.settings.setValue('visual_settings', json.dumps(self.visual_settings))
+            self.settings.setValue('theme', self.theme.to_json())
             self.settings.setValue('waveform_mode', self.seek_bar.display_mode)
             if hasattr(self, 'visualizer'):
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)

@@ -1852,10 +1852,11 @@ class TracksBrowser(QWidget):
         self.main_layout.setSpacing(0)
 
         # --- HEADER ---
-        header_container = QWidget()
+        self.header_container = QWidget()
+        header_container = self.header_container
         header_container.setFixedHeight(50)
         header_container.setStyleSheet("QWidget { background-color: #111; border-top-left-radius: 5px; border-top-right-radius: 5px; border-bottom: 1px solid #222; }")
-        
+
         header_layout = QHBoxLayout(header_container)
         # 🟢 FIX: Set right margin to 2 (or 0) to push icon to the very edge
         header_layout.setContentsMargins(15, 0, 10, 0) 
@@ -3774,6 +3775,10 @@ class TracksBrowser(QWidget):
             
         self.current_accent = color
         self.current_alpha = alpha
+        if hasattr(self, 'header_container'):
+            self.header_container.setStyleSheet(
+                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+            )
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
         self._scroll_reveal.color = color
@@ -3855,7 +3860,7 @@ class TracksBrowser(QWidget):
             
             if hasattr(self, 'footer'):
                 h = self.footer.isHidden()
-                self.footer.set_accent_color(color)
+                self.footer.set_accent_color(color, alpha)
                 if h or in_album: self.footer.hide()
                 
             # 🟢 3. Route to the new styling engine!
@@ -3871,8 +3876,7 @@ class TracksBrowser(QWidget):
         css = f"""
         {scrollbar_css(color_hex)}
         
-        /* 🟢 THE FIX: Alpha injected into QTreeWidget background! */
-        QTreeWidget {{ background: rgba(12, 12, 12, {alpha}); border: none; font-size: 10pt; outline: none; }} 
+        QTreeWidget {{ background: transparent; border: none; font-size: 10pt; outline: none; }}
         QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border-top: 1px solid rgba(255,255,255,0.05); border-bottom: none; color: #ddd; }}
         QTreeWidget::item:selected {{ background: rgba(255,255,255,0.1); color: {color_hex}; }} 
         QTreeWidget::item:hover {{ background: rgba(255,255,255,0.05); color: {color_hex}; }}

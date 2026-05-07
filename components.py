@@ -397,8 +397,16 @@ class PaginationFooter(QWidget):
         self.main_layout.addLayout(self.btn_layout)
         self.main_layout.addStretch() # Pushes buttons to the left just like before!
 
-    def set_accent_color(self, color):
+    def set_accent_color(self, color, alpha=1.0):
         self.current_accent = color
+        self.setStyleSheet(f"""
+            PaginationFooter {{
+                background-color: rgba(12,12,12,{alpha});
+                border-bottom-left-radius: 5px;
+                border-bottom-right-radius: 5px;
+                border-top: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
         self.render_pagination(self.current_page, self.total_pages)
 
     def _create_btn(self, text, page=None, active=False, enabled=True, visible=True):
