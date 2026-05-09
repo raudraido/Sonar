@@ -370,8 +370,10 @@ class VisualsMixin:
             self._tab_hook_set = True
 
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
+        _bw = self.theme.border_width
+        _bc = QColor(mc).darker(250).name()
         tabs_css = f"""
-            QTabWidget::pane {{ border: 0; }}
+            QTabWidget::pane {{ border: 0; border-top: {_bw}px solid {_bc}; }}
             QTabWidget::tab-bar {{ alignment: left; }} /* Removed 'left: 15px' */
             QTabBar::tab {{
                 background: #111;
@@ -484,6 +486,13 @@ class VisualsMixin:
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
                 f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
+            )
+            self._left_panel.header.setStyleSheet(
+                f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
+            )
+        if hasattr(self, '_queue_panel') and hasattr(self._queue_panel, '_panel_header'):
+            self._queue_panel._panel_header.setStyleSheet(
+                f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
             )
         if hasattr(self, '_main_panel'):
             self._main_panel.setStyleSheet(

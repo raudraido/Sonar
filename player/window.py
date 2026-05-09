@@ -653,7 +653,16 @@ class SonarPlayer(
         _bw = self.theme.border_width
         right_panel.setContentsMargins(_bw, 8, _bw, _bw)
         right_panel.setSpacing(0)
-        right_panel.addWidget(self.tabs)
+
+        self.main_header = QWidget()
+        self.main_header.setObjectName('MainHeader')
+        self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        _mh_layout = QVBoxLayout(self.main_header)
+        _mh_layout.setContentsMargins(0, 0, 0, 0)
+        _mh_layout.setSpacing(0)
+        _mh_layout.addWidget(self.tabs)
+
+        right_panel.addWidget(self.main_header)
         _right_widget = self._main_panel
 
         self._left_panel.setFixedWidth(330)
