@@ -782,19 +782,6 @@ class HomeView(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Header
-        self.header_container = QWidget()
-        self.header_container.setFixedHeight(50)
-        self.header_container.setStyleSheet(
-            "QWidget { background-color: #111; border-bottom: 1px solid #222; }")
-        header_layout = QHBoxLayout(self.header_container)
-        header_layout.setContentsMargins(15, 0, 10, 0)
-        header_layout.setSpacing(15)
-        self.status_label = QLabel("Home")
-        self.status_label.setStyleSheet("color: #888; font-weight: bold; background: transparent; border: none;")
-        header_layout.addWidget(self.status_label)
-        header_layout.addStretch()
-        main_layout.addWidget(self.header_container)
 
         # Scroll area
         self.scroll = QScrollArea()
@@ -1128,11 +1115,6 @@ class HomeView(QWidget):
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color
-        if hasattr(self, 'header_container'):
-            self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
-            )
-
         self.scroll.setStyleSheet(f"""
             QScrollArea#HomeScroll {{
                 background-color: transparent;
