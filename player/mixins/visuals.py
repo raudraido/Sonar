@@ -487,6 +487,10 @@ class VisualsMixin:
             self._left_panel.setStyleSheet(
                 f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
             )
+        if hasattr(self, 'main_header'):
+            self.main_header.setStyleSheet(
+                f'#MainHeader {{ background: rgba(14,14,14,{queue_alpha}); }}'
+            )
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
             )
