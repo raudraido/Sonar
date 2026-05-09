@@ -120,6 +120,8 @@ class VisualsMixin:
         self.current_raw_art = raw_art
         
         if self.theme.dynamic_accent:
+            if dominant_color.startswith('#') and len(dominant_color) > 7:
+                dominant_color = dominant_color[:7]
             self.theme.accent = dominant_color
             if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
