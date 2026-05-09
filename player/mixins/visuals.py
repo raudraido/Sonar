@@ -146,36 +146,8 @@ class VisualsMixin:
         else:
             self.now_playing_widget.set_cover(None)
 
-        if not getattr(self, 'static_bg_path', None):
-            if not blurred_qimg.isNull():
-                bg_pix = QPixmap.fromImage(blurred_qimg)
-                self.bg_label.setPixmap(bg_pix)
-            else:
-                self.bg_label.setPixmap(QPixmap())
-
         if hasattr(self, 'art_container'):
             self.art_container.scaled_cache = {}
-
-        # Start the crossfade: fade bg_label in over the old frame in bg_label_old
-        if not getattr(self, 'static_bg_path', None) and hasattr(self, 'fade_anim'):
-            if self.fade_anim.state() == QPropertyAnimation.State.Running:
-                self.fade_anim.stop()
-            # Recreate the effect each time — Qt deletes the C++ object when
-            # setGraphicsEffect(None) is called, leaving a dangling wrapper.
-            from PyQt6.QtWidgets import QGraphicsOpacityEffect
-            self.opacity_effect = QGraphicsOpacityEffect(self.bg_label)
-            self.opacity_effect.setOpacity(0.0)
-            self.bg_label.setGraphicsEffect(self.opacity_effect)
-            self.fade_anim.setTargetObject(self.opacity_effect)
-            self.crossfade_progress = 0.0
-            self.fade_anim.start()
-        else:
-            # Fallback: no animation available, switch instantly
-            self.crossfade_progress = 1.0
-            self.old_cover_pixmap = None
-            if hasattr(self, 'bg_label_old'):
-                self.bg_label_old.setPixmap(QPixmap())
-            self.bg_label.setGraphicsEffect(None)
 
         if hasattr(self, 'art_container'):
             self.art_container.update()

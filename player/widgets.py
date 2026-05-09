@@ -659,49 +659,6 @@ class SettingsWindow(QWidget):
         self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
         layout.addWidget(self.color_btn)
 
-        # --- STATIC BACKGROUND IMAGE ---
-        bg_img_label = QLabel("Static Background Image:")
-        bg_img_label.setStyleSheet("color: #aaa; margin-top: 4px;")
-        layout.addWidget(bg_img_label)
-
-        bg_row = QHBoxLayout()
-        self.bg_img_btn = QPushButton("Choose Image…")
-        self.bg_img_btn.clicked.connect(self.pick_static_bg)
-        self.bg_img_btn.setStyleSheet("padding: 8px 14px; border-radius: 6px; background: #2a2a2a; color: #ddd;")
-        bg_row.addWidget(self.bg_img_btn)
-
-        self.bg_img_clear = QPushButton("Clear")
-        self.bg_img_clear.clicked.connect(self.clear_static_bg)
-        self.bg_img_clear.setStyleSheet("padding: 8px 14px; border-radius: 6px; background: #2a2a2a; color: #888;")
-        self.bg_img_clear.setVisible(bool(getattr(self.parent, 'static_bg_path', None)))
-        bg_row.addWidget(self.bg_img_clear)
-        layout.addLayout(bg_row)
-
-        current_path = getattr(self.parent, 'static_bg_path', None)
-        self.bg_img_name = QLabel(os.path.basename(current_path) if current_path else "None")
-        self.bg_img_name.setStyleSheet("color: #666; font-size: 11px;")
-        layout.addWidget(self.bg_img_name)
-
-        layout.addWidget(QLabel("Background:"))
-        _blur_pct = int(min(self.parent.theme.blur, 5) / 5 * 100)
-        self.blur_label = QLabel(f"Blur Radius: {_blur_pct}%")
-
-        layout.addWidget(self.blur_label)
-        self.blur_slider = QSlider(Qt.Orientation.Horizontal)
-        self.blur_slider.setRange(0, 100)
-        self.blur_slider.setValue(_blur_pct)
-        self.blur_slider.valueChanged.connect(self.update_labels_only)
-
-        layout.addWidget(self.blur_slider)
-        self.dark_label = QLabel(f"Darkness Blend: {int(self.parent.theme.overlay * 100)}%")
-
-        layout.addWidget(self.dark_label)
-        self.dark_slider = QSlider(Qt.Orientation.Horizontal)
-        self.dark_slider.setRange(0, 100)
-        self.dark_slider.setValue(int(self.parent.theme.overlay * 100))
-        self.dark_slider.valueChanged.connect(self.update_labels_only)
-
-        layout.addWidget(self.dark_slider)
         transparency_group = QGroupBox("Transparency")
         transparency_group.setStyleSheet("""
             QGroupBox {
@@ -748,7 +705,7 @@ class SettingsWindow(QWidget):
         self._apply_debounce.setSingleShot(True)
         self._apply_debounce.setInterval(150)
         self._apply_debounce.timeout.connect(self.apply_heavy_changes)
-        self._sliders = (self.blur_slider, self.dark_slider, self.alpha_slider,
+        self._sliders = (self.alpha_slider,
                          self.footer_alpha_slider, self.queue_alpha_slider)
         for _s in self._sliders:
             _s.valueChanged.connect(self._apply_debounce.start)
@@ -929,19 +886,14 @@ class SettingsWindow(QWidget):
                 self.parent.seek_bar.update()
     
     def update_labels_only(self):
-        self.blur_label.setText(f"Blur Radius: {self.blur_slider.value()}%")
-        self.dark_label.setText(f"Darkness Blend: {self.dark_slider.value()}%")
         self.alpha_label.setText(f"Main Panel: {self.alpha_slider.value()}%")
         self.footer_alpha_label.setText(f"Footer Panel: {self.footer_alpha_slider.value()}%")
         self.queue_alpha_label.setText(f"Left/Queue Panel: {self.queue_alpha_slider.value()}%")
 
     def apply_heavy_changes(self):
-        self.parent.theme.blur = round(self.blur_slider.value() / 100 * 5, 2)
-        self.parent.theme.overlay = self.dark_slider.value() / 100.0
         self.parent.theme.content_alpha = 1.0 - self.alpha_slider.value() / 100.0
-
-        self.parent.theme.footer_alpha = 1.0 - self.footer_alpha_slider.value() / 100.0
-        self.parent.theme.panel_alpha  = 1.0 - self.queue_alpha_slider.value() / 100.0
+        self.parent.theme.footer_alpha  = 1.0 - self.footer_alpha_slider.value() / 100.0
+        self.parent.theme.panel_alpha   = 1.0 - self.queue_alpha_slider.value() / 100.0
 
         if hasattr(self.parent, 'refresh_visuals'): self.parent.refresh_visuals()
 

@@ -485,17 +485,10 @@ class SonarPlayer(
         self.ghost_label.setStyleSheet("background: transparent;")
         
         self.bg_label_old = QLabel(self)
-        self.bg_label_old.setScaledContents(True)
-        self.bg_label_old.resize(self.size())
-        self.bg_label_old.setStyleSheet("background-color: #080808;")
+        self.bg_label_old.hide()
 
         self.bg_label = QLabel(self)
-        self.bg_label.setScaledContents(True)
-        self.bg_label.resize(self.size())
-        self.bg_label.setStyleSheet("background-color: transparent;")
-        
-        self.bg_label.lower()
-        self.bg_label_old.lower()
+        self.bg_label.hide()
         
         central_widget = QWidget()
         central_widget.setStyleSheet("background: transparent;")
