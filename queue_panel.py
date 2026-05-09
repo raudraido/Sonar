@@ -121,7 +121,7 @@ class _ResizeHandleRight(QWidget):
         p.end()
 
 
-# ── Bottom tab button ────────────────────────────────────────────────────────
+# ── Bottom tab buttons ────────────────────────────────────────────────────────
 
 class _TabButton(QPushButton):
     def __init__(self, icon_path, label, parent=None):
@@ -343,10 +343,12 @@ class QueuePanel(QWidget):
 
     def __init__(self, parent=None, embedded=False):
         super().__init__(parent)
-        self._embedded       = embedded
-        self._accent_color   = '#cccccc'
-        self._settings       = QSettings()
-        self._hover_artist   = None  # (row, part_text) currently hovered
+        self._embedded         = embedded
+        self._accent_color     = '#cccccc'
+        self._settings         = QSettings()
+        self._hover_artist     = None  # (row, part_text) currently hovered
+        self._pending_refresh  = None  # (playlist_data, current_index, is_playing) deferred while hidden
+        self._pending_load     = None  # (artist_id, artist_name) deferred while hidden or info tab inactive
         self._heart_filled_pix = self._make_heart_pix("img/heart_filled.png", "#E91E63")
         self._heart_empty_pix  = self._make_heart_pix("img/heart.png", "#555555")
 
@@ -384,7 +386,7 @@ class QueuePanel(QWidget):
 
         # Header bar
         header = QWidget()
-        header.setFixedHeight(44)
+        header.setFixedHeight(51)
         header.setStyleSheet(
             'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
         )
@@ -550,12 +552,20 @@ class QueuePanel(QWidget):
         self._navidrome_client = client
 
     def load_track(self, artist_id: str, artist_name: str):
+        if not self.isVisible() or not self.btn_info.isChecked():
+            self._pending_load = (artist_id, artist_name)
+            return
+        self._pending_load = None
         self._artist_info_panel.set_accent_color(self._accent_color)
         self._artist_info_panel.load_track(self._navidrome_client, artist_id, artist_name)
 
     def _show_tab(self, tab: str):
         self._list.setVisible(tab == 'queue')
         self._artist_info_panel.setVisible(tab == 'info')
+        if tab == 'info' and self._pending_load is not None:
+            args, self._pending_load = self._pending_load, None
+            self._artist_info_panel.set_accent_color(self._accent_color)
+            self._artist_info_panel.load_track(self._navidrome_client, *args)
 
     def set_accent_color(self, color: str):
         self._accent_color = color
@@ -608,7 +618,20 @@ class QueuePanel(QWidget):
             self._playing_movie.stop()
         self._list.viewport().update()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._pending_refresh is not None:
+            args, self._pending_refresh = self._pending_refresh, None
+            self.refresh(*args)
+        if self.btn_info.isChecked() and self._pending_load is not None:
+            args, self._pending_load = self._pending_load, None
+            self._artist_info_panel.set_accent_color(self._accent_color)
+            self._artist_info_panel.load_track(self._navidrome_client, *args)
+
     def refresh(self, playlist_data: list, current_index: int, is_playing: bool = False):
+        if not self.isVisible():
+            self._pending_refresh = (playlist_data, current_index, is_playing)
+            return
         self._is_playing = is_playing
         if is_playing:
             self._playing_movie.start()
