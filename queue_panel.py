@@ -557,6 +557,11 @@ class QueuePanel(QWidget):
         self._navidrome_client = client
 
     def load_track(self, artist_id: str, artist_name: str):
+        # Wipe stale content immediately if the artist has changed
+        current_id = getattr(self._artist_info_panel, '_current_id', None)
+        if artist_id != current_id:
+            self._artist_info_panel._clear()
+            self._artist_info_panel._build_empty("Loading…")
         self._pending_load = (artist_id, artist_name)
         if self.isVisible() and self.btn_info.isChecked():
             self._info_load_timer.start()

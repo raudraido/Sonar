@@ -174,6 +174,10 @@ class ArtistInfoPanel(QScrollArea):
         self._layout.addStretch()
         self.setWidget(self._root)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._root.setMaximumWidth(self.viewport().width())
+
         self._build_empty("Play something to see artist info")
 
     # ── public API ────────────────────────────────────────────────────────────
@@ -542,7 +546,7 @@ class ArtistInfoPanel(QScrollArea):
 
         v_lbl = QLabel(venue_name or place)
         v_lbl.setStyleSheet("color: #ddd; font-size: 11px; font-weight: bold; background: transparent;")
-        v_lbl.setWordWrap(False)
+        v_lbl.setWordWrap(True)
         mv.addWidget(v_lbl)
 
         if place and venue_name:
