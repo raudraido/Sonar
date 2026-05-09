@@ -552,17 +552,8 @@ class SonarPlayer(
 
         self.tabs = _TabsCompat(self.tab_bar, self.tab_stack)
 
-        self.nav_container = QWidget()
-        nav_layout = QHBoxLayout(self.nav_container)
-        nav_layout.setContentsMargins(5, 0, 15, 9)
-        nav_layout.setSpacing(4)
-        nav_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.btn_back.setFixedSize(36, 28)
-        self.btn_fwd.setFixedSize(36, 28)
         self.btn_back.setToolTip("Go Back")
         self.btn_fwd.setToolTip("Go Forward")
-        nav_layout.addWidget(self.btn_back)
-        nav_layout.addWidget(self.btn_fwd)
         
         # 1. Home
         self.home_tab = HomeView(None) 
@@ -720,17 +711,14 @@ class SonarPlayer(
         self.main_header.setFixedHeight(52)
         self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         _mh_layout = QVBoxLayout(self.main_header)
-        _mh_layout.setContentsMargins(0, 0, 0, 0)
+        _mh_layout.setContentsMargins(8, 10, 0, 0)
         _mh_layout.setSpacing(0)
 
-        # Nav buttons + tab bar in a single row
-        _tab_row = QWidget()
-        _tab_row_layout = QHBoxLayout(_tab_row)
-        _tab_row_layout.setContentsMargins(0, 0, 0, 0)
-        _tab_row_layout.setSpacing(0)
-        _tab_row_layout.addWidget(self.nav_container)
-        _tab_row_layout.addWidget(self.tab_bar, 1)
-        _mh_layout.addWidget(_tab_row)
+        _mh_layout.addWidget(self.tab_bar)
+
+        # Nav buttons go in the left panel header's right corner
+        self._left_panel.header_layout.addWidget(self.btn_back)
+        self._left_panel.header_layout.addWidget(self.btn_fwd)
 
         right_panel.addWidget(self.main_header)       # tab bar only — own background
         right_panel.addWidget(self.tab_stack, 1)      # content — browser backgrounds only

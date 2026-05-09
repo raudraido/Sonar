@@ -461,8 +461,8 @@ class VisualsMixin:
             # ------------------------------------------------
 
             if hasattr(self, 'btn_back'):
-                self.btn_back.setStyleSheet(modern_dark_style)
-                self.btn_fwd.setStyleSheet(modern_dark_style)
+                self.btn_back.set_color(mc)
+                self.btn_fwd.set_color(mc)
 
         # Apply the Footer Opacity Dynamically!
         footer_alpha = self.theme.footer_alpha

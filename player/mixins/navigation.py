@@ -6,16 +6,17 @@ from PyQt6.QtWidgets import QApplication, QAbstractItemView, QPushButton, QListW
 from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel
 
 from player.workers import SyncCheckWorker
+from home import _ArrowButton
 
 class NavigationMixin:
     def setup_global_navigation(self):
         self.nav_history = []
         self.nav_index = -1
         self.programmatic_nav = False
-        
+
         if not hasattr(self, 'btn_back'):
-            self.btn_back = QPushButton("<")
-            self.btn_fwd = QPushButton(">")
+            self.btn_back = _ArrowButton("left",  "#ffffff")
+            self.btn_fwd  = _ArrowButton("right", "#ffffff")
             self.btn_back.clicked.connect(self.go_back)
             self.btn_fwd.clicked.connect(self.go_forward)
 
@@ -64,9 +65,9 @@ class NavigationMixin:
 
     def update_nav_buttons(self):
         if hasattr(self, 'btn_back'):
-            self.btn_back.setEnabled(self.nav_index > 0)
+            self.btn_back.set_active(self.nav_index > 0)
         if hasattr(self, 'btn_fwd'):
-            self.btn_fwd.setEnabled(self.nav_index < len(self.nav_history) - 1)
+            self.btn_fwd.set_active(self.nav_index < len(self.nav_history) - 1)
 
     def reposition_nav_buttons(self):
         pass 

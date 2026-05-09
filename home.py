@@ -180,6 +180,7 @@ class _ArrowButton(QAbstractButton):
         super().__init__(parent)
         self._direction = direction
         self._color = QColor(color)
+        self._active = True
         self.setFixedSize(30, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
@@ -188,14 +189,18 @@ class _ArrowButton(QAbstractButton):
         self._color = QColor(color)
         self.update()
 
+    def set_active(self, active: bool):
+        self._active = active
+        self.update()
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self.underMouse():
-            p.setBrush(QColor(255, 255, 255, 20))
+            p.setBrush(QColor(255, 255, 255, 26))
             p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 5, 5)
-        color = self._color if self.isEnabled() else QColor("#333")
+            p.drawRoundedRect(self.rect(), 12, 12)
+        color = self._color if self._active else QColor("#333")
         p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine,
                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         cx, cy = self.width() / 2, self.height() / 2

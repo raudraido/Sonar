@@ -214,6 +214,10 @@ class LeftPanel(QWidget):
         self.header.setStyleSheet(
             'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
         )
+        self.header_layout = QHBoxLayout(self.header)
+        self.header_layout.setContentsMargins(8, 0, 8, 0)
+        self.header_layout.setSpacing(4)
+        self.header_layout.addStretch()
         _left_outer.addWidget(self.header)
 
         # Sections container — keeps 8px margins around art/visualizer
