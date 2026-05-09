@@ -146,6 +146,9 @@ class VisualsMixin:
         else:
             self.now_playing_widget.set_cover(None)
 
+        if hasattr(self, 'bg_label'):
+            self.bg_label.setStyleSheet(f"background-color: {self.theme.accent};")
+
         if hasattr(self, 'art_container'):
             self.art_container.scaled_cache = {}
 
