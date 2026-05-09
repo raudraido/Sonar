@@ -123,6 +123,9 @@ class AudioEngine(QObject):
     # ------------------------------------------------------------------
     def request_waveform(self, path: str, num_points: int = 3000):
         """Generate a waveform array in a background thread. Handles stream URLs via a temp file."""
+        self._waveform_token = getattr(self, '_waveform_token', 0) + 1
+        token = self._waveform_token
+
         def task():
             if not self.lib:
                 return
@@ -134,11 +137,18 @@ class AudioEngine(QObject):
                     fd, target_path = tempfile.mkstemp(suffix=".media")
                     with os.fdopen(fd, 'wb') as f:
                         for chunk in response.iter_content(chunk_size=65536):
+                            if token != self._waveform_token:
+                                break
                             f.write(chunk)
                     is_temp = True
                 except Exception as e:
                     print(f"[AudioEngine] Waveform download failed: {e}")
                     return
+            if token != self._waveform_token:
+                if is_temp:
+                    try: os.remove(target_path)
+                    except OSError: pass
+                return
             out_array = (ctypes.c_float * num_points)()
             exact_ms  = self.lib.generate_waveform(target_path.encode('utf-8'), out_array, num_points)
             if is_temp:
@@ -146,6 +156,8 @@ class AudioEngine(QObject):
                     os.remove(target_path)
                 except OSError:
                     pass
+            if token != self._waveform_token:
+                return
             if exact_ms > 0:
                 self.total_ms = exact_ms
                 self.durationChanged.emit(exact_ms)

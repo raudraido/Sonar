@@ -299,6 +299,10 @@ class PlaybackMixin:
             track_id = track.get('id')
             if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
                 from player.workers import SongRefreshWorker
+                old = getattr(self, '_song_refresh_worker', None)
+                if old:
+                    try: old.refreshed.disconnect()
+                    except: pass
                 self._song_refresh_worker = SongRefreshWorker(self.navidrome_client, track_id, idx)
                 self._song_refresh_worker.refreshed.connect(self._on_song_refreshed)
                 self._song_refresh_worker.start()
