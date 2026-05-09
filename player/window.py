@@ -708,7 +708,7 @@ class SonarPlayer(
         self.main_header = QWidget()
         self.main_header.setObjectName('MainHeader')
         self.main_header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.main_header.setFixedHeight(52)
+        self.main_header.setFixedHeight(62)
         self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         _mh_layout = QVBoxLayout(self.main_header)
         _mh_layout.setContentsMargins(8, 10, 0, 0)
@@ -950,7 +950,7 @@ class SonarPlayer(
         
         footer_center = QWidget()
         center_layout = QVBoxLayout(footer_center)
-        center_layout.setContentsMargins(10, 10, 10, 10)
+        center_layout.setContentsMargins(10, 10, 10, 0)
         center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center_layout.addLayout(self.controls_layout)
         center_layout.addLayout(self.slider_layout)

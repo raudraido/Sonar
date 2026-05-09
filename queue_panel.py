@@ -391,7 +391,7 @@ class QueuePanel(QWidget):
         # Header bar
         self._panel_header = QWidget()
         header = self._panel_header
-        header.setFixedHeight(52)
+        header.setFixedHeight(62)
         header.setStyleSheet(
             'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
         )

@@ -130,10 +130,10 @@ class NowPlayingFooterWidget(QWidget):
 
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setFixedHeight(94)
+        self.setFixedHeight(84)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
         # 1. Tiny Cover Art

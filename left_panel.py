@@ -210,7 +210,7 @@ class LeftPanel(QWidget):
 
         # Header — mirrors the queue panel header for visual alignment
         self.header = QWidget()
-        self.header.setFixedHeight(52)
+        self.header.setFixedHeight(62)
         self.header.setStyleSheet(
             'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
         )
