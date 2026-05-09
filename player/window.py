@@ -60,274 +60,11 @@ from player.mixins.visuals     import VisualsMixin
 from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
 from queue_panel import QueuePanel
+from left_panel import LeftPanel
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
 from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
 from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
-
-
-class CenteredSquareWrapper(QWidget):
-    """Forces the album art to remain a perfect square and perfectly centered 
-    within its available space, preventing it from sticking to the edges."""
-    
-    def __init__(self, splitter):
-        super().__init__()
-        self._edge = _SplitterEdge(splitter, self)
-
-    def minimumSizeHint(self):
-        return QSize(0, 0)
-
-    def resizeEvent(self, event):
-        w = self.width()
-        h = self.height()
-        side = min(w, h)
-        
-        # Calculate exact center coordinates
-        x = (w - side) // 2
-        y = (h - side) // 2
-        
-        self.child.setGeometry(x, y, side, side)
-        art_section = self.parent()
-        left_widget = art_section.parent() if art_section else None
-        print(f"[ART] wrapper={w} art_section={art_section.width() if art_section else '?'} left_widget={left_widget.width() if left_widget else '?'} h={h} side={side}")
-        super().resizeEvent(event)
-
-class _DragGrip(QWidget):
-    """Grip handle that appears on section hover; lets the user drag sections to reorder."""
-    drag_moved = pyqtSignal(int)   # global Y while dragging
-    drag_ended = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCursor(Qt.CursorShape.SizeVerCursor)
-        self.setFixedSize(28, 28)
-        self._active = False
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._active = True
-            self.grabMouse()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._active:
-            self.drag_moved.emit(self.mapToGlobal(event.pos()).y())
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._active:
-            self._active = False
-            self.releaseMouse()
-            self.drag_ended.emit()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, _event):
-        p = _QPainter(self)
-        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(_QColor(140, 140, 140), 1.5))
-        cx, cy = self.width() // 2, self.height() // 2
-        for dy in (-4, 0, 4):
-            p.drawLine(cx - 7, cy + dy, cx + 7, cy + dy)
-        p.end()
-
-
-class _SectionWidget(QWidget):
-    """Left-panel section — hide/unhide button fades in on hover, exact scrubber pattern."""
-
-    def __init__(self, content, key, main_window, parent=None, show_controls=False):
-        super().__init__(parent)
-        self._content = content
-        self._key = key
-        self._main = main_window
-        self._companion_btn = None
-
-        lo = QVBoxLayout(self)
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(0)
-        lo.addWidget(content, 1)
-
-        self._toggle_opacity = None
-        self._hover_anim = None
-        self._drag_opacity = None
-        self._drag_anim = None
-
-        if show_controls:
-            self._btn = QPushButton(self)
-            self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self._btn.setIconSize(QSize(16, 16))
-            self._btn.setFixedSize(28, 28)
-            self._btn.clicked.connect(self._toggle)
-            self._btn.installEventFilter(self)
-
-            def _tint(path, color):
-                raw = QPixmap(resource_path(path))
-                if raw.isNull():
-                    return QIcon()
-                out = QPixmap(raw.size())
-                out.fill(Qt.GlobalColor.transparent)
-                p = _QPainter(out)
-                p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-                p.drawPixmap(0, 0, raw)
-                p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
-                p.fillRect(out.rect(), QColor(color))
-                p.end()
-                return QIcon(out)
-
-            self._hide_dim    = _tint("img/hide.png",   "#515151")
-            self._hide_bright = _tint("img/hide.png",   "#ffffff")
-            self._show_dim    = _tint("img/unhide.png", "#515151")
-            self._show_bright = _tint("img/unhide.png", "#ffffff")
-
-            self._btn.setIcon(self._hide_dim)
-            self._btn.setToolTip("Hide")
-            self._drag_grip = _DragGrip(self)
-            self._init_opacity_effect()
-            self._btn.hide()
-            self._drag_grip.hide()
-        else:
-            self._btn = None
-            self._drag_grip = None
-
-    def _current_dim(self):
-        return self._hide_dim if self._content.isVisible() else self._show_dim
-
-    def _current_bright(self):
-        return self._hide_bright if self._content.isVisible() else self._show_bright
-
-    def set_master_color(self, mc):
-        if self._btn is None:
-            return
-        r, g, b = QColor(mc).red(), QColor(mc).green(), QColor(mc).blue()
-        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
-        self._btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba({r},{g},{b},0.1);
-                border: 2px solid rgb({dr},{dg},{db});
-                border-radius: 14px; outline: none;
-            }}
-            QPushButton:hover {{
-                background-color: rgba({r},{g},{b},0.4);
-                border: 2px solid rgb({r},{g},{b});
-            }}
-            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
-        """)
-
-    def _init_opacity_effect(self):
-        self._btn.show()
-        self._toggle_opacity = QGraphicsOpacityEffect(self._btn)
-        self._toggle_opacity.setOpacity(0.0)
-        self._btn.setGraphicsEffect(self._toggle_opacity)
-        self._hover_anim = QPropertyAnimation(self._toggle_opacity, b"opacity")
-        self._hover_anim.setDuration(250)
-        self._hover_anim.finished.connect(self._on_anim_finished)
-
-        self._companion_opacity = None
-        self._companion_anim = None
-        if self._companion_btn is not None:
-            self._companion_btn.show()
-            self._companion_opacity = QGraphicsOpacityEffect(self._companion_btn)
-            self._companion_opacity.setOpacity(0.0)
-            self._companion_btn.setGraphicsEffect(self._companion_opacity)
-            self._companion_anim = QPropertyAnimation(self._companion_opacity, b"opacity")
-            self._companion_anim.setDuration(250)
-
-        self._drag_grip.show()
-        self._drag_opacity = QGraphicsOpacityEffect(self._drag_grip)
-        self._drag_opacity.setOpacity(0.0)
-        self._drag_grip.setGraphicsEffect(self._drag_opacity)
-        self._drag_anim = QPropertyAnimation(self._drag_opacity, b"opacity")
-        self._drag_anim.setDuration(250)
-
-    def _on_anim_finished(self):
-        if self._toggle_opacity and self._toggle_opacity.opacity() == 0.0:
-            self._btn.setGraphicsEffect(None)
-            self._btn.hide()
-            self._toggle_opacity = None
-            self._hover_anim = None
-            if self._companion_btn is not None:
-                self._companion_btn.setGraphicsEffect(None)
-                self._companion_btn.hide()
-                self._companion_opacity = None
-                self._companion_anim = None
-            self._drag_grip.setGraphicsEffect(None)
-            self._drag_grip.hide()
-            self._drag_opacity = None
-            self._drag_anim = None
-
-    def eventFilter(self, obj, event):
-        if obj is self._btn:
-            if event.type() == QEvent.Type.Enter:
-                self._btn.setIcon(self._current_bright())
-            elif event.type() == QEvent.Type.Leave:
-                self._btn.setIcon(self._current_dim())
-        return super().eventFilter(obj, event)
-
-    def enterEvent(self, event):
-        if self._btn is None:
-            super().enterEvent(event)
-            return
-        if self._toggle_opacity is None:
-            self._init_opacity_effect()
-        self._hover_anim.stop()
-        self._hover_anim.setEndValue(1.0)
-        self._hover_anim.start()
-        if self._companion_anim is not None:
-            self._companion_anim.stop()
-            self._companion_anim.setEndValue(1.0)
-            self._companion_anim.start()
-        if self._drag_anim is not None:
-            self._drag_anim.stop()
-            self._drag_anim.setEndValue(1.0)
-            self._drag_anim.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if self._toggle_opacity is None:
-            super().leaveEvent(event)
-            return
-        self._hover_anim.stop()
-        self._hover_anim.setEndValue(0.0)
-        self._hover_anim.start()
-        if self._companion_anim is not None:
-            self._companion_anim.stop()
-            self._companion_anim.setEndValue(0.0)
-            self._companion_anim.start()
-        if self._drag_anim is not None:
-            self._drag_anim.stop()
-            self._drag_anim.setEndValue(0.0)
-            self._drag_anim.start()
-        super().leaveEvent(event)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._btn is None:
-            return
-        self._btn.move(self.width() - self._btn.width() - 10, 5)
-        if self._companion_btn is not None:
-            self._companion_btn.move(self._btn.x() - self._companion_btn.width() - 8, 5)
-        self._drag_grip.move(10, 5)
-
-    def _toggle(self):
-        vis = not self._content.isVisible()
-        self._content.setVisible(vis)
-        self._btn.setIcon(self._current_dim())
-        self._btn.setToolTip("Hide" if vis else "Unhide")
-        self._main.settings.setValue(f'section_{self._key}_visible', int(vis))
-        if self._key == 'vis':
-            engine = getattr(self._main, 'audio_engine', None)
-            visualizer = getattr(self._main, 'visualizer', None)
-            if engine:
-                engine.set_visualizer_active(vis)
-            if visualizer:
-                visualizer.visualizer_enabled = vis
-                if not vis:
-                    visualizer.vis_data = [0.0] * visualizer.num_bars
-                    visualizer.update()
-
-
-class _LeftPanelWidget(QWidget):
-    pass
 
 
 class _TooltipLabel(_QFrame):
@@ -712,55 +449,15 @@ class SonarPlayer(
         self._splitter = None
 
         # --- LEFT PANEL ---
-        self._left_panel = _LeftPanelWidget()
-        self._left_panel.setObjectName('LeftPanel')
-        self._left_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._left_panel.setStyleSheet(
-            '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 0px; }'
-        )
-        self._left_layout = QVBoxLayout(self._left_panel)
-        self._left_layout.setContentsMargins(8, 8, 8, 8) #ALBUM ART margins (all sides)
-        self._left_layout.setSpacing(0)
-
-        # Album art panel — collapsed by default, animated open by footer expand button
-        self.art_container = SquareArtContainer(self)
-        self._art_section = _SectionWidget(self.art_container, 'art', self)
-        self._art_section.setMaximumHeight(0)
-        self._art_section.setMinimumHeight(0)
+        self._left_panel = LeftPanel(self, self.audio_engine, self.settings)
+        # Expose sub-objects as window attributes so mixins keep working unchanged
+        self.visualizer    = self._left_panel.visualizer
+        self.art_container = self._left_panel.art_container
+        self._art_section  = self._left_panel.art_section
+        self._vis_section  = self._left_panel.vis_section
+        self._sidebar_art_anim = self._left_panel.sidebar_art_anim
         self._sidebar_art_visible = False
-
-        # Left-panel art slide animation (height)
-        self._sidebar_art_anim = QPropertyAnimation(self._art_section, b"maximumHeight")
-        self._sidebar_art_anim.setDuration(250)
-        self._sidebar_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._sidebar_art_anim.valueChanged.connect(
-            lambda v: self._art_section.setMinimumHeight(int(v))
-        )
-
-        # (footer art anim and close button set up after now_playing_widget is created below)
-
-        # Visualizer — fills the entire left panel
-        self.visualizer = AudioVisualizer(self.audio_engine)
-        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.visualizer.setMaximumWidth(16777215)  # reset any previously saved constraint
-
-        vis_container = QWidget()
-        vis_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        vis_layout = QHBoxLayout(vis_container)
-        vis_layout.setContentsMargins(0, 0, 0, 0)
-        vis_layout.setSpacing(0)
-        vis_layout.addWidget(self.visualizer)
-
-        self._vis_section  = _SectionWidget(vis_container, 'vis', self)
-        btn_vis = self.visualizer.btn_toggle_vis
-        # Tear down AudioVisualizer's opacity effect before re-parenting
-        btn_vis.setGraphicsEffect(None)
-        btn_vis.hide()
-        self.visualizer.toggle_opacity = None
-        self.visualizer.hover_anim = None
-        btn_vis.setParent(self._vis_section)
-        btn_vis.raise_()
-        self._vis_section._companion_btn = btn_vis
+        self._info_section = None  # removed from left panel
 
         # track_title / track_artist / file_type_label / heart_btn exist as detached
         # widgets so all mixin code that references them keeps working — they just
@@ -774,21 +471,6 @@ class SonarPlayer(
         self.heart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.heart_btn.setStyleSheet("background: transparent; border: none;")
         self.heart_btn.clicked.connect(self._toggle_now_playing_favorite)
-
-        self._info_section = None  # removed from left panel
-
-        # Vis fills the panel, art slides in at the bottom
-        self._section_widgets = {'art': self._art_section, 'vis': self._vis_section}
-        self._section_order = ['vis', 'art']
-        for key, sec in self._section_widgets.items():
-            if sec._drag_grip:
-                sec._drag_grip.drag_moved.connect(lambda y, k=key: self._on_left_drag_move(y, k))
-                sec._drag_grip.drag_ended.connect(self._on_left_drag_end)
-        self._rebuild_left_layout(self._section_order)
-
-        # Restore section visibility
-        if not int(self.settings.value('section_vis_visible', 1)):
-            QTimer.singleShot(0, self._vis_section._toggle)
         
         # --- RIGHT PANEL (Tabs & Search) ---
 
@@ -1287,40 +969,6 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
-
-    # ── Left panel drag-to-reorder ────────────────────────────────────────────
-
-    def _rebuild_left_layout(self, order):
-        while self._left_layout.count():
-            self._left_layout.takeAt(0)
-        _stretch = {'art': 0, 'vis': 1, 'info': 0}
-        for i, key in enumerate(order):
-            self._left_layout.addWidget(self._section_widgets[key], _stretch[key])
-            if i < len(order) - 1:
-                self._left_layout.addSpacing(8)
-        self._section_order = list(order)
-
-    def _on_left_drag_move(self, global_y, src_key):
-        order = list(self._section_order)
-        src_idx = order.index(src_key)
-        target_idx = len(order)
-        for i, key in enumerate(order):
-            w = self._section_widgets[key]
-            mid_global = w.mapToGlobal(QPoint(0, w.height() // 2)).y()
-            if global_y < mid_global:
-                target_idx = i
-                break
-        if target_idx == src_idx or target_idx == src_idx + 1:
-            return
-        new_order = list(order)
-        new_order.pop(src_idx)
-        insert_at = target_idx if target_idx < src_idx else target_idx - 1
-        new_order.insert(insert_at, src_key)
-        if new_order != self._section_order:
-            self._rebuild_left_layout(new_order)
-
-    def _on_left_drag_end(self):
-        self.settings.setValue('section_order', ','.join(self._section_order))
 
     # ── Cast ──────────────────────────────────────────────────────────────────
 
