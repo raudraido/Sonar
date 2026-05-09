@@ -161,7 +161,7 @@ class SearchResultRow(QWidget):
         self.action_layout.setContentsMargins(0, 0, 0, 0)
         self.action_layout.setSpacing(8)
         
-        mc = getattr(self.main_window, 'master_color', '#1DB954')
+        mc = getattr(getattr(self.main_window, 'theme', None), 'accent', '#ffffff')
         
         # --- A. Standard Play Button ---
         self.btn_play = QPushButton()
@@ -250,7 +250,7 @@ class SearchResultRow(QWidget):
         self.btn_play.setIconSize(QSize(36, 36))
 
     def set_custom_icon(self, button, filename):
-        mc = getattr(self.main_window, 'master_color', '#1DB954')
+        mc = getattr(getattr(self.main_window, 'theme', None), 'accent', '#ffffff')
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
         icon_path = os.path.join(base_path, filename)
         
@@ -442,7 +442,7 @@ class SpotlightSearch(QWidget):
         return filtered_results
     
     def apply_list_stylesheet(self):
-        mc = getattr(self.parent_window, 'master_color', '#1DB954')
+        mc = getattr(getattr(self.parent_window, 'theme', None), 'accent', '#ffffff')
         self.list_widget.setStyleSheet(f"""
             QListWidget {{ background: transparent; border: none; outline: none; margin-top: 5px; }}
             QListWidget::item {{ border-radius: 6px; margin: 2px 10px; border: none; }}

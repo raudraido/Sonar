@@ -51,10 +51,10 @@ Rectangle {
         id: grid
         anchors.fill: parent
 
-        leftMargin: 20
-        rightMargin: 20
-        topMargin: 20
-        bottomMargin: 20
+        leftMargin: 4
+        rightMargin: 4
+        topMargin: 4
+        bottomMargin: 4
 
         focus: true
         currentIndex: count > 0 ? 0 : -1
@@ -157,7 +157,10 @@ Rectangle {
             Rectangle {
                 id: cardRoot
                 anchors.fill: parent
-                anchors.margins: grid.itemGap
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
                 color: "transparent"
 
                 property bool isMouseHovered: mouseArea.containsMouse || playArea.containsMouse
