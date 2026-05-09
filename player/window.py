@@ -10,7 +10,9 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem, QSlider, QPushButton, QFileDialog, QHeaderView,
     QAbstractItemView, QStyledItemDelegate, QColorDialog, QMenu,
     QStyle, QCheckBox, QToolTip, QGraphicsColorizeEffect, QLineEdit,
-    QGraphicsOpacityEffect, QTabWidget, QListWidgetItem, QSizePolicy,
+    QGraphicsOpacityEffect, QTabWidget, QTabBar, QStackedWidget,
+    QStylePainter, QStyleOptionTab,
+    QListWidgetItem, QSizePolicy,
     QProgressBar, QDialog, QMessageBox, QComboBox, QApplication, QSplitter
 )
 from PyQt6.QtCore import (
@@ -62,6 +64,71 @@ from player.mixins.persistence import PersistenceMixin
 from queue_panel import QueuePanel
 from left_panel import LeftPanel
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
+
+
+class _TabBar(QTabBar):
+    """QTabBar that skips CE_TabBarBase so no gray baseline is drawn."""
+    def paintEvent(self, event):
+        painter = QStylePainter(self)
+        opt = QStyleOptionTab()
+        for i in range(self.count()):
+            self.initStyleOption(opt, i)
+            painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+
+
+class _TabsCompat(_QObject):
+    """QTabBar + QStackedWidget drop-in for the QTabWidget API we use.
+    tab_bar lives inside main_header; tab_stack sits below it in right_panel."""
+    currentChanged = pyqtSignal(int)
+    tabBarClicked  = pyqtSignal(int)
+
+    def __init__(self, tab_bar: QTabBar, tab_stack: QStackedWidget):
+        super().__init__()
+        self._bar   = tab_bar
+        self._stack = tab_stack
+        tab_bar.currentChanged.connect(self._on_current_changed)
+        tab_bar.tabBarClicked.connect(self.tabBarClicked)
+        tab_bar.tabMoved.connect(self._sync_stack_move)
+
+    def _on_current_changed(self, idx: int):
+        self._stack.setCurrentIndex(idx)
+        self.currentChanged.emit(idx)
+
+    def _sync_stack_move(self, from_idx: int, to_idx: int):
+        widget = self._stack.widget(from_idx)
+        self._stack.removeWidget(widget)
+        self._stack.insertWidget(to_idx, widget)
+        self._stack.setCurrentIndex(self._bar.currentIndex())
+
+    # ── QTabWidget-compatible API ─────────────────────────────────────────────
+
+    def addTab(self, widget, label: str) -> int:
+        idx = self._bar.addTab(label)
+        self._stack.addWidget(widget)
+        return idx
+
+    def tabBar(self):              return self._bar
+    def currentWidget(self):       return self._stack.currentWidget()
+    def currentIndex(self) -> int: return self._bar.currentIndex()
+    def count(self) -> int:        return self._bar.count()
+
+    def setCurrentIndex(self, idx: int):
+        self._bar.setCurrentIndex(idx)
+
+    def indexOf(self, widget) -> int:
+        for i in range(self._stack.count()):
+            if self._stack.widget(i) is widget:
+                return i
+        return -1
+
+    def widget(self, idx: int):
+        return self._stack.widget(idx)
+
+    def setFocusPolicy(self, policy): self._bar.setFocusPolicy(policy)
+    def setElideMode(self, mode):     self._bar.setElideMode(mode)
+    def setObjectName(self, name):    self._bar.setObjectName(name)
+    def setStyleSheet(self, css):     self._bar.setStyleSheet(css)
+    def setCornerWidget(self, *_):    pass  # nav buttons are in main_header layout
 from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
 from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
@@ -474,35 +541,28 @@ class SonarPlayer(
         
         # --- RIGHT PANEL (Tabs & Search) ---
 
-        self.tabs = QTabWidget()
-        self.tabs.setObjectName('TabsPanel')
-        self.tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        
-        
-        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tab_bar = _TabBar()
+        self.tab_bar.setObjectName('TabsPanel')
+        self.tab_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tab_bar.setExpanding(False)
 
-        
+        self.tab_stack = QStackedWidget()
+        self.tab_stack.setObjectName('TabStack')
+
+        self.tabs = _TabsCompat(self.tab_bar, self.tab_stack)
+
         self.nav_container = QWidget()
         nav_layout = QHBoxLayout(self.nav_container)
-        
-        
-        nav_layout.setContentsMargins(5, 0, 15, 9) #NAVIGATON button margins (right and bottom) 
+        nav_layout.setContentsMargins(5, 0, 15, 9)
         nav_layout.setSpacing(4)
-        
-        
         nav_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
         self.btn_back.setFixedSize(36, 28)
         self.btn_fwd.setFixedSize(36, 28)
         self.btn_back.setToolTip("Go Back")
         self.btn_fwd.setToolTip("Go Forward")
-        
         nav_layout.addWidget(self.btn_back)
         nav_layout.addWidget(self.btn_fwd)
-        
-        
-        self.tabs.setCornerWidget(self.nav_container, Qt.Corner.TopLeftCorner)
         
         # 1. Home
         self.home_tab = HomeView(None) 
@@ -657,13 +717,23 @@ class SonarPlayer(
         self.main_header = QWidget()
         self.main_header.setObjectName('MainHeader')
         self.main_header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.main_header.setFixedHeight(52)
+        self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         _mh_layout = QVBoxLayout(self.main_header)
-        _mh_layout.setContentsMargins(0, 8, 0, 0)
+        _mh_layout.setContentsMargins(0, 0, 0, 0)
         _mh_layout.setSpacing(0)
-        _mh_layout.addWidget(self.tabs)
 
-        right_panel.addWidget(self.main_header)
+        # Nav buttons + tab bar in a single row
+        _tab_row = QWidget()
+        _tab_row_layout = QHBoxLayout(_tab_row)
+        _tab_row_layout.setContentsMargins(0, 0, 0, 0)
+        _tab_row_layout.setSpacing(0)
+        _tab_row_layout.addWidget(self.nav_container)
+        _tab_row_layout.addWidget(self.tab_bar, 1)
+        _mh_layout.addWidget(_tab_row)
+
+        right_panel.addWidget(self.main_header)       # tab bar only — own background
+        right_panel.addWidget(self.tab_stack, 1)      # content — browser backgrounds only
         _right_widget = self._main_panel
 
         self._left_panel.setFixedWidth(330)

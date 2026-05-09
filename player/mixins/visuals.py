@@ -370,15 +370,12 @@ class VisualsMixin:
             self._tab_hook_set = True
 
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
-        _bw = self.theme.border_width
-        _bc = QColor(mc).darker(250).name()
         tabs_css = f"""
-            QTabWidget::pane {{ border: 0; border-top: {_bw}px solid {_bc}; }}
-            QTabWidget::tab-bar {{ alignment: left; }} /* Removed 'left: 15px' */
+            QTabBar {{ border: none; background: transparent; }}
             QTabBar::tab {{
-                background: #111;
+                background: rgba(17,17,17,{alpha});
                 color: #555;
-                padding: 10px 20px; /* Restored to your original preference */
+                padding: 10px 20px;
                 border: none;
                 font-family: 'sans-serif', sans-serif;
                 font-weight: bold;
@@ -387,8 +384,8 @@ class VisualsMixin:
                 border-top-right-radius: 5px;
                 margin-right: 4px;
             }}
-            QTabBar::tab:selected {{ color: {mc}; background: #181818; border-bottom: 2px solid {mc}; }}
-            QTabBar::tab:hover {{ color: #888; background: #222; }}
+            QTabBar::tab:selected {{ color: {mc}; background: rgba(24,24,24,{alpha}); border-bottom: 2px solid {mc}; }}
+            QTabBar::tab:hover {{ color: #888; background: rgba(34,34,34,{alpha}); }}
         """
 
         toggle_style = "QPushButton { background: transparent; border: none; border-radius: 20px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }"
@@ -483,13 +480,13 @@ class VisualsMixin:
                 f'  border-radius: 0px;'
                 f'}}'
             )
+        if hasattr(self, 'main_header'):
+            self.main_header.setStyleSheet(
+                f'#MainHeader {{ background: rgba(14,14,14,{alpha}); border-bottom: {bw}px solid {bc}; }}'
+            )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
                 f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
-            )
-        if hasattr(self, 'main_header'):
-            self.main_header.setStyleSheet(
-                f'#MainHeader {{ background: rgba(14,14,14,{queue_alpha}); }}'
             )
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
