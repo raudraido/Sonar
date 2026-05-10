@@ -1019,7 +1019,10 @@ class AlbumDetailView(QWidget):
     _tracks_ready = pyqtSignal(list)
     def __init__(self, client=None):
         super().__init__()
-        self.client = client 
+        self.client = client
+        self._last_playing_id = None
+        self._last_is_playing = False
+        self._last_playing_accent = '#888888'
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
@@ -1296,6 +1299,8 @@ class AlbumDetailView(QWidget):
         hdr_h = self.track_tree.header().height()
         self.track_tree.setFixedHeight(hdr_h + row_h * len(tracks) + 4)
         self.tracks_loaded.emit()
+        if self._last_playing_id is not None:
+            self.update_playing_status(self._last_playing_id, self._last_is_playing, self._last_playing_accent)
 
     def _artist_part_at(self, pos) -> str:
         item = self.track_tree.itemAt(pos)
@@ -1349,6 +1354,9 @@ class AlbumDetailView(QWidget):
                     if part:
                         self.track_artist_clicked.emit(part)
                         return True
+            elif event.type() == QEvent.Type.ContextMenu:
+                self._show_track_context_menu(event.pos())
+                return True
         return super().eventFilter(obj, event)
 
     def _toggle_track_fav(self, item):
@@ -1366,6 +1374,121 @@ class AlbumDetailView(QWidget):
         if getattr(self, 'client', None):
             import threading
             threading.Thread(target=lambda: self.client.set_favorite(track.get('id'), new), daemon=True).start()
+
+    def _show_track_context_menu(self, pos):
+        item = self.track_tree.itemAt(pos)
+        if not item:
+            return
+        idx = self.track_tree.indexOfTopLevelItem(item)
+        if not (0 <= idx < len(self._tracks)):
+            return
+        track = self._tracks[idx]
+        main  = self.window()
+
+        MENU_CSS = (
+            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
+            "QMenu::item { padding: 6px 25px; }"
+            "QMenu::item:selected { background-color: #333; }"
+            "QMenu::item:disabled { color: #555; }"
+            "QMenu::separator { height: 1px; background: #444; margin: 5px 0; }"
+        )
+        menu = QMenu(self)
+        menu.setStyleSheet(MENU_CSS)
+
+        header = QAction(track.get('title', 'Unknown'), menu)
+        header.setEnabled(False)
+        menu.addAction(header)
+        menu.addSeparator()
+
+        act_play  = menu.addAction("Play Now")
+        act_next  = menu.addAction("Play Next")
+        act_queue = menu.addAction("Add to Queue")
+        menu.addSeparator()
+
+        raw_star = track.get('starred', False)
+        is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
+        act_fav  = menu.addAction("Unlove (♥)" if is_fav else "Love (♡)")
+        menu.addSeparator()
+
+        track_id = str(track.get('id', ''))
+        if track_id and main:
+            add_menu = QMenu("Add to Playlist", menu)
+            add_menu.setStyleSheet(MENU_CSS)
+            act_new_pl = QAction("+ New Playlist...", add_menu)
+            act_new_pl.triggered.connect(lambda: self._add_to_new_playlist(main, [track_id]))
+            add_menu.addAction(act_new_pl)
+            playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
+            if playlists:
+                add_menu.addSeparator()
+                for pl in playlists:
+                    pl_id = pl.get('id')
+                    if not pl_id:
+                        continue
+                    count = pl.get('songCount', '')
+                    pl_label = f"{pl.get('name', 'Unnamed')}  ({count})" if count != '' else pl.get('name', 'Unnamed')
+                    a = QAction(pl_label, add_menu)
+                    a.triggered.connect(lambda checked=False, pid=pl_id, pn=pl.get('name', ''): self._add_to_existing_playlist(main, pid, pn, [track_id]))
+                    add_menu.addAction(a)
+            menu.addMenu(add_menu)
+            menu.addSeparator()
+
+        import re as _re
+        artists = [p.strip() for p in _re.split(
+            r' /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, ',
+            track.get('artist', '')) if p.strip()]
+        if artists:
+            goto_menu = menu.addMenu("Go to")
+            goto_menu.setStyleSheet(MENU_CSS)
+            for art in artists:
+                goto_menu.addAction(f"Artist: {art}").triggered.connect(
+                    lambda checked=False, a=art: self.track_artist_clicked.emit(a))
+            menu.addSeparator()
+
+        act_info = menu.addAction("Get Info")
+        tb = getattr(main, 'tracks_browser', None)
+        if tb:
+            act_info.triggered.connect(lambda: tb._show_track_info(track))
+        else:
+            act_info.setEnabled(False)
+
+        act_play.triggered.connect(lambda: self.track_play_signal.emit([track], 0))
+        act_next.triggered.connect(lambda: main.play_track_next(track) if main and hasattr(main, 'play_track_next') else None)
+        act_queue.triggered.connect(lambda: main.add_track_to_queue(track) if main and hasattr(main, 'add_track_to_queue') else None)
+        act_fav.triggered.connect(lambda: self._toggle_track_fav(item))
+
+        menu.exec(self.track_tree.viewport().mapToGlobal(pos))
+
+    def _add_to_new_playlist(self, main, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client:
+            return
+        from components import NewPlaylistDialog
+        from PyQt6.QtWidgets import QDialog
+        accent = getattr(main, 'master_color', '#1DB954')
+        dialog = NewPlaylistDialog(self, accent_color=accent)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name = dialog.get_name()
+            if not name:
+                return
+            import threading
+            def _worker():
+                try:
+                    new_id = client.create_playlist(name, public=dialog.is_public())
+                    if new_id:
+                        client.add_tracks_to_playlist(new_id, track_ids)
+                except Exception as e:
+                    print(f"AlbumDetail: create playlist failed: {e}")
+            threading.Thread(target=_worker, daemon=True).start()
+
+    def _add_to_existing_playlist(self, main, pl_id, pl_name, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client:
+            return
+        import threading
+        threading.Thread(
+            target=lambda: client.add_tracks_to_playlist(pl_id, track_ids),
+            daemon=True
+        ).start()
 
     @staticmethod
     def _make_heart_pix(path: str, color: str) -> QPixmap:
@@ -1483,6 +1606,9 @@ class AlbumDetailView(QWidget):
             self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
     
     def update_playing_status(self, playing_id, is_playing, accent: str):
+        self._last_playing_id = playing_id
+        self._last_is_playing = is_playing
+        self._last_playing_accent = accent
         playing_row = next((i for i, t in enumerate(self._tracks) if str(t.get('id')) == str(playing_id)), -1) if is_playing else -1
         accent_color = QColor(accent)
         default_color = QColor('#dddddd')
