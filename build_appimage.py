@@ -68,6 +68,12 @@ def collect_assets():
                 added.append(f"--add-data={os.path.join('img', f)}{_SEP}img")
                 print(f"  Asset: {f}")
 
+    if os.path.exists("fonts"):
+        for f in os.listdir("fonts"):
+            if f.lower().endswith(('.ttf', '.otf')):
+                added.append(f"--add-data={os.path.join('fonts', f)}{_SEP}fonts")
+                print(f"  Font: {f}")
+
     print("\n--- Collecting QML Files ---")
     for root, dirs, files in os.walk("."):
         dirs[:] = [d for d in dirs if d not in ("dist", "build", "__pycache__", ".git")]

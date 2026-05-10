@@ -285,6 +285,15 @@ def build():
                 added_data.append(f'--add-data={src}{_SEP}img')
                 print(f"  Added Asset: {file}")
 
+    # Bundle fonts
+    fonts_dir = 'fonts'
+    if os.path.exists(fonts_dir):
+        for file in os.listdir(fonts_dir):
+            if file.lower().endswith(('.ttf', '.otf')):
+                src = os.path.join(fonts_dir, file)
+                added_data.append(f'--add-data={src}{_SEP}fonts')
+                print(f"  Added Font: {file}")
+
     # 3. Gather QML files
     print("\n--- Collecting QML Files ---")
     qml_found = False
