@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QLineEdit, QToolButton, QScrollArea) 
 
 from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer,
-                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation)
+                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation, QSettings)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics,
                          QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
                          QTextDocument, QAbstractTextDocumentLayout, QPalette,
@@ -38,6 +38,11 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 import os as _os
 _COVER_WORKERS = min(6, (_os.cpu_count() or 2) + 2)
+
+_ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
+
+def _split_artist(artist: str):
+    return [(p, bool(_ARTIST_SEP_RE.match(p))) for p in _ARTIST_SEP_RE.split(artist) if p]
 
 
 def _square_cover(pix: QPixmap, size: int = 220) -> QPixmap:
@@ -797,29 +802,122 @@ class ClickableArtistLabel(QWidget):
             self.hovered_artist = None
             self.update()
 
+class _TrackHeader(QHeaderView):
+    _FLEX_COL   = 1   # TITLE — Stretch, absorbs space
+    _FLEX_NEXT  = 2   # ARTIST — resized when TITLE's right boundary is dragged
+    _HANDLE_PX  = 5   # hit-test tolerance in pixels
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._accent = QColor('#555555')
+        self._left_drag = False
+        self._left_start_x = 0
+        self._left_start_w = 0
+
+    def set_accent(self, color: str):
+        self._accent = QColor(color)
+        self.update()
+
+    def _flex_boundary_x(self):
+        return self.sectionViewportPosition(self._FLEX_COL) + self.sectionSize(self._FLEX_COL)
+
+    def _near_flex_boundary(self, x):
+        return abs(x - self._flex_boundary_x()) <= self._HANDLE_PX
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._near_flex_boundary(event.pos().x()):
+            self._left_drag = True
+            self._left_start_x = event.pos().x()
+            self._left_start_w = self.sectionSize(self._FLEX_NEXT)
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._left_drag:
+            delta = event.pos().x() - self._left_start_x
+            # drag right → ARTIST shrinks (direction = -1, matching psysonic)
+            new_w = max(80, self._left_start_w - delta)
+            self.resizeSection(self._FLEX_NEXT, new_w)
+            event.accept()
+            return
+        if self._near_flex_boundary(event.pos().x()):
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._left_drag:
+            self._left_drag = False
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintSection(self, painter, rect, logical_index):
+        if not rect.isValid():
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(rect, Qt.GlobalColor.transparent)
+
+        text = self.model().headerData(logical_index, Qt.Orientation.Horizontal) or ''
+        f = QFont(); f.setPointSize(8); f.setBold(True)
+        painter.setFont(f)
+        painter.setPen(QColor('#555555'))
+        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4) else Qt.AlignmentFlag.AlignLeft
+        painter.drawText(rect.adjusted(4, 0, -4, -8),
+                         h_align | Qt.AlignmentFlag.AlignBottom, text)
+
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+
+        if 0 < logical_index < self.count() - 1:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            pen = QPen(self._accent.darker(250), 1)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawLine(rect.right(), rect.top() - 5, rect.right(), rect.bottom() - 8)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        painter.restore()
+
+
 class _TrackListDelegate(QStyledItemDelegate):
     """Adds 8px top gap on row 0; draws hover/selection/playing backgrounds manually."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.playing_row = -1
         self.accent = QColor('#cccccc')
+        self._movie = None
+        self._is_playing = False
+        self._hover_artist = None   # (row, part_text)
+        self._heart_filled_pix = QPixmap()
+        self._heart_empty_pix  = QPixmap()
 
-    def set_playing(self, row: int, accent: str):
+    def set_movie(self, movie):
+        self._movie = movie
+
+    def set_heart_pixmaps(self, filled: QPixmap, empty: QPixmap):
+        self._heart_filled_pix = filled
+        self._heart_empty_pix  = empty
+
+    def set_playing(self, row: int, accent: str, is_playing: bool = True):
         self.playing_row = row
+        self._is_playing = is_playing
         self.accent = QColor(accent)
         if self.parent():
             self.parent().viewport().update()
 
     def sizeHint(self, option, index):
-        sh = super().sizeHint(option, index)
-        if index.row() == 0:
-            from PyQt6.QtCore import QSize
-            return QSize(sh.width(), sh.height() + 8)
-        return sh
+        return super().sizeHint(option, index)
 
     def paint(self, painter, option, index):
         from PyQt6.QtWidgets import QStyle
         draw_rect = option.rect.adjusted(0, 8, 0, 0) if index.row() == 0 else option.rect
+        is_playing_row = (index.row() == self.playing_row)
 
         # Draw background once per row (col 0 only) spanning full width
         if index.column() == 0:
@@ -840,7 +938,68 @@ class _TrackListDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(row_rect, 6, 6)
                 painter.restore()
 
-        # Strip hover/selected flags so super() doesn't re-draw background
+            # Draw playing GIF instead of track number
+            if is_playing_row and self._movie and self._is_playing:
+                pix = self._movie.currentPixmap()
+                if not pix.isNull():
+                    px = draw_rect.left() + (draw_rect.width() - pix.width()) // 2
+                    py = draw_rect.top()  + (draw_rect.height() - pix.height()) // 2
+                    painter.drawPixmap(px, py, pix)
+                return  # skip text rendering for col 0 on playing row
+
+        # Col 3 — draw heart pixmap centered
+        if index.column() == 3:
+            is_fav = index.data() == '♥'
+            pix = self._heart_filled_pix if is_fav else self._heart_empty_pix
+            if not pix.isNull():
+                px = draw_rect.center().x() - pix.width() // 2
+                py = draw_rect.center().y() - pix.height() // 2
+                painter.drawPixmap(px, py, pix)
+            return
+
+        # Col 2 — draw artist parts manually so we can underline on hover
+        if index.column() == 2:
+            artist = index.data() or ''
+            f = QFont()
+            f.setPointSize(10)
+            fm = QFontMetrics(f)
+            ax = draw_rect.left() + 4
+            ay = draw_rect.center().y()
+            row = index.row()
+            painter.save()
+            painter.setFont(f)
+            for part, is_sep in _split_artist(artist):
+                pw = fm.horizontalAdvance(part)
+                if ax + pw > draw_rect.right():
+                    break
+                hovered = (not is_sep and self._hover_artist == (row, part.strip()))
+                if is_sep:
+                    painter.setPen(QColor(120, 120, 120))
+                else:
+                    painter.setPen(self.accent if row == self.playing_row else QColor('#dddddd'))
+                painter.drawText(ax, ay + fm.ascent() // 2, part)
+                if hovered:
+                    painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
+                ax += pw
+            painter.restore()
+            return
+
+        # Col 1 — title at 10px
+        if index.column() == 1:
+            text = index.data() or ''
+            f = QFont()
+            f.setPointSize(10)
+            fm = QFontMetrics(f)
+            painter.save()
+            painter.setFont(f)
+            painter.setPen(QColor(index.data(Qt.ItemDataRole.ForegroundRole)) if index.data(Qt.ItemDataRole.ForegroundRole) else QColor('#dddddd'))
+            x = draw_rect.left() + 4
+            y = draw_rect.center().y() + fm.ascent() // 2
+            painter.drawText(x, y, fm.elidedText(text, Qt.TextElideMode.ElideRight, draw_rect.width() - 8))
+            painter.restore()
+            return
+
+        # All other columns — strip hover/selected so super() doesn't re-draw background
         opt = option.__class__(option)
         opt.rect = draw_rect
         opt.state = opt.state & ~QStyle.StateFlag.State_MouseOver & ~QStyle.StateFlag.State_Selected
@@ -852,7 +1011,10 @@ class AlbumDetailView(QWidget):
     shuffle_clicked = pyqtSignal()
     album_favorite_toggled = pyqtSignal(bool)
     artist_clicked = pyqtSignal(str)
+    tracks_loaded = pyqtSignal()
     track_play_signal = pyqtSignal(list, int)
+    track_artist_clicked = pyqtSignal(str)
+    favorite_toggled = pyqtSignal(str, bool)   # track_id, is_fav
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
     def __init__(self, client=None):
@@ -968,13 +1130,24 @@ class AlbumDetailView(QWidget):
         self.omni_scroller = MiddleClickScroller(self.scroll_area)
         self.track_tree = QTreeWidget()
         self.track_tree.setColumnCount(6)
-        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', '♡', 'DURATION', 'GENRE'])
+        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'FAVORITE', 'DURATION', 'GENRE'])
         self.track_tree.setRootIsDecorated(False)
         self.track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self.track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.track_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.track_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.track_tree.setItemDelegate(_TrackListDelegate(self.track_tree))
+        self._track_delegate = _TrackListDelegate(self.track_tree)
+        from PyQt6.QtGui import QMovie
+        from PyQt6.QtCore import QSize as _QSize
+        self._playing_movie = QMovie(resource_path("img/playing.gif"))
+        self._playing_movie.setScaledSize(_QSize(30, 30))
+        self._playing_movie.frameChanged.connect(lambda: self.track_tree.viewport().update())
+        self._track_delegate.set_movie(self._playing_movie)
+        self._track_delegate.set_heart_pixmaps(
+            self._make_heart_pix(resource_path("img/heart_filled.png"), "#E91E63"),
+            self._make_heart_pix(resource_path("img/heart.png"), "#555555")
+        )
+        self.track_tree.setItemDelegate(self._track_delegate)
         self.track_tree.setStyleSheet("""
             QTreeWidget {
                 background: transparent;
@@ -989,7 +1162,54 @@ class AlbumDetailView(QWidget):
             QTreeWidget::item:hover { background: transparent; }
             QTreeWidget::item:selected { background: transparent; }
             QHeaderView { background: transparent; border: none; }
-            QHeaderView::section {
+        """)
+        self._track_header = _TrackHeader(self.track_tree)
+        self.track_tree.setHeader(self._track_header)
+        hdr = self._track_header
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for col in range(2, 6):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        hdr.resizeSection(0, 50)
+        hdr.resizeSection(2, 180)
+        hdr.resizeSection(3, 76)
+        hdr.resizeSection(4, 76)
+        hdr.resizeSection(5, 130)
+        hdr.setStretchLastSection(False)
+        hdr.setMinimumSectionSize(30)
+        self._col_save_timer = QTimer(self)
+        self._col_save_timer.setSingleShot(True)
+        self._col_save_timer.setInterval(400)
+        self._col_save_timer.timeout.connect(self._save_col_widths)
+        self._restore_col_widths()
+        hdr.sectionResized.connect(self._clamp_track_columns)
+        self.track_tree.viewport().setAutoFillBackground(False)
+        self.track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self.track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
+        self._tracks: list = []
+        self._tracks_ready.connect(self._load_tracks)
+        self.track_tree.viewport().installEventFilter(self)
+        self.track_tree.setMouseTracking(True)
+        self.track_tree.viewport().setMouseTracking(True)
+
+        _track_container = QWidget()
+        _track_container.setStyleSheet("background: transparent;")
+        self._tc_layout = QVBoxLayout(_track_container)
+        self._tc_layout.setContentsMargins(16, 0, 16, 0)
+        self._tc_layout.setSpacing(0)
+        self._tc_layout.addWidget(self.track_tree)
+        self._tc_layout.addStretch()
+        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._update_track_right_margin)
+
+        self.scroll_area.setWidget(_track_container)
+        main_layout.addWidget(self.scroll_area, 1)
+
+    # ── Track list ────────────────────────────────────────────────────────────
+
+    def _apply_header_style(self, accent: str):
+        self.track_tree.header().setStyleSheet("""
+            QHeaderView::section {{
                 background: transparent;
                 color: #555;
                 font-size: 10px;
@@ -997,41 +1217,58 @@ class AlbumDetailView(QWidget):
                 letter-spacing: 1px;
                 border: none;
                 border-bottom: 1px solid rgba(255,255,255,0.08);
-                padding: 6px 4px;
-            }
+                padding: 6px 4px 14px 4px;
+            }}
+            QHeaderView::section:first {{
+                border-left: none;
+            }}
         """)
-        hdr = self.track_tree.header()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        hdr.resizeSection(0, 50)
-        hdr.resizeSection(2, 180)
-        hdr.resizeSection(3, 46)
-        hdr.resizeSection(4, 76)
-        hdr.resizeSection(5, 130)
-        hdr.setStretchLastSection(False)
-        self.track_tree.viewport().setAutoFillBackground(False)
-        self.track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
-        self.track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
-        self._tracks: list = []
-        self._tracks_ready.connect(self._load_tracks)
+    _COL_MIN      = {0: 50, 1: 100, 2: 80, 3: 50, 4: 50, 5: 50}
+    _MARGIN_BASE  = 16
+    _SCROLLBAR_W  = 6
 
-        _track_container = QWidget()
-        _track_container.setStyleSheet("background: transparent;")
-        _tc_layout = QVBoxLayout(_track_container)
-        _tc_layout.setContentsMargins(16, 0, 10, 0)
-        _tc_layout.setSpacing(0)
-        _tc_layout.addWidget(self.track_tree)
-        _tc_layout.addStretch()
+    def _update_track_right_margin(self, min_val, max_val):
+        right = self._MARGIN_BASE - self._SCROLLBAR_W if max_val > min_val else self._MARGIN_BASE
+        l, t, _, b = self._tc_layout.getContentsMargins()
+        self._tc_layout.setContentsMargins(l, t, right, b)
+    _COL_SETTINGS_KEY = 'tracklist/col_widths'
 
-        self.scroll_area.setWidget(_track_container)
-        main_layout.addWidget(self.scroll_area, 1)
+    def _save_col_widths(self):
+        hdr = self._track_header
+        widths = {str(i): hdr.sectionSize(i) for i in range(hdr.count()) if i != 1}
+        QSettings().setValue(self._COL_SETTINGS_KEY, widths)
 
-    # ── Track list ────────────────────────────────────────────────────────────
+    def _restore_col_widths(self):
+        saved = QSettings().value(self._COL_SETTINGS_KEY)
+        if not isinstance(saved, dict):
+            return
+        hdr = self._track_header
+        hdr.blockSignals(True)
+        for col_str, width in saved.items():
+            col = int(col_str)
+            if col != 1:
+                hdr.resizeSection(col, max(self._COL_MIN.get(col, 30), int(width)))
+        hdr.blockSignals(False)
+
+    def _clamp_track_columns(self, logical_index, _, new_size):
+        if logical_index == 1:  # flex/stretch col — Qt manages it
+            return
+        hdr = self._track_header
+        view_w = self.track_tree.viewport().width()
+        title_min = self._COL_MIN[1]
+        other_fixed = sum(
+            hdr.sectionSize(i) for i in range(hdr.count())
+            if i not in (1, logical_index)
+        )
+        col_min = self._COL_MIN.get(logical_index, hdr.minimumSectionSize())
+        max_size = max(col_min, view_w - title_min - other_fixed)
+        clamped = max(col_min, min(new_size, max_size))
+        if clamped != new_size:
+            hdr.blockSignals(True)
+            hdr.resizeSection(logical_index, clamped)
+            hdr.blockSignals(False)
+        self._col_save_timer.start()
 
     def _load_tracks(self, tracks: list):
         self._tracks = tracks
@@ -1050,7 +1287,7 @@ class AlbumDetailView(QWidget):
             item = QTreeWidgetItem([num, title, artist, heart, duration, genre])
             item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(4, Qt.AlignmentFlag.AlignRight  | Qt.AlignmentFlag.AlignVCenter)
+            item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             for col in range(6):
                 item.setForeground(col, QColor('#dddddd'))
             self.track_tree.addTopLevelItem(item)
@@ -1058,6 +1295,93 @@ class AlbumDetailView(QWidget):
         row_h = self.track_tree.sizeHintForRow(0) if tracks else 38
         hdr_h = self.track_tree.header().height()
         self.track_tree.setFixedHeight(hdr_h + row_h * len(tracks) + 4)
+        self.tracks_loaded.emit()
+
+    def _artist_part_at(self, pos) -> str:
+        item = self.track_tree.itemAt(pos)
+        if not item:
+            return ''
+        col2_x = self.track_tree.columnViewportPosition(2)
+        col2_w = self.track_tree.columnWidth(2)
+        if not (col2_x <= pos.x() <= col2_x + col2_w):
+            return ''
+        artist = item.text(2)
+        f = QFont(); f.setPointSize(10)
+        fm = QFontMetrics(f)
+        ax = col2_x + 4
+        for part, is_sep in _split_artist(artist):
+            pw = fm.horizontalAdvance(part)
+            if not is_sep and ax <= pos.x() < ax + pw:
+                return part.strip()
+            ax += pw
+        return ''
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if obj is self.track_tree.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                pos  = event.position().toPoint()
+                item = self.track_tree.itemAt(pos)
+                row  = self.track_tree.indexOfTopLevelItem(item) if item else -1
+                part = self._artist_part_at(pos)
+                new_hover = (row, part) if part else None
+                if new_hover != self._track_delegate._hover_artist:
+                    self._track_delegate._hover_artist = new_hover
+                    self.track_tree.viewport().update()
+                self.track_tree.viewport().setCursor(
+                    Qt.CursorShape.PointingHandCursor if part else Qt.CursorShape.ArrowCursor
+                )
+            elif event.type() == QEvent.Type.Leave:
+                if self._track_delegate._hover_artist is not None:
+                    self._track_delegate._hover_artist = None
+                    self.track_tree.viewport().update()
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    pos  = event.position().toPoint()
+                    item = self.track_tree.itemAt(pos)
+                    if item:
+                        col3_x = self.track_tree.columnViewportPosition(3)
+                        col3_w = self.track_tree.columnWidth(3)
+                        if col3_x <= pos.x() <= col3_x + col3_w:
+                            self._toggle_track_fav(item)
+                            return True
+                    part = self._artist_part_at(pos)
+                    if part:
+                        self.track_artist_clicked.emit(part)
+                        return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_track_fav(self, item):
+        row = self.track_tree.indexOfTopLevelItem(item)
+        if not (0 <= row < len(self._tracks)):
+            return
+        track = self._tracks[row]
+        raw   = track.get('starred', False)
+        cur   = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+        new   = not cur
+        track['starred'] = new
+        item.setText(3, '♥' if new else '♡')
+        self.track_tree.viewport().update()
+        self.favorite_toggled.emit(str(track.get('id', '')), new)
+        if getattr(self, 'client', None):
+            import threading
+            threading.Thread(target=lambda: self.client.set_favorite(track.get('id'), new), daemon=True).start()
+
+    @staticmethod
+    def _make_heart_pix(path: str, color: str) -> QPixmap:
+        base = QPixmap(path)
+        if base.isNull():
+            return QPixmap()
+        base = base.scaled(QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        pix = QPixmap(base.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.drawPixmap(0, 0, base)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(pix.rect(), QColor(color))
+        p.end()
+        return pix
 
     def _on_track_double_clicked(self, item, _col):
         idx = self.track_tree.indexOfTopLevelItem(item)
@@ -1167,9 +1491,11 @@ class AlbumDetailView(QWidget):
             color = accent_color if i == playing_row else default_color
             for col in range(self.track_tree.columnCount()):
                 item.setForeground(col, color)
-        delegate = self.track_tree.itemDelegate()
-        if hasattr(delegate, 'set_playing'):
-            delegate.set_playing(playing_row, accent)
+        self._track_delegate.set_playing(playing_row, accent, is_playing)
+        if playing_row >= 0 and is_playing:
+            self._playing_movie.start()
+        else:
+            self._playing_movie.stop()
 
     def set_bg_color(self, c: str):
         self._bg_color = c
@@ -1181,6 +1507,8 @@ class AlbumDetailView(QWidget):
         self._update_bg()
         if hasattr(self, 'lbl_artist'):
             self.lbl_artist.set_color(color)
+        if hasattr(self, '_track_header'):
+            self._track_header.set_accent(color)
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
@@ -1657,6 +1985,7 @@ class LibraryGridBrowser(QWidget):
         self.detail_view.shuffle_clicked.connect(self.on_shuffle_album_clicked)
         self.detail_view.album_favorite_toggled.connect(self.on_album_heart_clicked)
         self.detail_view.artist_clicked.connect(self.switch_to_artist_tab.emit)
+        self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab.emit)
         self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)
@@ -2116,8 +2445,8 @@ class LibraryGridBrowser(QWidget):
             self.add_to_history({'type': 'album', 'data': data['data']})
 
     def _on_detail_track_play(self, tracks, start_index):
-        if tracks:
-            self.play_album_signal.emit(tracks[start_index:] + tracks[:start_index])
+        if 0 <= start_index < len(tracks):
+            self.play_album_signal.emit([tracks[start_index]])
 
     def on_play_all_clicked(self):
         if not self.current_album_id: return

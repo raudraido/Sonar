@@ -20,7 +20,7 @@ if platform.system() == "Linux":
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QFont, QFontDatabase
 
 from subsonic_client import SubsonicClient
 from login_dialog import LoginDialog
@@ -72,6 +72,12 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    QFontDatabase.addApplicationFont(os.path.join(_base, "fonts", "InterVariable.ttf"))
+    QFontDatabase.addApplicationFont(os.path.join(_base, "fonts", "InterVariable-Italic.ttf"))
+    _font = QFont("Segoe UI")
+    _font.setPointSize(10)
+    app.setFont(_font)
 
     # REQUIRED: Tells QSettings exactly where to save your data in the OS
     app.setApplicationName("Icoshahedron")
