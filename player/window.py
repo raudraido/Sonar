@@ -604,6 +604,7 @@ class SonarPlayer(
         self.global_album_view.shuffle_clicked.connect(self.shuffle_global_album)
         self.global_album_view.album_favorite_toggled.connect(self.toggle_global_fav)
         self.global_album_view.artist_clicked.connect(lambda name: self.navigate_to_artist(name))
+        self.global_album_view.track_play_signal.connect(lambda tracks, idx: self.play_whole_album(tracks[idx:] + tracks[:idx]))
         
         self.tabs.addTab(self.global_album_view, "")
         self.global_album_tab_idx = self.tabs.count() - 1

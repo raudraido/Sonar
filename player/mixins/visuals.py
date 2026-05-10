@@ -555,9 +555,11 @@ class VisualsMixin:
             
         # Compile a list of all grids that need to know about the playing track
         browsers_to_update = [
-            getattr(self, 'tracks_browser', None), 
+            getattr(self, 'tracks_browser', None),
             getattr(getattr(self, 'global_album_view', None), 'track_list', None),
-            getattr(getattr(self, 'global_playlist_view', None), 'track_list', None)
+            getattr(getattr(self, 'global_playlist_view', None), 'track_list', None),
+            getattr(self, 'global_album_view', None),
+            getattr(getattr(self, 'album_browser', None), 'detail_view', None),
         ]
         
         # Broadcast the ID, state, and exact color downward

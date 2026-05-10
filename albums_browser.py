@@ -797,12 +797,64 @@ class ClickableArtistLabel(QWidget):
             self.hovered_artist = None
             self.update()
 
+class _TrackListDelegate(QStyledItemDelegate):
+    """Adds 8px top gap on row 0; draws hover/selection/playing backgrounds manually."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.playing_row = -1
+        self.accent = QColor('#cccccc')
+
+    def set_playing(self, row: int, accent: str):
+        self.playing_row = row
+        self.accent = QColor(accent)
+        if self.parent():
+            self.parent().viewport().update()
+
+    def sizeHint(self, option, index):
+        sh = super().sizeHint(option, index)
+        if index.row() == 0:
+            from PyQt6.QtCore import QSize
+            return QSize(sh.width(), sh.height() + 8)
+        return sh
+
+    def paint(self, painter, option, index):
+        from PyQt6.QtWidgets import QStyle
+        draw_rect = option.rect.adjusted(0, 8, 0, 0) if index.row() == 0 else option.rect
+
+        # Draw background once per row (col 0 only) spanning full width
+        if index.column() == 0:
+            if option.state & QStyle.StateFlag.State_MouseOver:
+                color = QColor(255, 255, 255, 15)
+            elif option.state & QStyle.StateFlag.State_Selected:
+                color = QColor(255, 255, 255, 20)
+            else:
+                color = None
+            if color:
+                view = option.widget
+                full_w = view.viewport().width() if view else draw_rect.width()
+                row_rect = draw_rect.__class__(0, draw_rect.y(), full_w, draw_rect.height())
+                painter.save()
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(row_rect, 6, 6)
+                painter.restore()
+
+        # Strip hover/selected flags so super() doesn't re-draw background
+        opt = option.__class__(option)
+        opt.rect = draw_rect
+        opt.state = opt.state & ~QStyle.StateFlag.State_MouseOver & ~QStyle.StateFlag.State_Selected
+        super().paint(painter, opt, index)
+
+
 class AlbumDetailView(QWidget):
     play_clicked = pyqtSignal()
     shuffle_clicked = pyqtSignal()
     album_favorite_toggled = pyqtSignal(bool)
     artist_clicked = pyqtSignal(str)
+    track_play_signal = pyqtSignal(list, int)
     _meta_ready = pyqtSignal(str, str)
+    _tracks_ready = pyqtSignal(list)
     def __init__(self, client=None):
         super().__init__()
         self.client = client 
@@ -818,32 +870,15 @@ class AlbumDetailView(QWidget):
         self._bg_cover = None
         self._accent_color = QColor(12, 12, 12)
 
-        # 1. MASTER LAYOUT & SCROLL AREA
+        # 1. MASTER LAYOUT
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QWidget#ScrollContent { background: transparent; }
-        """)
-        self.scroll_area.viewport().setAutoFillBackground(False)
-        self.omni_scroller = MiddleClickScroller(self.scroll_area)
-        
-        # 2. SCROLL CONTENT WIDGET
-        self.content_widget = QWidget()
-        self.content_widget.setObjectName("ScrollContent")
-        self.content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.layout = QVBoxLayout(self.content_widget)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
+        main_layout.setSpacing(0)
 
         # ─── HEADER ────────────────────────────────────────────────────────────
         self.header_container = QWidget()
-        self.header_container.setMinimumHeight(260)
+        self.header_container.setMinimumHeight(280)
+        self.header_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         header_container = self.header_container
 
         # Cover art — anchored to bottom-left corner of the header via resizeEvent
@@ -858,7 +893,7 @@ class AlbumDetailView(QWidget):
         header_layout = QHBoxLayout(header_container)
         header_layout.setContentsMargins(220 + 16, 8, 8, 8)
         header_layout.setSpacing(0)
-        header_layout.addWidget(meta_container)
+        header_layout.addWidget(meta_container, 0, Qt.AlignmentFlag.AlignTop)
 
         meta_layout = QVBoxLayout(meta_container)
         meta_layout.setContentsMargins(0, 8, 0, 8)
@@ -920,13 +955,114 @@ class AlbumDetailView(QWidget):
         meta_layout.addWidget(self.lbl_artist)
         meta_layout.addWidget(self.lbl_meta)
         meta_layout.addWidget(btn_row)
-        meta_layout.addStretch()
         
-        self.layout.addWidget(header_container)
-        self.layout.addStretch()
+        main_layout.addWidget(header_container)
 
-        self.scroll_area.setWidget(self.content_widget)
-        main_layout.addWidget(self.scroll_area)
+        # ─── TRACK LIST (scrollable) ────────────────────────────────────────────
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scroll_area.viewport().setAutoFillBackground(False)
+        self.omni_scroller = MiddleClickScroller(self.scroll_area)
+        self.track_tree = QTreeWidget()
+        self.track_tree.setColumnCount(6)
+        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', '♡', 'DURATION', 'GENRE'])
+        self.track_tree.setRootIsDecorated(False)
+        self.track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.track_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.track_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.track_tree.setItemDelegate(_TrackListDelegate(self.track_tree))
+        self.track_tree.setStyleSheet("""
+            QTreeWidget {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QTreeWidget::item {
+                height: 38px;
+                border: none;
+                padding-left: 4px;
+            }
+            QTreeWidget::item:hover { background: transparent; }
+            QTreeWidget::item:selected { background: transparent; }
+            QHeaderView { background: transparent; border: none; }
+            QHeaderView::section {
+                background: transparent;
+                color: #555;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: 1px;
+                border: none;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                padding: 6px 4px;
+            }
+        """)
+        hdr = self.track_tree.header()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        hdr.resizeSection(0, 50)
+        hdr.resizeSection(2, 180)
+        hdr.resizeSection(3, 46)
+        hdr.resizeSection(4, 76)
+        hdr.resizeSection(5, 130)
+        hdr.setStretchLastSection(False)
+        self.track_tree.viewport().setAutoFillBackground(False)
+        self.track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self.track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
+        self._tracks: list = []
+        self._tracks_ready.connect(self._load_tracks)
+
+        _track_container = QWidget()
+        _track_container.setStyleSheet("background: transparent;")
+        _tc_layout = QVBoxLayout(_track_container)
+        _tc_layout.setContentsMargins(16, 0, 10, 0)
+        _tc_layout.setSpacing(0)
+        _tc_layout.addWidget(self.track_tree)
+        _tc_layout.addStretch()
+
+        self.scroll_area.setWidget(_track_container)
+        main_layout.addWidget(self.scroll_area, 1)
+
+    # ── Track list ────────────────────────────────────────────────────────────
+
+    def _load_tracks(self, tracks: list):
+        self._tracks = tracks
+        self.track_tree.setUpdatesEnabled(False)
+        self.track_tree.clear()
+        for i, t in enumerate(tracks):
+            num      = str(t.get('track') or i + 1)
+            title    = t.get('title', '')
+            artist   = t.get('artist', '')
+            raw_star = t.get('starred', False)
+            heart    = '♥' if (raw_star and str(raw_star).lower() not in ('false', '0', 'none', '')) else '♡'
+            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            secs     = dur_ms // 1000
+            duration = f"{secs // 60}:{secs % 60:02d}"
+            genre    = t.get('genre', '') or ''
+            item = QTreeWidgetItem([num, title, artist, heart, duration, genre])
+            item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            item.setTextAlignment(4, Qt.AlignmentFlag.AlignRight  | Qt.AlignmentFlag.AlignVCenter)
+            for col in range(6):
+                item.setForeground(col, QColor('#dddddd'))
+            self.track_tree.addTopLevelItem(item)
+        self.track_tree.setUpdatesEnabled(True)
+        row_h = self.track_tree.sizeHintForRow(0) if tracks else 38
+        hdr_h = self.track_tree.header().height()
+        self.track_tree.setFixedHeight(hdr_h + row_h * len(tracks) + 4)
+
+    def _on_track_double_clicked(self, item, _col):
+        idx = self.track_tree.indexOfTopLevelItem(item)
+        if 0 <= idx < len(self._tracks):
+            self.track_play_signal.emit(self._tracks, idx)
 
     # ── Blurred background ────────────────────────────────────────────────────
 
@@ -934,15 +1070,11 @@ class AlbumDetailView(QWidget):
         super().resizeEvent(event)
         self._bg_label.setGeometry(0, 0, self.width(), self.height())
         self._update_bg()
-        # Keep cover pinned to bottom-left of header with 8px padding
-        hdr = self.header_container
-        self.cover_label.move(8, hdr.height() - self.cover_label.height() - 8)
+        self.cover_label.move(8, 8)
 
     def _set_bg_cover(self, pix: QPixmap):
         self._bg_cover = pix
         self._update_bg()
-        # Re-draw once the layout has settled and header_container has real height
-        QTimer.singleShot(50, self._update_bg)
 
     def _update_bg(self):
         w, h = self.width(), self.height()
@@ -951,12 +1083,7 @@ class AlbumDetailView(QWidget):
         bg = QPixmap(w, h)
         bg.fill(Qt.GlobalColor.transparent)
         if self._bg_cover and not self._bg_cover.isNull():
-            # Limit art to the header section only
-            hdr_h = self.header_container.height()
-            if hdr_h <= 0:
-                hdr_h = 300  # fallback before first layout pass
-            # Add the scroll-area top margin (20px from content layout)
-            zone_h = min(hdr_h + 40, h)
+            zone_h = min(420, h)
 
             art = self._bg_cover.scaled(w, zone_h,
                                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -1031,6 +1158,19 @@ class AlbumDetailView(QWidget):
             self.btn_like.setText("♡")
             self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
     
+    def update_playing_status(self, playing_id, is_playing, accent: str):
+        playing_row = next((i for i, t in enumerate(self._tracks) if str(t.get('id')) == str(playing_id)), -1) if is_playing else -1
+        accent_color = QColor(accent)
+        default_color = QColor('#dddddd')
+        for i in range(self.track_tree.topLevelItemCount()):
+            item = self.track_tree.topLevelItem(i)
+            color = accent_color if i == playing_row else default_color
+            for col in range(self.track_tree.columnCount()):
+                item.setForeground(col, color)
+        delegate = self.track_tree.itemDelegate()
+        if hasattr(delegate, 'set_playing'):
+            delegate.set_playing(playing_row, accent)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
@@ -1148,6 +1288,8 @@ class AlbumDetailView(QWidget):
                     
                     # Instantly draw the UI header with cached math!
                     self._meta_ready.emit(cached_detected, cached_meta)
+                    if raw_cached:
+                        self._tracks_ready.emit(raw_cached)
                     
                     # ─────────────────────────────────────────────────────────
                     # PHASE 2 & 3: BACKGROUND WIPE & SEAMLESS SWAP
@@ -1176,8 +1318,7 @@ class AlbumDetailView(QWidget):
                             cached_map.get(str(t.get('id')), {}).get('artist') != t.get('artist')
                             for t in raw_fresh
                         )
-                        if tracks_changed:
-                            pass  # track list removed
+                        self._tracks_ready.emit(raw_fresh)
                             
                     except Exception as e:
                         print(f"[AlbumDetailView] Silent background sync failed: {e}")
@@ -1516,6 +1657,7 @@ class LibraryGridBrowser(QWidget):
         self.detail_view.shuffle_clicked.connect(self.on_shuffle_album_clicked)
         self.detail_view.album_favorite_toggled.connect(self.on_album_heart_clicked)
         self.detail_view.artist_clicked.connect(self.switch_to_artist_tab.emit)
+        self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)
         
@@ -1972,6 +2114,10 @@ class LibraryGridBrowser(QWidget):
         data = item.data(Qt.ItemDataRole.UserRole)
         if data and data['type'] == 'album_drill':
             self.add_to_history({'type': 'album', 'data': data['data']})
+
+    def _on_detail_track_play(self, tracks, start_index):
+        if tracks:
+            self.play_album_signal.emit(tracks[start_index:] + tracks[:start_index])
 
     def on_play_all_clicked(self):
         if not self.current_album_id: return
