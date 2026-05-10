@@ -978,12 +978,38 @@ class AlbumDetailView(QWidget):
             p.setOpacity(1.0)
             # Gradient: transparent at top (art shows through) → accent tint in middle
             # → fully opaque panel bg at bottom so the art zone edge is invisible
-            grad = QLinearGradient(0, 0, 0, float(zone_h))
-            grad.setColorAt(0.0,  QColor(tr, tg, tb, 0))
-            grad.setColorAt(0.4,  QColor(tr, tg, tb, 140))
-            grad.setColorAt(0.75, QColor(pr, pg, pb, 210))
-            grad.setColorAt(1.0,  QColor(pr, pg, pb, 255))
-            p.fillRect(0, 0, w, zone_h, grad)
+            fade_opaque = QColor(pr, pg, pb, 255)
+            fade_clear  = QColor(pr, pg, pb, 0)
+
+            # Bottom fade
+            grad_b = QLinearGradient(0, 0, 0, float(zone_h))
+            grad_b.setColorAt(0.0,  QColor(tr, tg, tb, 0))
+            grad_b.setColorAt(0.4,  QColor(tr, tg, tb, 140))
+            grad_b.setColorAt(0.75, QColor(pr, pg, pb, 210))
+            grad_b.setColorAt(1.0,  fade_opaque)
+            p.fillRect(0, 0, w, zone_h, grad_b)
+
+            fade_w = min(w // 3, 160)
+            fade_top = min(zone_h // 4, 80)
+
+            # Left fade
+            grad_l = QLinearGradient(0, 0, float(fade_w), 0)
+            grad_l.setColorAt(0.0, fade_opaque)
+            grad_l.setColorAt(1.0, fade_clear)
+            p.fillRect(0, 0, fade_w, zone_h, grad_l)
+
+            # Right fade
+            grad_r = QLinearGradient(float(w - fade_w), 0, float(w), 0)
+            grad_r.setColorAt(0.0, fade_clear)
+            grad_r.setColorAt(1.0, fade_opaque)
+            p.fillRect(w - fade_w, 0, fade_w, zone_h, grad_r)
+
+            # Top fade
+            grad_t = QLinearGradient(0, 0, 0, float(fade_top))
+            grad_t.setColorAt(0.0, fade_opaque)
+            grad_t.setColorAt(1.0, fade_clear)
+            p.fillRect(0, 0, w, fade_top, grad_t)
+
             p.end()
         self._bg_label.setPixmap(bg)
 
