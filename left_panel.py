@@ -280,7 +280,10 @@ class LeftPanel(QWidget):
         vis_layout.setSpacing(0)
         vis_layout.addWidget(self.visualizer)
 
-        self.vis_section = _SectionWidget(vis_container, 'vis', main_window)
+        self.vis_section = _SectionWidget(vis_container, 'vis', main_window, show_controls=True)
+
+        # Wire the visualizer's switch button as the companion to the hide button.
+        # Disable AudioVisualizer's own hover management so _SectionWidget owns it.
         btn_vis = self.visualizer.btn_toggle_vis
         btn_vis.setGraphicsEffect(None)
         btn_vis.hide()
@@ -289,6 +292,12 @@ class LeftPanel(QWidget):
         btn_vis.setParent(self.vis_section)
         btn_vis.raise_()
         self.vis_section._companion_btn = btn_vis
+        # Tear down the opacity state created during __init__ so the first
+        # enterEvent calls _init_opacity_effect() with the companion already set.
+        self.vis_section._btn.setGraphicsEffect(None)
+        self.vis_section._btn.hide()
+        self.vis_section._toggle_opacity = None
+        self.vis_section._hover_anim = None
 
         # Fixed order: visualizer fills, art slides in at bottom
         _layout.addWidget(self.vis_section, 1)

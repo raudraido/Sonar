@@ -81,7 +81,7 @@ class AudioVisualizer(QWidget):
         self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
         self._raw_vis_data = []
         self._vu_debug_frame = 0
-        _s = QSettings("Sonar", "Visualizer")
+        _s = QSettings("Icoshahedron", "Visualizer")
         self._vu_ref_level = int(_s.value("vu_ref_level", -18))
 
         self.num_bars = NUM_BARS
@@ -301,7 +301,7 @@ class AudioVisualizer(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._rebuild_floor_pen(self.width())
+        self._floor_pen = None
         W, H = self.width(), self.height()
         # Only position toggle button when it hasn't been re-parented to _SectionWidget
         if self.btn_toggle_vis.parent() is self:
@@ -354,7 +354,7 @@ class AudioVisualizer(QWidget):
         if new_val != self._vu_ref_level:
             self._vu_ref_level = new_val
             self._update_ref_btn_text()
-            QSettings("Sonar", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+            QSettings("Icoshahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
         event.accept()
 
     def _init_ref_opacity_effect(self):
@@ -379,7 +379,7 @@ class AudioVisualizer(QWidget):
     def _reset_ref_level(self):
         self._vu_ref_level = -18
         self._update_ref_btn_text()
-        QSettings("Sonar", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+        QSettings("Icoshahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
 
     # ── Data processing ───────────────────────────────────────────────────────
 
@@ -438,13 +438,14 @@ class AudioVisualizer(QWidget):
     
     # ── Painting ──────────────────────────────────────────────────────────────
 
-    def _rebuild_floor_pen(self, w):
+    def _rebuild_floor_pen(self, w, x_offset=0):
         """Build the floor-line pen once per resize instead of every frame."""
-        fl_grad = QLinearGradient(0, 0, w, 0)
+        fl_grad = QLinearGradient(x_offset, 0, x_offset + w, 0)
         for pos, (fr, fg, fb) in SPECTRUM:
             fl_grad.setColorAt(pos, QColor(fr, fg, fb, 130))
         self._floor_pen = QPen(QBrush(fl_grad), 1.0)
         self._floor_pen_width = w
+        self._floor_pen_x = x_offset
 
     def paintEvent(self, event):
         if not getattr(self, 'visualizer_enabled', True):
@@ -461,28 +462,34 @@ class AudioVisualizer(QWidget):
         painter.end()
 
     def _paint_bars(self, painter):
+        W, H = self.width(), self.height()
+
+        if not self._vu_bg.isNull():
+            iw, ih = self._vu_bg.width(), self._vu_bg.height()
+            scale  = min(W / iw, H / ih)
+            dw, dh = int(iw * scale), int(ih * scale)
+            dx, dy = (W - dw) // 2, 0
+        else:
+            dx, dy, dw, dh = 0, 0, W, H
+
+        BASE_Y = float(dy + dh)
         painter.setPen(Qt.PenStyle.NoPen)
 
-        W, H   = self.width(), self.height()
-        BASE_Y = float(H)
-
-        slot_w = W / self.num_bars
+        slot_w = dw / self.num_bars
         bar_w  = slot_w * 0.72
         gap    = (slot_w - bar_w) / 2
         radius = min(bar_w * 0.5, 4.5)
 
         for i in range(self.num_bars):
             val   = self.vis_data[i]
-            bar_h = max(2.0, val * H * HEIGHT_SCALE)
-            x     = i * slot_w + gap
+            bar_h = val * dh * HEIGHT_SCALE
+            if bar_h < 1.0:
+                continue
+            x     = dx + i * slot_w + gap
             y_top = BASE_Y - bar_h
             painter.setBrush(self.bar_brushes[i])
             painter.drawRoundedRect(QRectF(x, y_top, bar_w, bar_h), radius, radius)
 
-        if self._floor_pen is None or self._floor_pen_width != W:
-            self._rebuild_floor_pen(W)
-        painter.setPen(self._floor_pen)
-        painter.drawLine(QPointF(0, BASE_Y), QPointF(W, BASE_Y))
 
     def _paint_vu_meter(self, painter):
         W, H = self.width(), self.height()
