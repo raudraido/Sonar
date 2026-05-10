@@ -40,6 +40,17 @@ import os as _os
 _COVER_WORKERS = min(6, (_os.cpu_count() or 2) + 2)
 
 
+def _square_cover(pix: QPixmap, size: int = 220) -> QPixmap:
+    """Scale-to-fill and centre-crop to an exact square, then round corners."""
+    if pix.isNull():
+        return pix
+    scaled = pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation)
+    x = (scaled.width()  - size) // 2
+    y = (scaled.height() - size) // 2
+    return _round_pixmap(scaled.copy(x, y, size, size))
+
+
 def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
     """Return a copy of pix with rounded corners clipped into the image."""
     if pix.isNull():
@@ -822,24 +833,30 @@ class AlbumDetailView(QWidget):
         self.content_widget.setObjectName("ScrollContent")
         self.content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.layout = QVBoxLayout(self.content_widget)
-        self.layout.setContentsMargins(20, 20, 20, 20)
-        self.layout.setSpacing(20)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
 
         # ─── HEADER ────────────────────────────────────────────────────────────
         self.header_container = QWidget()
+        self.header_container.setMinimumHeight(260)
         header_container = self.header_container
-        header_layout = QHBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(25)
 
-        self.cover_label = QLabel()
+        # Cover art — anchored to bottom-left corner of the header via resizeEvent
+        self.cover_label = QLabel(header_container)
         self.cover_label.setFixedSize(220, 220)
         self.cover_label.setStyleSheet("background-color: transparent; border-radius: 12px;")
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.move(8, 8)
 
-        meta_container = QWidget()
+        # Meta sits to the right of the cover with matching padding
+        meta_container = QWidget(header_container)
+        header_layout = QHBoxLayout(header_container)
+        header_layout.setContentsMargins(220 + 16, 8, 8, 8)
+        header_layout.setSpacing(0)
+        header_layout.addWidget(meta_container)
+
         meta_layout = QVBoxLayout(meta_container)
-        meta_layout.setContentsMargins(0, 10, 0, 10)
+        meta_layout.setContentsMargins(0, 8, 0, 8)
         meta_layout.setSpacing(5)
 
         self.lbl_type = QLabel("ALBUM")
@@ -899,9 +916,6 @@ class AlbumDetailView(QWidget):
         meta_layout.addWidget(btn_row)
         meta_layout.addStretch()
         
-        header_layout.addWidget(self.cover_label)
-        header_layout.addWidget(meta_container)
-        
         self.layout.addWidget(header_container)
         self.layout.addStretch()
 
@@ -914,6 +928,9 @@ class AlbumDetailView(QWidget):
         super().resizeEvent(event)
         self._bg_label.setGeometry(0, 0, self.width(), self.height())
         self._update_bg()
+        # Keep cover pinned to bottom-left of header with 8px padding
+        hdr = self.header_container
+        self.cover_label.move(8, hdr.height() - self.cover_label.height() - 8)
 
     def _set_bg_cover(self, pix: QPixmap):
         self._bg_cover = pix
@@ -935,32 +952,31 @@ class AlbumDetailView(QWidget):
             # Add the scroll-area top margin (20px from content layout)
             zone_h = min(hdr_h + 40, h)
 
-            scaled = self._bg_cover.scaledToWidth(w, Qt.TransformationMode.SmoothTransformation)
-            bw, bh = max(1, w // 12), max(1, scaled.height() * max(1, w // 12) // w)
-            blurred = (scaled.scaled(bw, bh,
-                                     Qt.AspectRatioMode.IgnoreAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation)
-                              .scaled(w, scaled.height(),
-                                      Qt.AspectRatioMode.IgnoreAspectRatio,
-                                      Qt.TransformationMode.SmoothTransformation))
-            mc = getattr(self, '_accent_color', QColor(12, 12, 12))
-            r = int(mc.red()   * 0.15)
-            g = int(mc.green() * 0.15)
-            b = int(mc.blue()  * 0.15)
+            art = self._bg_cover.scaled(w, zone_h,
+                                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                        Qt.TransformationMode.SmoothTransformation)
+            # Centre-crop to exactly (w, zone_h)
+            x_off = (art.width()  - w)      // 2
+            y_off = (art.height() - zone_h) // 2
+            art   = art.copy(x_off, y_off, w, zone_h)
+
+            mc = getattr(self, '_accent_color', QColor(14, 14, 14))
+            tr = int(mc.red()   * 0.15)
+            tg = int(mc.green() * 0.15)
+            tb = int(mc.blue()  * 0.15)
+            _bg_parts = [int(x) for x in getattr(self, '_bg_color', '14,14,14').split(',')]
+            pr, pg, pb = _bg_parts[0], _bg_parts[1], _bg_parts[2]
             p = QPainter(bg)
-            # Draw art clipped to zone_h
-            p.setOpacity(0.35)
-            p.setClipRect(0, 0, w, zone_h)
-            p.drawPixmap(0, 0, blurred)
-            p.setClipRect(0, 0, w, h)
+            p.setOpacity(0.55)
+            p.drawPixmap(0, 0, art)
             p.setOpacity(1.0)
-            # Gradient builds to opaque in the middle then fades back to transparent
-            # at zone_h — so the clip edge is invisible
+            # Gradient: transparent at top (art shows through) → accent tint in middle
+            # → fully opaque panel bg at bottom so the art zone edge is invisible
             grad = QLinearGradient(0, 0, 0, float(zone_h))
-            grad.setColorAt(0.0,  QColor(r, g, b, 0))
-            grad.setColorAt(0.45, QColor(r, g, b, 160))
-            grad.setColorAt(0.75, QColor(r, g, b, 210))
-            grad.setColorAt(1.0,  QColor(r, g, b, 0))
+            grad.setColorAt(0.0,  QColor(tr, tg, tb, 0))
+            grad.setColorAt(0.4,  QColor(tr, tg, tb, 140))
+            grad.setColorAt(0.75, QColor(pr, pg, pb, 210))
+            grad.setColorAt(1.0,  QColor(pr, pg, pb, 255))
             p.fillRect(0, 0, w, zone_h, grad)
             p.end()
         self._bg_label.setPixmap(bg)
@@ -986,6 +1002,7 @@ class AlbumDetailView(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        self._update_bg()
 
     def set_accent_color(self, color):
         self._accent_color = QColor(color)
@@ -1154,7 +1171,7 @@ class AlbumDetailView(QWidget):
             if data:
                 pix = QPixmap()
                 pix.loadFromData(data)
-                self.cover_label.setPixmap(_round_pixmap(pix.scaled(220, 220, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)))
+                self.cover_label.setPixmap(_square_cover(pix))
                 self._set_bg_cover(pix)
             import threading
             def fetch():
@@ -1173,7 +1190,7 @@ class AlbumDetailView(QWidget):
         from PyQt6.QtGui import QPixmap
         pix = QPixmap()
         pix.loadFromData(data)
-        self.cover_label.setPixmap(_round_pixmap(pix))
+        self.cover_label.setPixmap(_square_cover(pix))
         self._set_bg_cover(pix)
 
 class DummyScrollBar:
@@ -1619,7 +1636,7 @@ class LibraryGridBrowser(QWidget):
         from PyQt6.QtGui import QPixmap
         pix = QPixmap()
         pix.loadFromData(data)
-        self.cover_label.setPixmap(_round_pixmap(pix))
+        self.cover_label.setPixmap(_square_cover(pix))
 
     def get_tinted_sort_icon(self, sort_type, is_ascending):
         """Get a tinted icon for the sort menu based on current accent color"""
