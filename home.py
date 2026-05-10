@@ -1109,9 +1109,13 @@ class HomeView(QWidget):
 
     # ── Theming ───────────────────────────────────────────────────────────
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#HomePanel {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#HomePanel {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color

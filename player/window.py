@@ -832,7 +832,7 @@ class SonarPlayer(
 
         self._footer_panel = QWidget()
         self._footer_panel.setObjectName("FooterPanel")
-        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgba(11, 11, 11, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
+        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgba(14, 14, 14, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
 
         main_footer_layout = QHBoxLayout(self._footer_panel)
         main_footer_layout.setContentsMargins(8, 0, 20, 0)

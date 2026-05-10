@@ -462,9 +462,13 @@ class PlaylistDetailView(QWidget):
                 
         return super().eventFilter(source, event)
     
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         
         play_btn_style = f"""
             QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
@@ -1124,9 +1128,13 @@ class PlaylistsBrowser(QWidget):
         if hasattr(self, 'playlist_model'):
             self.playlist_model.update_cover(str(cover_id))
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"

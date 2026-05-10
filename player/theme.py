@@ -12,10 +12,14 @@ class Theme:
     # ── Accent colour ────────────────────────────────────────────────────────
     accent: str = "#fafafa"
     dynamic_accent: bool = True          # follow album art dominant colour
+    auto_bg_from_accent: bool = True     # derive panel BGs as a dim tint of the accent
 
-    # ── Panel background (RGB components) ────────────────────────────────────
-    panel_color: str = "12,12,12"        # left panel, queue, main content
-    footer_color: str = "11,11,11"       # footer bar
+    # ── Panel backgrounds (RGB components, no "rgb()" wrapper) ───────────────
+    left_panel_bg:   str = "14,14,14"
+    queue_panel_bg:  str = "14,14,14"
+    footer_panel_bg: str = "14,14,14"
+    main_panel_bg:   str = "14,14,14"
+    header_panel_bg: str = "14,14,14"
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px

@@ -677,6 +677,81 @@ class SettingsWindow(QWidget):
 
         self._sliders = ()
         self._apply_slider_color()
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #2a2a2a;")
+        layout.addWidget(sep2)
+
+        bg_label = QLabel("Background Colors")
+        bg_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(bg_label)
+
+        self.auto_bg_check = QCheckBox("Auto-tint from accent color")
+        self.auto_bg_check.setChecked(self.parent.theme.auto_bg_from_accent)
+        self.auto_bg_check.stateChanged.connect(self._toggle_auto_bg)
+        layout.addWidget(self.auto_bg_check)
+
+        _BG_FIELDS = [
+            ("left_panel_bg",   "Left Panel"),
+            ("queue_panel_bg",  "Queue Panel"),
+            ("footer_panel_bg", "Footer Panel"),
+            ("main_panel_bg",   "Main Panel"),
+            ("header_panel_bg", "Header Panel"),
+        ]
+
+        _bg_grid = QWidget()
+        _bg_grid.setStyleSheet("background: transparent;")
+        _bg_gl = QGridLayout(_bg_grid)
+        _bg_gl.setContentsMargins(0, 0, 0, 0)
+        _bg_gl.setHorizontalSpacing(10)
+        _bg_gl.setVerticalSpacing(6)
+        _bg_gl.setColumnStretch(1, 1)
+
+        self._bg_btns = {}
+        self._BG_FIELDS = _BG_FIELDS
+
+        def _bg_btn_style(hex_color, disabled=False):
+            if disabled:
+                return ("background: #1e1e1e; border-radius: 6px; border: 1px solid #2a2a2a;"
+                        " min-height: 28px; font-size: 11px; color: #444;")
+            return (f"background: {hex_color}; border-radius: 6px; border: 1px solid #333;"
+                    f" min-height: 28px; font-size: 11px; color: {'#000' if QColor(hex_color).lightness() > 128 else '#fff'};")
+
+        self._bg_btn_style = _bg_btn_style
+
+        def _make_bg_picker(f, btn):
+            def _pick():
+                if self.parent.theme.auto_bg_from_accent:
+                    return
+                r, g, b = (int(x) for x in getattr(self.parent.theme, f).split(','))
+                color = QColorDialog.getColor(QColor(r, g, b), self, "Pick Background Color")
+                if color.isValid():
+                    setattr(self.parent.theme, f, f"{color.red()},{color.green()},{color.blue()}")
+                    btn.setText(color.name())
+                    btn.setStyleSheet(_bg_btn_style(color.name()))
+                    self.parent._last_theme_key = None
+                    self.parent.refresh_ui_styles()
+            return _pick
+
+        auto = self.parent.theme.auto_bg_from_accent
+        for row, (field, label_text) in enumerate(_BG_FIELDS):
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("color: #bbb; font-size: 12px; background: transparent;")
+
+            r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
+            hex_color = QColor(r, g, b).name()
+            btn = QPushButton("auto" if auto else hex_color)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setEnabled(not auto)
+            btn.setStyleSheet(_bg_btn_style(hex_color, disabled=auto))
+            btn.clicked.connect(_make_bg_picker(field, btn))
+
+            _bg_gl.addWidget(lbl, row, 0)
+            _bg_gl.addWidget(btn, row, 1)
+            self._bg_btns[field] = btn
+
+        layout.addWidget(_bg_grid)
         layout.addStretch()
 
         # ── Right column: hotkeys + logout ────────────────────────────────
@@ -792,6 +867,35 @@ class SettingsWindow(QWidget):
 
     def toggle_dynamic_color(self):
         self.parent.theme.dynamic_accent = self.dynamic_check.isChecked()
+
+    def _toggle_auto_bg(self):
+        auto = self.auto_bg_check.isChecked()
+        self.parent.theme.auto_bg_from_accent = auto
+        for field, btn in self._bg_btns.items():
+            if auto:
+                btn.setEnabled(False)
+                btn.setText("auto")
+                btn.setStyleSheet(self._bg_btn_style("#000000", disabled=True))
+            else:
+                r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
+                hex_color = QColor(r, g, b).name()
+                btn.setEnabled(True)
+                btn.setText(hex_color)
+                btn.setStyleSheet(self._bg_btn_style(hex_color))
+        if auto:
+            self.parent._auto_tint_bg_colors()
+            self.parent.refresh_ui_styles()
+
+    def _sync_bg_btns(self):
+        """Refresh button labels/colors after auto-tint has updated the theme fields."""
+        if not hasattr(self, '_bg_btns'):
+            return
+        auto = self.parent.theme.auto_bg_from_accent
+        for field, btn in self._bg_btns.items():
+            r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
+            hex_color = QColor(r, g, b).name()
+            btn.setText("auto" if auto else hex_color)
+            btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=auto))
      
     def update_vis_settings(self):
         self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
@@ -809,6 +913,8 @@ class SettingsWindow(QWidget):
             self.parent.theme.accent = color.name()
             self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
             self._apply_slider_color()
+            self.parent._auto_tint_bg_colors()
+            self._sync_bg_btns()
             self.parent.refresh_ui_styles()
             if hasattr(self.parent, 'visualizer'):
                 self.parent.visualizer.bar_color = QColor(self.parent.theme.accent)

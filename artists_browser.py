@@ -1744,11 +1744,15 @@ class ArtistRichDetailView(QWidget):
             return
         super().keyPressEvent(event)
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
-        
+
         self.current_accent = color
-        
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         
         scrollbar_style = f"""
             QScrollArea {{ border: none; background: transparent; }} 
@@ -3122,6 +3126,10 @@ class ArtistGridBrowser(QWidget):
             if getattr(self, 'current_header_cover_id', None) == str(cover_id):
                 self.artist_view.set_header_image(pixmap)
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         self.current_accent = color
         if hasattr(self, 'header_container'):
@@ -3129,7 +3137,7 @@ class ArtistGridBrowser(QWidget):
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
             )
 
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)

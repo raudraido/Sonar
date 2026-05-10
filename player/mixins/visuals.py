@@ -78,6 +78,17 @@ def scrollbar_css(color: str, hide_horizontal: bool = False) -> str:
     return v + h
 
 
+def _dim_accent(hex_color: str, target_max: int = 15) -> str:
+    """Scale accent RGB down so the brightest channel equals target_max, preserving hue."""
+    c = QColor(hex_color)
+    r, g, b = c.red(), c.green(), c.blue()
+    mx = max(r, g, b)
+    if mx == 0:
+        return "0,0,0"
+    f = target_max / mx
+    return f"{int(r * f)},{int(g * f)},{int(b * f)}"
+
+
 class VisualsMixin:
     def update_background_threaded(self, path, calc_color=True, raw_data_override=None):
         if self.blur_thread and self.blur_thread.isRunning():
@@ -118,6 +129,7 @@ class VisualsMixin:
             if dominant_color.startswith('#') and len(dominant_color) > 7:
                 dominant_color = dominant_color[:7]
             self.theme.accent = dominant_color
+            self._auto_tint_bg_colors()
             if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
             if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
             if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
@@ -146,6 +158,16 @@ class VisualsMixin:
             self.art_container.update()
 
         import gc; gc.collect()
+
+    def _auto_tint_bg_colors(self):
+        if not self.theme.auto_bg_from_accent:
+            return
+        dim = _dim_accent(self.theme.accent)
+        for field in ('left_panel_bg', 'queue_panel_bg', 'footer_panel_bg', 'main_panel_bg', 'header_panel_bg'):
+            setattr(self.theme, field, dim)
+        self._last_theme_key = None
+        if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
+            self.swin._sync_bg_btns()
 
     def apply_cover_art(self, data):
         self.update_background_threaded(None, raw_data_override=data)
@@ -384,14 +406,14 @@ class VisualsMixin:
                 self.btn_back.set_color(mc)
                 self.btn_fwd.set_color(mc)
 
-        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgb(11,11,11); border: none; }")
+        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border: none; }}")
 
         bw = self.theme.border_width
         bc = QColor(mc).darker(250).name()
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
-                f'  background: rgb(14,14,14);'
+                f'  background: rgb({self.theme.queue_panel_bg});'
                 f'  border: none;'
                 f'  border-bottom: {bw}px solid {bc};'
                 f'  border-radius: 0px;'
@@ -399,12 +421,19 @@ class VisualsMixin:
             )
         if hasattr(self, 'main_header'):
             self.main_header.setStyleSheet(
-                f'#MainHeader {{ background: rgb(14,14,14); border-bottom: {bw}px solid {bc}; }}'
+                f'#MainHeader {{ background: rgb({self.theme.header_panel_bg}); border-bottom: {bw}px solid {bc}; }}'
             )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgb(14,14,14); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
+                f'#LeftPanel {{ background: rgb({self.theme.left_panel_bg}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
             )
+        bg = self.theme.main_panel_bg
+        for _i in range(self.tabs.count()):
+            _w = self.tabs.widget(_i)
+            if hasattr(_w, 'set_bg_color'):
+                _w.set_bg_color(bg)
+        if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'set_bg_color'):
+            self._now_playing_panel.set_bg_color(bg)
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
             )

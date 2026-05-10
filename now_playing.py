@@ -327,7 +327,7 @@ class NowPlayingPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("NowPlayingPanel")
         self.setStyleSheet(
-            "#NowPlayingPanel { background-color: rgb(12,12,12); border-radius: 0; }"
+            "#NowPlayingPanel { background-color: rgb(14,14,14); border-radius: 0; }"
         )
 
         root = QVBoxLayout(self)
@@ -443,10 +443,14 @@ class NowPlayingPanel(QWidget):
         self._show_all_rows()
         self.update_status()
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color: str):
         self._current_accent = color
         self.setStyleSheet(
-            f"#NowPlayingPanel {{ background-color: rgb(12,12,12); border-radius: 0; }}"
+            f"#NowPlayingPanel {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}"
         )
         self._header.setStyleSheet(
             "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"

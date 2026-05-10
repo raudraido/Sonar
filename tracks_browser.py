@@ -3825,6 +3825,10 @@ class TracksBrowser(QWidget):
         if hasattr(self, 'status_label'):
             self.status_label.setText(f"{new_total} tracks")
     
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         if getattr(self, 'current_accent', None) == color:
             return
@@ -3944,4 +3948,4 @@ class TracksBrowser(QWidget):
         self.tree.setStyleSheet(css)
         
         # 🟢 ALSO apply the alpha to the outer container so the blank space at the bottom matches!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")

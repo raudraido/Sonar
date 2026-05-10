@@ -983,10 +983,14 @@ class AlbumDetailView(QWidget):
             self.btn_like.setText("♡")
             self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
     
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         self._accent_color = QColor(color)
         self._update_bg()
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border: none; }"
@@ -1928,6 +1932,10 @@ class LibraryGridBrowser(QWidget):
         except Exception as e:
             print(f"Error fetching album tracks: {e}")
 
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
     def set_accent_color(self, color):
         if getattr(self, 'current_accent', None) == color:
             return
@@ -1935,7 +1943,7 @@ class LibraryGridBrowser(QWidget):
         self.current_accent = color
 
         # Force Python to paint the darkness so the GPU clears its old frames!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border: none; }"

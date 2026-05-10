@@ -4,6 +4,7 @@ queue sidebar's "Info" tab.
 """
 import re
 import json
+import ssl
 import urllib.request
 import urllib.parse
 
@@ -62,8 +63,11 @@ class _BandsintownWorker(QThread):
             encoded = urllib.parse.quote(self._name, safe='')
             url = (f"https://rest.bandsintown.com/artists/{encoded}/events"
                    f"?app_id={BIT_APP_ID}")
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
             req = urllib.request.Request(url, headers={"User-Agent": "Sonar/1.0"})
-            with urllib.request.urlopen(req, timeout=8) as r:
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
                 raw = r.read().decode()
             print(f"[BIT] {self._name} → {raw[:200]}")
             events = json.loads(raw)
@@ -89,8 +93,11 @@ class _ImageWorker(QThread):
             self.done.emit(_image_cache[self._url])
             return
         try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
             req = urllib.request.Request(self._url, headers={"User-Agent": "Sonar/1.0"})
-            with urllib.request.urlopen(req, timeout=8) as r:
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
                 data = r.read()
             pix = QPixmap()
             pix.loadFromData(data)
