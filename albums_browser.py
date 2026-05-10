@@ -1984,8 +1984,8 @@ class LibraryGridBrowser(QWidget):
         self.detail_view.play_clicked.connect(self.on_play_all_clicked)
         self.detail_view.shuffle_clicked.connect(self.on_shuffle_album_clicked)
         self.detail_view.album_favorite_toggled.connect(self.on_album_heart_clicked)
-        self.detail_view.artist_clicked.connect(self.switch_to_artist_tab.emit)
-        self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab.emit)
+        self.detail_view.artist_clicked.connect(self.switch_to_artist_tab)
+        self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab)
         self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)
