@@ -375,13 +375,13 @@ class PaginationFooter(QWidget):
 
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedHeight(50)
+        self.setFixedHeight(51)
         self.setStyleSheet("""
-            PaginationFooter { 
-                background-color: #111; 
-                border-bottom-left-radius: 5px; 
-                border-bottom-right-radius: 5px; 
-                border-top: 1px solid #222; 
+            PaginationFooter {
+                background-color: transparent;
+                border-bottom-left-radius: 5px;
+                border-bottom-right-radius: 5px;
+                border-top: 1px solid rgba(255,255,255,0.06);
             }
         """)
 
@@ -399,13 +399,13 @@ class PaginationFooter(QWidget):
 
     def set_accent_color(self, color, alpha=1.0):
         self.current_accent = color
-        self.setStyleSheet(f"""
-            PaginationFooter {{
-                background-color: rgba(12,12,12,{alpha});
+        self.setStyleSheet("""
+            PaginationFooter {
+                background-color: transparent;
                 border-bottom-left-radius: 5px;
                 border-bottom-right-radius: 5px;
                 border-top: 1px solid rgba(255,255,255,0.06);
-            }}
+            }
         """)
         self.render_pagination(self.current_page, self.total_pages)
 

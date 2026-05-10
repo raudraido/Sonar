@@ -19,7 +19,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QTimer, QModelIndex, QEvent, QPoint, Q
                           QPropertyAnimation, QEasingCurve, QSize, QParallelAnimationGroup,
                           QRectF, QThread, QSettings, QObject)
 
-from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont
+from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont, QPen
 
 from albums_browser import resource_path
 from components import PaginationFooter, SmartSearchContainer, TrackInfoDialog
@@ -699,6 +699,17 @@ class SmartSortHeader(QHeaderView):
 
     FILTER_ICON_SIZE = 14
 
+    def setGeometry(self, *args):
+        # Force full width — ignore the narrowed rect Qt passes when a scrollbar is visible
+        if len(args) == 1:
+            r = args[0]
+        else:
+            from PyQt6.QtCore import QRect
+            r = QRect(*args)
+        if self.parentWidget():
+            r.setWidth(self.parentWidget().width())
+        super().setGeometry(r)
+
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
         self.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -888,6 +899,50 @@ class SmartSortHeader(QHeaderView):
             self._filter_icon_rects[logicalIndex] = QRect()
 
         painter.restore()
+
+class _TrackTree(QTreeWidget):
+    """QTreeWidget with inset separators and inset hover/selection highlights."""
+    _sep_pen  = QPen(QColor(255, 255, 255, 13), 1)
+    _sel_color = QColor(255, 255, 255, 26)
+    _hov_color = QColor(255, 255, 255, 13)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hov_row = -1
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.viewport():
+            t = event.type()
+            if t == QEvent.Type.MouseMove:
+                row = self.indexAt(event.pos()).row()
+                if row != self._hov_row:
+                    self._hov_row = row
+                    self.viewport().update()
+            elif t == QEvent.Type.Leave:
+                if self._hov_row != -1:
+                    self._hov_row = -1
+                    self.viewport().update()
+        return super().eventFilter(obj, event)
+
+    def drawRow(self, painter, option, index):
+        rect = option.rect.adjusted(8, 0, -8, 0)
+        is_sel = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hov = (not is_sel) and index.row() == self._hov_row
+        if is_sel or is_hov:
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._sel_color if is_sel else self._hov_color)
+            painter.drawRect(rect)
+            painter.restore()
+        super().drawRow(painter, option, index)
+        y = option.rect.bottom()
+        painter.save()
+        painter.setPen(self._sep_pen)
+        painter.drawLine(8, y, self.viewport().width() - 8, y)
+        painter.restore()
+
 
 class NoFocusDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
@@ -1953,7 +2008,7 @@ class TracksBrowser(QWidget):
         
         # --- TREE WIDGET ---
         
-        self.tree = QTreeWidget()
+        self.tree = _TrackTree()
         from PyQt6.QtWidgets import QAbstractItemView
         self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.omni_scroller = MiddleClickScroller(self.tree)
@@ -3877,9 +3932,9 @@ class TracksBrowser(QWidget):
         {scrollbar_css(color_hex)}
         
         QTreeWidget {{ background: transparent; border: none; font-size: 10pt; outline: none; }}
-        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border-top: 1px solid rgba(255,255,255,0.05); border-bottom: none; color: #ddd; }}
-        QTreeWidget::item:selected {{ background: rgba(255,255,255,0.1); color: {color_hex}; }} 
-        QTreeWidget::item:hover {{ background: rgba(255,255,255,0.05); color: {color_hex}; }}
+        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: #ddd; }}
+        QTreeWidget::item:selected {{ background: transparent; color: {color_hex}; }}
+        QTreeWidget::item:hover {{ background: transparent; color: {color_hex}; }}
         
         QHeaderView::section {{ background: transparent; color: #888; border: none; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 5px; font-weight: bold; text-transform: uppercase; font-size: 11px; }} 
         QHeaderView::section:first {{ padding-right: 5px; }} 
