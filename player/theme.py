@@ -23,9 +23,10 @@ class Theme:
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px
+    border_color: str = "#0e0e0e"        # derived from accent; updated at runtime
 
     # Fields that are code constants — never saved to or loaded from QSettings.
-    _NO_PERSIST = frozenset({"border_width"})
+    _NO_PERSIST = frozenset({"border_width", "border_color"})
 
     # ── Serialisation ────────────────────────────────────────────────────────
     def to_json(self) -> str:

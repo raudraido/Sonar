@@ -359,9 +359,10 @@ class NowPlayingFooterWidget(QWidget):
             s = f"{v:.2f}".rstrip('0').rstrip('.')
             return f"{s} BPM"
 
+        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
+            f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }}"
             "QMenu::item { padding: 6px 25px; }"
             "QMenu::item:selected { background-color: #333; }"
         )

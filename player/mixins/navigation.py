@@ -596,14 +596,19 @@ class NavigationMixin:
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QAction, QCursor
 
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
-            "QMenu::item { padding: 6px 25px; }"
-            "QMenu::item:selected { background-color: #333; }"
+        _bg = getattr(getattr(self, 'theme', None), 'main_panel_bg', '14,14,14')
+        _bc = getattr(getattr(self, 'theme', None), 'border_color', '#2a2a2a')
+        MENU_CSS = (
+            f"QMenu {{ background-color: rgb({_bg}); color: #ddd; border: 1px solid {_bc};"
+            "  border-radius: 12px; padding: 4px; }"
+            "QMenu::item { padding: 6px 25px; border-radius: 4px; }"
+            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
             "QMenu::item:disabled { color: #555; }"
-            "QMenu::separator { height: 1px; background: #444; margin: 5px 0; }"
+            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
+        menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setStyleSheet(MENU_CSS)
 
         menu.addAction("Play Now").triggered.connect(lambda: self.add_and_play_from_browser(track))
         album_id = track.get('albumId') or track.get('parent')
@@ -622,6 +627,7 @@ class NavigationMixin:
         menu.addSeparator()
 
         goto_menu = menu.addMenu("Go to")
+        goto_menu.setStyleSheet(MENU_CSS)
         album_data = {
             'id': album_id,
             'title': track.get('album', 'Unknown'),

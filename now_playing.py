@@ -694,14 +694,19 @@ class NowPlayingPanel(QWidget):
     def _build_and_show_menu(self, global_pos, client, track_ids, track_names, playlists, tracks=None):
         """Builds and shows the context menu. Always called on the main thread."""
         from components import TrackInfoDialog
+        _mw = getattr(self, 'main_window', None)
+        _theme = getattr(_mw, 'theme', None)
+        _bg = getattr(_theme, 'main_panel_bg', '14,14,14')
+        _bc = getattr(_theme, 'border_color', '#2a2a2a')
         menu = QMenu()
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
-            "QMenu { background-color: #1e1e1e; color: #ddd; border: 1px solid #444;"
-            "        border-radius: 6px; padding: 4px; }"
+            f"QMenu {{ background-color: rgb({_bg}); color: #ddd; border: 1px solid {_bc};"
+            "  border-radius: 12px; padding: 4px; }"
             "QMenu::item { padding: 7px 28px 7px 14px; border-radius: 4px; }"
-            "QMenu::item:selected { background-color: #333; color: #fff; }"
+            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
             "QMenu::item:disabled { color: #555; }"
-            "QMenu::separator { height: 1px; background: #333; margin: 4px 8px; }"
+            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
 
         label = track_names[0] if len(track_names) == 1 else f"{len(track_names)} tracks"

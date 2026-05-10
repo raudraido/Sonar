@@ -409,7 +409,8 @@ class VisualsMixin:
         self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border: none; }}")
 
         bw = self.theme.border_width
-        bc = QColor(mc).darker(250).name()
+        self.theme.border_color = QColor(mc).darker(250).name()
+        bc = self.theme.border_color
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'

@@ -1114,12 +1114,20 @@ class _CastPopup(QFrame):
     def paintEvent(self, event):
         from PyQt6.QtGui import QPainter, QPainterPath, QPen
         from PyQt6.QtCore import QRectF
+        mw = self.parent().window() if self.parent() else None
+        theme = getattr(mw, 'theme', None)
+        bg_str = getattr(theme, 'main_panel_bg', '14,14,14')
+        border = getattr(theme, 'border_color', '#2a2a2a')
+        try:
+            r, g, b = (int(x) for x in bg_str.split(','))
+        except Exception:
+            r, g, b = 14, 14, 14
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12.0, 12.0)
-        painter.fillPath(path, QColor('#111111'))
-        painter.setPen(QPen(QColor('#2a2a2a'), 1.0))
+        painter.fillPath(path, QColor(r, g, b))
+        painter.setPen(QPen(QColor(border), 1.0))
         painter.drawPath(path)
         painter.end()
 

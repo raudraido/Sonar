@@ -2223,7 +2223,8 @@ class TracksBrowser(QWidget):
     
     def show_column_menu(self):
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #222; color: #ddd; border: 1px solid #444; } QMenu::item { padding: 6px 25px; } QMenu::item:selected { background-color: #333; }")
+        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }} QMenu::item {{ padding: 6px 25px; }} QMenu::item:selected {{ background-color: #333; }}")
         
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
 
@@ -3515,7 +3516,8 @@ class TracksBrowser(QWidget):
         track_ids = [str(t.get('id')) for t in selected_tracks if t.get('id')]
         
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #222; color: #ddd; border: 1px solid #444; } QMenu::item { padding: 6px 25px; } QMenu::item:selected { background-color: #333; } QMenu::item:disabled { color: #555; } QMenu::separator { height: 1px; background: #444; margin: 5px 0; }")
+        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }} QMenu::item {{ padding: 6px 25px; }} QMenu::item:selected {{ background-color: #333; }} QMenu::item:disabled {{ color: #555; }} QMenu::separator {{ height: 1px; background: {_bc}; margin: 5px 0; }}")
         
         action_play = menu.addAction(f"Play Now ({count})" if is_multi else "Play Now")
         if not is_multi:

@@ -1385,14 +1385,19 @@ class AlbumDetailView(QWidget):
         track = self._tracks[idx]
         main  = self.window()
 
+        bg = getattr(self, '_bg_color', '14,14,14')
+        _theme = getattr(self.window(), 'theme', None)
+        _bc = getattr(_theme, 'border_color', '#2a2a2a')
         MENU_CSS = (
-            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; }"
-            "QMenu::item { padding: 6px 25px; }"
-            "QMenu::item:selected { background-color: #333; }"
+            f"QMenu {{ background-color: rgb({bg}); color: #ddd; border: 1px solid {_bc};"
+            "  border-radius: 12px; padding: 4px; }"
+            "QMenu::item { padding: 6px 25px; border-radius: 4px; }"
+            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
             "QMenu::item:disabled { color: #555; }"
-            "QMenu::separator { height: 1px; background: #444; margin: 5px 0; }"
+            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(MENU_CSS)
 
         header = QAction(track.get('title', 'Unknown'), menu)
