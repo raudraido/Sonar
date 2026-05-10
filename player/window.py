@@ -276,8 +276,6 @@ class SonarPlayer(
         self.playback_manager.start()
 
         # --- THEME (single source of truth for all visual settings) ---
-        self.static_bg_path = self.settings.value('static_bg_path') or None
-
         _saved_theme = self.settings.value('theme')
         if _saved_theme:
             self.theme = Theme.from_json(_saved_theme)
@@ -302,19 +300,9 @@ class SonarPlayer(
         self.last_volume = 100
 
         self.init_ui()
-        self.opacity_effect = QGraphicsOpacityEffect(self.bg_label)
-        self.bg_label.setGraphicsEffect(self.opacity_effect)
         
-        # --- The Crossfade Animation Engine
-        self.fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.fade_anim.setDuration(400) # 400ms for a beautiful smooth blend
-        self.fade_anim.setStartValue(0.0)
-        self.fade_anim.setEndValue(1.0)
-        self.fade_anim.valueChanged.connect(self._on_fade_step)
-        self.fade_anim.finished.connect(self._on_fade_finished)
         self.crossfade_progress = 1.0
-        
-        self.blur_thread = None 
+        self.blur_thread = None
         self.generic_tooltip = TriangleTooltip(self, show_triangle=False)
 
         
@@ -365,9 +353,6 @@ class SonarPlayer(
 
         QTimer.singleShot(100, self.test_navidrome_fetch)
         QTimer.singleShot(0, self.reposition_nav_buttons)
-        if self.static_bg_path:
-            QTimer.singleShot(50, self.apply_static_background)
-
         # --- Background downloader for playlist covers ---
         self.playlist_cover_worker = PlaylistCoverWorker(None)
         self.playlist_cover_worker.cover_downloaded.connect(self.tree.viewport().update)
@@ -412,7 +397,6 @@ class SonarPlayer(
         self._resize_debounce = QTimer(self)
         self._resize_debounce.setSingleShot(True)
         self._resize_debounce.setInterval(120)
-        self._resize_debounce.timeout.connect(self._apply_bg_scale)
 
         # Pre-load the QMovie once — the GIF decoder is the expensive part.
         # QLabel and QGraphicsColorizeEffect are recreated per-call in update_indicator()
@@ -484,13 +468,6 @@ class SonarPlayer(
         self.ghost_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.ghost_label.setStyleSheet("background: transparent;")
         
-        self.bg_label_old = QLabel(self)
-        self.bg_label_old.hide()
-
-        self.bg_label = QLabel(self)
-        self.bg_label.resize(self.size())
-        self.bg_label.setStyleSheet(f"background-color: {self.theme.accent};")
-        self.bg_label.lower()
         
         central_widget = QWidget()
         central_widget.setStyleSheet("background: transparent;")
@@ -622,11 +599,6 @@ class SonarPlayer(
         from albums_browser import AlbumDetailView
         self.global_album_view = AlbumDetailView(None)
         
-        self.global_album_view.track_list.play_track.connect(self.add_and_play_from_browser)
-        self.global_album_view.track_list.play_multiple_tracks.connect(self.play_whole_album)
-        self.global_album_view.track_list.queue_track.connect(self.add_track_to_queue)
-        self.global_album_view.track_list.play_next.connect(self.play_track_next)
-        self.global_album_view.track_list.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         
         self.global_album_view.play_clicked.connect(self.play_global_album)
         self.global_album_view.shuffle_clicked.connect(self.shuffle_global_album)

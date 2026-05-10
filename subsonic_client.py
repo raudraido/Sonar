@@ -919,7 +919,8 @@ class SubsonicClient:
         if not cover_id: return None
         params = self._get_auth_params()
         params['id'] = cover_id
-        params['size'] = size
+        if size is not None:
+            params['size'] = size
         try:
             r = self.session.get(f"{self.base_url}/rest/getCoverArt", params=params, timeout=15)
             if r.status_code == 200:

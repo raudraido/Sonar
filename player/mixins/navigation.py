@@ -283,7 +283,6 @@ class NavigationMixin:
         
         # 2. Feed it the database client dynamically
         self.global_album_view.client = getattr(self, 'navidrome_client', None)
-        self.global_album_view.track_list.client = getattr(self, 'navidrome_client', None)
         
         # 3. Load the data
         if isinstance(album_data, str):
@@ -292,7 +291,7 @@ class NavigationMixin:
              self.global_album_view.load_album(album_data)
              
         if hasattr(self, 'theme'):
-            self.global_album_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
+            self.global_album_view.set_accent_color(self.theme.accent)
 
     def navigate_to_artist(self, artist_data):
         self.add_global_nav(self.global_artist_tab_idx, 'artist', artist_data)
@@ -371,7 +370,7 @@ class NavigationMixin:
             self.global_artist_view.load_artist(artist_data)
             
         if hasattr(self, 'theme'):
-            self.global_artist_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
+            self.global_artist_view.set_accent_color(self.theme.accent)
         
     def navigate_to_playlist(self, playlist_data, pixmap=None):
         self.add_global_nav(self.global_playlist_tab_idx, 'playlist_detail', playlist_data)
@@ -398,7 +397,7 @@ class NavigationMixin:
         self._pl_worker.start()
         
         if hasattr(self, 'theme'):
-            self.global_playlist_view.set_accent_color(self.theme.accent, self.theme.content_alpha)
+            self.global_playlist_view.set_accent_color(self.theme.accent)
 
     def on_switch_to_artist(self, artist_name):
         """Switches to the Artist tab and loads the requested artist."""
@@ -732,7 +731,8 @@ class NavigationMixin:
             if stack_idx == 0 and hasattr(current_widget, 'grid_view'):
                 success = focus_grid(current_widget.grid_view)
             elif stack_idx == 1 and hasattr(current_widget, 'detail_view'):
-                success = focus_tree(current_widget.detail_view.track_list.tree)
+                tl = getattr(current_widget.detail_view, 'track_list', None)
+                if tl: success = focus_tree(tl.tree)
             elif stack_idx == 2 and hasattr(current_widget, 'artist_view'):
                 for i in range(current_widget.artist_view.sections_layout.count()):
                     row = current_widget.artist_view.sections_layout.itemAt(i).widget()

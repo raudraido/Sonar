@@ -462,9 +462,9 @@ class PlaylistDetailView(QWidget):
                 
         return super().eventFilter(source, event)
     
-    def set_accent_color(self, color, alpha=0.3):
+    def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         
         play_btn_style = f"""
             QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
@@ -481,7 +481,7 @@ class PlaylistDetailView(QWidget):
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
         self._scroll_reveal.color = color
-        self.track_list.set_accent_color(color, alpha)
+        self.track_list.set_accent_color(color)
         
         import os
         from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
@@ -1124,17 +1124,17 @@ class PlaylistsBrowser(QWidget):
         if hasattr(self, 'playlist_model'):
             self.playlist_model.update_cover(str(cover_id))
 
-    def set_accent_color(self, color, alpha=0.3):
+    def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#PlaylistsBrowser {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
             )
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
-            self.grid_bridge.bgAlphaChanged.emit(alpha)
-        self.detail_view.set_accent_color(color, alpha)
+            self.grid_bridge.bgAlphaChanged.emit(1.0)
+        self.detail_view.set_accent_color(color)
         if hasattr(self, 'search_container'): self.search_container.set_accent_color(color)
         if hasattr(self, 'burger_btn'):
             try:

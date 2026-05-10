@@ -97,7 +97,8 @@ class KeyboardMixin:
             if stack_idx == 0 and hasattr(current_widget, 'grid_view'):
                 active_grid = current_widget.grid_view
             elif stack_idx == 1 and hasattr(current_widget, 'detail_view'):
-                active_tree = current_widget.detail_view.track_list.tree
+                tl = getattr(current_widget.detail_view, 'track_list', None)
+                if tl: active_tree = tl.tree
             elif stack_idx == 2 and hasattr(current_widget, 'artist_view'):
                 from PyQt6.QtWidgets import QListWidget
                 focus_w = QApplication.focusWidget()

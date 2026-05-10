@@ -23,6 +23,22 @@ from PyQt6.QtGui import (
 
 from audio_engine import AudioEngine
 
+
+def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
+    if pix.isNull():
+        return pix
+    out = QPixmap(pix.size())
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, pix.width(), pix.height(), radius, radius)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, pix)
+    p.end()
+    return out
+
+
 class ElidedLabel(QLabel):
     clicked = pyqtSignal()
 
@@ -275,7 +291,7 @@ class NowPlayingFooterWidget(QWidget):
 
     def set_cover(self, pixmap):
         if pixmap and not pixmap.isNull():
-            self.art_label.setPixmap(pixmap)
+            self.art_label.setPixmap(_round_pixmap(pixmap))
             self.art_label.show()
         else:
             self.art_label.clear()
@@ -659,57 +675,7 @@ class SettingsWindow(QWidget):
         self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
         layout.addWidget(self.color_btn)
 
-        transparency_group = QGroupBox("Transparency")
-        transparency_group.setStyleSheet("""
-            QGroupBox {
-                color: #888; font-weight: bold; font-size: 11px;
-                border: 1px solid #333; border-radius: 5px; margin-top: 8px;
-                padding-top: 8px;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 8px; }
-        """)
-        tg_layout = QVBoxLayout(transparency_group)
-        tg_layout.setSpacing(4)
-        tg_layout.setContentsMargins(8, 8, 8, 8)
-
-        self.alpha_label = QLabel(f"Main Panel: {int((1.0 - self.parent.theme.content_alpha) * 100)}%")
-        tg_layout.addWidget(self.alpha_label)
-        self.alpha_slider = QSlider(Qt.Orientation.Horizontal)
-        self.alpha_slider.setRange(0, 100)
-        self.alpha_slider.setValue(int((1.0 - self.parent.theme.content_alpha) * 100))
-        self.alpha_slider.valueChanged.connect(self.update_labels_only)
-        tg_layout.addWidget(self.alpha_slider)
-
-        self.footer_alpha_label = QLabel(f"Footer Panel: {int((1.0 - self.parent.theme.footer_alpha) * 100)}%")
-        tg_layout.addWidget(self.footer_alpha_label)
-        self.footer_alpha_slider = QSlider(Qt.Orientation.Horizontal)
-        self.footer_alpha_slider.setRange(0, 100)
-        self.footer_alpha_slider.setValue(int((1.0 - self.parent.theme.footer_alpha) * 100))
-        self.footer_alpha_slider.valueChanged.connect(self.update_labels_only)
-        tg_layout.addWidget(self.footer_alpha_slider)
-
-        self.queue_alpha_label = QLabel(f"Left/Queue Panel: {int((1.0 - self.parent.theme.panel_alpha) * 100)}%")
-        tg_layout.addWidget(self.queue_alpha_label)
-        self.queue_alpha_slider = QSlider(Qt.Orientation.Horizontal)
-        self.queue_alpha_slider.setRange(0, 100)
-        self.queue_alpha_slider.setValue(int((1.0 - self.parent.theme.panel_alpha) * 100))
-        self.queue_alpha_slider.valueChanged.connect(self.update_labels_only)
-        tg_layout.addWidget(self.queue_alpha_slider)
-
-        layout.addWidget(transparency_group)
-
-        # Single debounce timer — restarted on every valueChanged, fires apply_heavy_changes
-        # 150ms after the user stops interacting (covers drag, arrow keys, and bar clicks).
-        from PyQt6.QtCore import QTimer as _QTimer
-        self._apply_debounce = _QTimer(self)
-        self._apply_debounce.setSingleShot(True)
-        self._apply_debounce.setInterval(150)
-        self._apply_debounce.timeout.connect(self.apply_heavy_changes)
-        self._sliders = (self.alpha_slider,
-                         self.footer_alpha_slider, self.queue_alpha_slider)
-        for _s in self._sliders:
-            _s.valueChanged.connect(self._apply_debounce.start)
-
+        self._sliders = ()
         self._apply_slider_color()
         layout.addStretch()
 
@@ -787,13 +753,6 @@ class SettingsWindow(QWidget):
 
     def _apply_slider_color(self):
         mc = getattr(self.parent, 'master_color', '#ffffff')
-        ss = (
-            f"QSlider::groove:horizontal {{ background: #333; height: 5px; border-radius: 2px; }}"
-            f"QSlider::sub-page:horizontal {{ background: {mc}; border-radius: 2px; }}"
-            f"QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}"
-        )
-        for s in self._sliders:
-            s.setStyleSheet(ss)
         _sb_ss = (
             "QScrollArea { background: transparent; border: none; }"
             f"QScrollBar:vertical {{ border: none; background: #1a1a1a; width: 6px; margin: 0; }}"
@@ -841,32 +800,6 @@ class SettingsWindow(QWidget):
             self.parent.visualizer.speed = self.vis_speed_slider.value() / 100.0
             self.parent.visualizer.gain = float(self.vis_gain_slider.value())
 
-    def pick_static_bg(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Choose Background Image", "",
-            "Images (*.jpg *.jpeg *.png *.webp *.bmp)"
-        )
-        if not path:
-            return
-        size_mb = os.path.getsize(path) / (1024 * 1024)
-        if size_mb > 2:
-            QMessageBox.warning(self, "File Too Large",
-                f"Image must be under 2 MB (selected file is {size_mb:.1f} MB).")
-            return
-        self.parent.static_bg_path = path
-        self.bg_img_name.setText(os.path.basename(path))
-        self.bg_img_clear.setVisible(True)
-        if hasattr(self.parent, 'apply_static_background'):
-            self.parent.apply_static_background()
-
-    def clear_static_bg(self):
-        self.parent.static_bg_path = None
-        self.bg_img_name.setText("None")
-        self.bg_img_clear.setVisible(False)
-        # Trigger a normal background refresh from current track
-        if hasattr(self.parent, 'visual_update_timer'):
-            self.parent._last_rendered_cid = None
-            self.parent.visual_update_timer.start(100)
 
     def pick_global_color(self):
         self.dynamic_check.setChecked(False) 
@@ -885,17 +818,6 @@ class SettingsWindow(QWidget):
                 self.parent.seek_bar._user_picked = True
                 self.parent.seek_bar.update()
     
-    def update_labels_only(self):
-        self.alpha_label.setText(f"Main Panel: {self.alpha_slider.value()}%")
-        self.footer_alpha_label.setText(f"Footer Panel: {self.footer_alpha_slider.value()}%")
-        self.queue_alpha_label.setText(f"Left/Queue Panel: {self.queue_alpha_slider.value()}%")
-
-    def apply_heavy_changes(self):
-        self.parent.theme.content_alpha = 1.0 - self.alpha_slider.value() / 100.0
-        self.parent.theme.footer_alpha  = 1.0 - self.footer_alpha_slider.value() / 100.0
-        self.parent.theme.panel_alpha   = 1.0 - self.queue_alpha_slider.value() / 100.0
-
-        if hasattr(self.parent, 'refresh_visuals'): self.parent.refresh_visuals()
 
     def _on_key_captured(self, hid, key):
         self.parent.hotkey_manager.rebind(hid, key)

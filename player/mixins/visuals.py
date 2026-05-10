@@ -93,8 +93,8 @@ class VisualsMixin:
 
         self.blur_thread = BlurWorker(
             path, 
-            self.theme.blur, 
-            self.theme.overlay,
+            2.5,
+            0.25,
             self.theme.accent,
             calc_color,
             raw_data_override=raw_data_override,
@@ -107,11 +107,6 @@ class VisualsMixin:
 
     def apply_threaded_art(self, blurred_qimg, cover_qimg, raw_art, dominant_color):
         self.old_cover_pixmap = getattr(self, 'current_cover_pixmap', None)
-        if hasattr(self, 'bg_label') and self.bg_label.pixmap() and not self.bg_label.pixmap().isNull():
-            self.bg_label_old.setPixmap(self.bg_label.pixmap())
-        else:
-            self.bg_label_old.setPixmap(QPixmap())
-            
         self.current_cover_pixmap = QPixmap()
         if not cover_qimg.isNull():
             self.current_cover_pixmap = QPixmap.fromImage(cover_qimg)
@@ -146,42 +141,14 @@ class VisualsMixin:
         else:
             self.now_playing_widget.set_cover(None)
 
-        if hasattr(self, 'bg_label'):
-            self.bg_label.setStyleSheet(f"background-color: {self.theme.accent};")
-
         if hasattr(self, 'art_container'):
             self.art_container.scaled_cache = {}
-
-        if hasattr(self, 'art_container'):
             self.art_container.update()
 
         import gc; gc.collect()
 
     def apply_cover_art(self, data):
         self.update_background_threaded(None, raw_data_override=data)
-
-    def apply_static_background(self):
-        """Render the static bg image through BlurWorker and lock it in."""
-        path = getattr(self, 'static_bg_path', None)
-        if not path or not os.path.exists(path):
-            return
-        worker = BlurWorker(
-            path,
-            self.theme.blur,
-            self.theme.overlay,
-            self.theme.accent,
-            calc_color=False,
-        )
-        def _apply(blurred_qimg, *_):
-            if not blurred_qimg.isNull():
-                self.bg_label_old.setPixmap(QPixmap())
-                self.bg_label.setPixmap(QPixmap.fromImage(blurred_qimg))
-                self.bg_label.setGraphicsEffect(None)
-                # Scale the 200×200 blur up to actual window size
-                self._apply_bg_scale()
-        worker.finished.connect(_apply)
-        worker.start()
-        self._static_bg_worker = worker  # keep reference
 
     def _perform_heavy_visual_update(self):
         """Called by timer when user has stopped skipping tracks."""
@@ -217,35 +184,14 @@ class VisualsMixin:
             self.art_container.update()
        
     def _on_fade_finished(self):
-        """Release the old frame's memory once the crossfade is done."""
         self.old_cover_pixmap = None
-        if hasattr(self, 'bg_label_old'):
-            self.bg_label_old.setPixmap(QPixmap())
-            
-        
-        self.bg_label.setGraphicsEffect(None) 
         import gc; gc.collect()
-
-    def _apply_bg_scale(self):
-        """Deferred by _resize_debounce — runs once after the user stops resizing."""
-        sz = self.size()
-        if self.fade_anim.state() == QPropertyAnimation.State.Running:
-            return  # don't fight the crossfade animation
-        def _crop_scale(pixmap, sz):
-            scaled = pixmap.scaled(sz, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            cx = (scaled.width() - sz.width()) // 2
-            cy = (scaled.height() - sz.height()) // 2
-            return scaled.copy(cx, cy, sz.width(), sz.height())
-        if hasattr(self, 'bg_label_old') and self.bg_label_old.pixmap() and not self.bg_label_old.pixmap().isNull():
-            self.bg_label_old.setPixmap(_crop_scale(self.bg_label_old.pixmap(), sz))
-        if hasattr(self, 'bg_label') and self.bg_label.pixmap() and not self.bg_label.pixmap().isNull():
-            self.bg_label.setPixmap(_crop_scale(self.bg_label.pixmap(), sz))
 
     def refresh_ui_styles(self, scroll_to_current=True):
         mc = self.theme.accent
         if mc.startswith('#') and len(mc) > 7:
             mc = mc[:7]
-        alpha = self.theme.content_alpha
+        alpha = 1.0
         rgb = QColor(mc)
 
         if not hasattr(self, 'icon_cache'):
@@ -304,9 +250,7 @@ class VisualsMixin:
         self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", "#111111"))
 
         
-        footer_alpha = self.theme.footer_alpha
-        queue_alpha  = self.theme.panel_alpha
-        theme_key = f"{mc}_{alpha}_{footer_alpha}_{queue_alpha}"
+        theme_key = mc
         
         if getattr(self, '_last_theme_key', None) == theme_key:
             return 
@@ -339,17 +283,17 @@ class VisualsMixin:
 
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, 'set_accent_color'):
-            active_tab.set_accent_color(mc, alpha)
-            
+            active_tab.set_accent_color(mc)
+
         if not getattr(self, '_tab_hook_set', False):
-            self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent, self.theme.content_alpha) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
+            self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
             self._tab_hook_set = True
 
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
         tabs_css = f"""
             QTabBar {{ border: none; background: transparent; }}
             QTabBar::tab {{
-                background: rgba(17,17,17,{alpha});
+                background: rgb(17,17,17);
                 color: #555;
                 padding: 10px 20px;
                 border: none;
@@ -360,8 +304,8 @@ class VisualsMixin:
                 border-top-right-radius: 5px;
                 margin-right: 4px;
             }}
-            QTabBar::tab:selected {{ color: {mc}; background: rgba(24,24,24,{alpha}); border-bottom: 2px solid {mc}; }}
-            QTabBar::tab:hover {{ color: #888; background: rgba(34,34,34,{alpha}); }}
+            QTabBar::tab:selected {{ color: {mc}; background: rgb(24,24,24); border-bottom: 2px solid {mc}; }}
+            QTabBar::tab:hover {{ color: #888; background: rgb(34,34,34); }}
         """
 
         toggle_style = "QPushButton { background: transparent; border: none; border-radius: 20px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }"
@@ -440,17 +384,14 @@ class VisualsMixin:
                 self.btn_back.set_color(mc)
                 self.btn_fwd.set_color(mc)
 
-        # Apply the Footer Opacity Dynamically!
-        footer_alpha = self.theme.footer_alpha
-        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgba(11, 11, 11, {footer_alpha}); border: none; }}")
+        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgb(11,11,11); border: none; }")
 
-        # Apply Queue Panel Opacity
         bw = self.theme.border_width
-        bc = QColor(mc).darker(250).name()  # master color at 50% brightness
+        bc = QColor(mc).darker(250).name()
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
-                f'  background: rgba(14,14,14,{queue_alpha});'
+                f'  background: rgb(14,14,14);'
                 f'  border: none;'
                 f'  border-bottom: {bw}px solid {bc};'
                 f'  border-radius: 0px;'
@@ -458,11 +399,11 @@ class VisualsMixin:
             )
         if hasattr(self, 'main_header'):
             self.main_header.setStyleSheet(
-                f'#MainHeader {{ background: rgba(14,14,14,{alpha}); border-bottom: {bw}px solid {bc}; }}'
+                f'#MainHeader {{ background: rgb(14,14,14); border-bottom: {bw}px solid {bc}; }}'
             )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgba(14,14,14,{queue_alpha}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
+                f'#LeftPanel {{ background: rgb(14,14,14); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
             )
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
@@ -496,10 +437,8 @@ class VisualsMixin:
         timer_style = f"color: {mc}; font-family: 'sans-serif', sans-serif; font-size: 14px; font-weight: bold; background: transparent;"
         self.current_time_label.setStyleSheet(timer_style); self.total_time_label.setStyleSheet(timer_style)
 
-        if getattr(self, '_last_tree_alpha', None) != alpha:
-            if hasattr(self, '_now_playing_panel'):
-                self._now_playing_panel.set_accent_color(mc, alpha)
-            self._last_tree_alpha = alpha
+        if hasattr(self, '_now_playing_panel'):
+            self._now_playing_panel.set_accent_color(mc)
 
         if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
             self.swin._apply_slider_color()
@@ -508,12 +447,6 @@ class VisualsMixin:
 
     def refresh_visuals(self):
         self.refresh_ui_styles()
-        if getattr(self, 'static_bg_path', None):
-            self.apply_static_background()
-            return
-        track_path = None
-        if 0 <= self.current_index < len(self.playlist_data): track_path = self.playlist_data[self.current_index].get('path')
-        self.update_background_threaded(track_path, raw_data_override=self.current_raw_art)
 
     def update_indicator(self, scroll_to_current=True):
         """Updates the dancing GIF, row highlight, and broadcasts the playing state to all tabs."""

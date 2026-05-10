@@ -3231,6 +3231,7 @@ class TracksBrowser(QWidget):
         self.combined_delegate.is_album_mode = enabled
         self.tree.header().album_mode = enabled
         if enabled:
+            self.setStyleSheet("#DetailBackground { background-color: transparent; border-radius: 0; }")
             # Hide redundant columns
             for col in [2, 3, 4, 5, 6, 8, 10, 11, 12]:
                 self.tree.hideColumn(col)
@@ -3824,12 +3825,11 @@ class TracksBrowser(QWidget):
         if hasattr(self, 'status_label'):
             self.status_label.setText(f"{new_total} tracks")
     
-    def set_accent_color(self, color, alpha=0.3):
-        if getattr(self, 'current_accent', None) == color and getattr(self, 'current_alpha', None) == alpha:
+    def set_accent_color(self, color):
+        if getattr(self, 'current_accent', None) == color:
             return
-            
+
         self.current_accent = color
-        self.current_alpha = alpha
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
@@ -3915,17 +3915,17 @@ class TracksBrowser(QWidget):
             
             if hasattr(self, 'footer'):
                 h = self.footer.isHidden()
-                self.footer.set_accent_color(color, alpha)
+                self.footer.set_accent_color(color)
                 if h or in_album: self.footer.hide()
                 
             # 🟢 3. Route to the new styling engine!
-            self.update_scrollbar_color(color, alpha)
+            self.update_scrollbar_color(color)
             
             self.tree.viewport().update()
         finally:
             self.setUpdatesEnabled(True)
 
-    def update_scrollbar_color(self, color_hex, alpha=0.3):
+    def update_scrollbar_color(self, color_hex):
         row_height = "50px" if getattr(self, 'is_album_mode', False) else "75px"
         
         css = f"""
@@ -3944,4 +3944,4 @@ class TracksBrowser(QWidget):
         self.tree.setStyleSheet(css)
         
         # 🟢 ALSO apply the alpha to the outer container so the blank space at the bottom matches!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")

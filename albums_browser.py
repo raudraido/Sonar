@@ -20,9 +20,10 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
 
 from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer,
                           QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation)
-from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics, 
+from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics,
                          QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
-                         QTextDocument, QAbstractTextDocumentLayout, QPalette)
+                         QTextDocument, QAbstractTextDocumentLayout, QPalette,
+                         QLinearGradient)
 
 def resource_path(relative_path):
     try:
@@ -37,6 +38,22 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 import os as _os
 _COVER_WORKERS = min(6, (_os.cpu_count() or 2) + 2)
+
+
+def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
+    """Return a copy of pix with rounded corners clipped into the image."""
+    if pix.isNull():
+        return pix
+    out = QPixmap(pix.size())
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, pix.width(), pix.height(), radius, radius)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, pix)
+    p.end()
+    return out
 
 
 class GridBridge(QObject):
@@ -770,16 +787,21 @@ class AlbumDetailView(QWidget):
     album_favorite_toggled = pyqtSignal(bool)
     artist_clicked = pyqtSignal(str)
     _meta_ready = pyqtSignal(str, str)
-    _reload_tracks = pyqtSignal(str)   # album_id — triggers track list reload on main thread
     def __init__(self, client=None):
         super().__init__()
         self.client = client 
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-
         self.setObjectName("DetailBackground")
         self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
-        
+
+        # Background label — sits behind everything, shows blurred album art
+        self._bg_label = QLabel(self)
+        self._bg_label.setGeometry(0, 0, 1, 1)
+        self._bg_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._bg_cover = None
+        self._accent_color = QColor(12, 12, 12)
+
         # 1. MASTER LAYOUT & SCROLL AREA
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -792,6 +814,7 @@ class AlbumDetailView(QWidget):
             QScrollArea { background: transparent; border: none; }
             QWidget#ScrollContent { background: transparent; }
         """)
+        self.scroll_area.viewport().setAutoFillBackground(False)
         self.omni_scroller = MiddleClickScroller(self.scroll_area)
         
         # 2. SCROLL CONTENT WIDGET
@@ -811,8 +834,8 @@ class AlbumDetailView(QWidget):
 
         self.cover_label = QLabel()
         self.cover_label.setFixedSize(220, 220)
-        self.cover_label.setStyleSheet("background-color: #222; border-radius: 8px; border: 1px solid #333;")
-        self.cover_label.setScaledContents(True)
+        self.cover_label.setStyleSheet("background-color: transparent; border-radius: 12px;")
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         meta_container = QWidget()
         meta_layout = QVBoxLayout(meta_container)
@@ -880,117 +903,71 @@ class AlbumDetailView(QWidget):
         header_layout.addWidget(meta_container)
         
         self.layout.addWidget(header_container)
+        self.layout.addStretch()
 
-        # ─── TRACKS BROWSER ───────────────────────────────────────────────────
-        from tracks_browser import TracksBrowser
-        self.track_list = TracksBrowser(client)
-        self._reload_tracks.connect(self.track_list.load_album_view)
-
-        # Activate the new compact mode for albums!
-        if hasattr(self.track_list, 'set_album_mode'):
-            self.track_list.set_album_mode(True)
-            
-        self.layout.addWidget(self.track_list)
-        self.layout.addStretch() 
-        
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
-        
 
-        self.track_list.tree.installEventFilter(self)
-        
-    def eventFilter(self, source, event):
-        if source is self.track_list.tree and event.type() == QEvent.Type.KeyPress:
-            from PyQt6.QtCore import Qt, QTimer
-            
-            
-            if event.text() == "/":
-                # 1. Pan the camera to the absolute top of the album header
-                self.scroll_area.verticalScrollBar().setValue(0)
-                
-                # 2. Visually expand the search box and force the text cursor inside it
-                if hasattr(self.track_list, 'search_container'):
-                    self.track_list.search_container.show_search()
-                    # A tiny 50ms delay guarantees the blinking cursor grabs focus after the UI updates!
-                    QTimer.singleShot(50, self.track_list.search_container.search_input.setFocus)
-                    
-                # 3. Consume the key so the "/" doesn't actually get typed into the search box!
-                return True 
-            
-            key = event.key()
-            
-            # SHIFT+ENTER: Play the entire album
-            if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
-                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                self.btn_play.animateClick()
-                return True  
-                
-            # THE CAMERA TRACKER & SCI-FI EDGE SCROLL
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                tree = self.track_list.tree
-                old_item = tree.currentItem()
-                old_idx = tree.indexOfTopLevelItem(old_item) if old_item else -1
-                
-                # Manually step Page Up/Down because the native tree is stretched infinitely!
-                if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                    jump_size = 12 
-                    if key == Qt.Key.Key_PageDown:
-                        target_idx = min(tree.topLevelItemCount() - 1, old_idx + jump_size)
-                    else:
-                        target_idx = max(0, old_idx - jump_size)
-                        
-                    if target_idx >= 0:
-                        tree.setCurrentItem(tree.topLevelItem(target_idx))
-                
-                def check_scroll():
-                    new_item = tree.currentItem()
-                    new_idx = tree.indexOfTopLevelItem(new_item) if new_item else -1
-                    
-                    if old_idx == new_idx:
-                        # BOUNDARY HIT: We hit the ceiling or floor!
-                        if key in (Qt.Key.Key_Up, Qt.Key.Key_PageUp) and new_idx <= 0:
-                            self.scroll_area.verticalScrollBar().setValue(0)
-                            return
-                        elif key in (Qt.Key.Key_Down, Qt.Key.Key_PageDown) and new_idx >= tree.topLevelItemCount() - 1:
-                            self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
-                            return
-                    
-                    if new_item:
-                        rect = tree.visualItemRect(new_item)
-                        pt = tree.viewport().mapTo(self.content_widget, rect.topLeft())
-                        self.scroll_area.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                        
-                if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                    check_scroll()
-                    return True
-                    
-                QTimer.singleShot(0, check_scroll)
-                return False
-                
-        return super().eventFilter(source, event)
+    # ── Blurred background ────────────────────────────────────────────────────
 
-    def adjust_tree_height(self):
-        try:
-            tree = self.track_list.tree
-            count = tree.topLevelItemCount()
-            if count == 0: return
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._bg_label.setGeometry(0, 0, self.width(), self.height())
+        self._update_bg()
 
-            header_h = tree.header().height()
-            rows_h = count * 75
-            natural_h = header_h + rows_h + 10
+    def _set_bg_cover(self, pix: QPixmap):
+        self._bg_cover = pix
+        self._update_bg()
+        # Re-draw once the layout has settled and header_container has real height
+        QTimer.singleShot(50, self._update_bg)
 
-            # Cap at 800px so Qt never allocates a backing buffer for 25 000+px.
-            # The outer QScrollArea already scrolls the page; the tree uses its
-            # own scrollbar only when it has more rows than the cap allows.
-            MAX_TREE_H = 800
-            capped_h = min(natural_h, MAX_TREE_H)
+    def _update_bg(self):
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        bg = QPixmap(w, h)
+        bg.fill(Qt.GlobalColor.transparent)
+        if self._bg_cover and not self._bg_cover.isNull():
+            # Limit art to the header section only
+            hdr_h = self.header_container.height()
+            if hdr_h <= 0:
+                hdr_h = 300  # fallback before first layout pass
+            # Add the scroll-area top margin (20px from content layout)
+            zone_h = min(hdr_h + 40, h)
 
-            tree.setMinimumHeight(capped_h)
-            tree.setMaximumHeight(natural_h)     # allow expansion up to full height
-            self.track_list.setMinimumHeight(capped_h + 10)
-            self.track_list.setMaximumHeight(natural_h + 60)
-        except Exception:
-            pass
+            scaled = self._bg_cover.scaledToWidth(w, Qt.TransformationMode.SmoothTransformation)
+            bw, bh = max(1, w // 12), max(1, scaled.height() * max(1, w // 12) // w)
+            blurred = (scaled.scaled(bw, bh,
+                                     Qt.AspectRatioMode.IgnoreAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
+                              .scaled(w, scaled.height(),
+                                      Qt.AspectRatioMode.IgnoreAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation))
+            mc = getattr(self, '_accent_color', QColor(12, 12, 12))
+            r = int(mc.red()   * 0.15)
+            g = int(mc.green() * 0.15)
+            b = int(mc.blue()  * 0.15)
+            p = QPainter(bg)
+            # Draw art clipped to zone_h
+            p.setOpacity(0.35)
+            p.setClipRect(0, 0, w, zone_h)
+            p.drawPixmap(0, 0, blurred)
+            p.setClipRect(0, 0, w, h)
+            p.setOpacity(1.0)
+            # Gradient builds to opaque in the middle then fades back to transparent
+            # at zone_h — so the clip edge is invisible
+            grad = QLinearGradient(0, 0, 0, float(zone_h))
+            grad.setColorAt(0.0,  QColor(r, g, b, 0))
+            grad.setColorAt(0.45, QColor(r, g, b, 160))
+            grad.setColorAt(0.75, QColor(r, g, b, 210))
+            grad.setColorAt(1.0,  QColor(r, g, b, 0))
+            p.fillRect(0, 0, w, zone_h, grad)
+            p.end()
+        self._bg_label.setPixmap(bg)
+
+    # ─────────────────────────────────────────────────────────────────────────
+
+
 
     def toggle_header_heart(self):
         is_liked = self.btn_like.text() == "♥"
@@ -1006,14 +983,15 @@ class AlbumDetailView(QWidget):
             self.btn_like.setText("♡")
             self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
     
-    def set_accent_color(self, color, alpha=0.3):
-        self.track_list.set_accent_color(color, alpha)
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+    def set_accent_color(self, color):
+        self._accent_color = QColor(color)
+        self._update_bg()
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+                "QWidget { background-color: transparent; border: none; }"
             )
-        
+
         # Dynamically style the Album play button with the Master Color!
         play_btn_style = f"""
             QPushButton {{ 
@@ -1144,7 +1122,7 @@ class AlbumDetailView(QWidget):
                             for t in raw_fresh
                         )
                         if tracks_changed:
-                            self._reload_tracks.emit(_album_id)
+                            pass  # track list removed
                             
                     except Exception as e:
                         print(f"[AlbumDetailView] Silent background sync failed: {e}")
@@ -1163,6 +1141,8 @@ class AlbumDetailView(QWidget):
         # 3. FAST COVER ART
         from PyQt6.QtGui import QPixmap
         self.cover_label.setPixmap(QPixmap())
+        self._bg_cover = None
+        self._update_bg()
         cid = album_data.get('cover_id') or album_data.get('coverArt') or album_data.get('id')
         if cid:
             from cover_cache import CoverCache
@@ -1170,30 +1150,27 @@ class AlbumDetailView(QWidget):
             if data:
                 pix = QPixmap()
                 pix.loadFromData(data)
-                self.cover_label.setPixmap(pix)
-            else:
-                import threading
-                def fetch():
-                    if not getattr(self, 'client', None): return
-                    try:
-                        d = self.client.get_cover_art(cid, size=800)
-                        if d:
-                            CoverCache.instance().save_full(cid, d)
-                            from PyQt6.QtCore import QTimer
-                            QTimer.singleShot(0, lambda: self.update_cover(d))
-                    except: pass
-                threading.Thread(target=fetch, daemon=True).start()
+                self.cover_label.setPixmap(_round_pixmap(pix.scaled(220, 220, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)))
+                self._set_bg_cover(pix)
+            import threading
+            def fetch():
+                if not getattr(self, 'client', None): return
+                try:
+                    d = self.client.get_cover_art(cid, size=None)  # original resolution
+                    if d:
+                        CoverCache.instance().save_full(cid, d)
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(0, lambda: self.update_cover(d))
+                except: pass
+            threading.Thread(target=fetch, daemon=True).start()
 
-        # 4. LOAD TRACKS
-        # (Because we injected them into the DB above, this will now load them instantly!)
-        self.track_list.load_album_view(self.current_album_id)
-        self.track_list.tree.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def update_cover(self, data):
         from PyQt6.QtGui import QPixmap
         pix = QPixmap()
         pix.loadFromData(data)
-        self.cover_label.setPixmap(pix)
+        self.cover_label.setPixmap(_round_pixmap(pix))
+        self._set_bg_cover(pix)
 
 class DummyScrollBar:
     def value(self): return 0
@@ -1479,13 +1456,6 @@ class LibraryGridBrowser(QWidget):
         self.detail_view = AlbumDetailView(self.client)
         
         
-        self.detail_view.track_list.play_track.connect(self.play_track_signal.emit)
-        self.detail_view.track_list.play_multiple_tracks.connect(self.play_album_signal.emit)
-        self.detail_view.track_list.queue_track.connect(self.queue_track_signal.emit)
-        self.detail_view.track_list.play_next.connect(self.play_next_signal.emit)
-        self.detail_view.track_list.switch_to_artist_tab.connect(self.switch_to_artist_tab.emit)
-        self.detail_view.track_list.switch_to_album_tab.connect(self.album_clicked.emit)
-
         # Wire up the header buttons
         self.detail_view.play_clicked.connect(self.on_play_all_clicked)
         self.detail_view.shuffle_clicked.connect(self.on_shuffle_album_clicked)
@@ -1645,8 +1615,8 @@ class LibraryGridBrowser(QWidget):
         from PyQt6.QtGui import QPixmap
         pix = QPixmap()
         pix.loadFromData(data)
-        self.cover_label.setPixmap(pix)
-    
+        self.cover_label.setPixmap(_round_pixmap(pix))
+
     def get_tinted_sort_icon(self, sort_type, is_ascending):
         """Get a tinted icon for the sort menu based on current accent color"""
         if sort_type == 'song_count':
@@ -1958,28 +1928,27 @@ class LibraryGridBrowser(QWidget):
         except Exception as e:
             print(f"Error fetching album tracks: {e}")
 
-    def set_accent_color(self, color, alpha=0.3):
-        if getattr(self, 'current_accent', None) == color and getattr(self, 'current_alpha', None) == alpha:
+    def set_accent_color(self, color):
+        if getattr(self, 'current_accent', None) == color:
             return
-            
+
         self.current_accent = color
-        self.current_alpha = alpha
 
         # Force Python to paint the darkness so the GPU clears its old frames!
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+                "QWidget { background-color: transparent; border: none; }"
             )
 
         # Broadcast BOTH the color and the opacity directly to the QML Engine!
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
-            self.grid_bridge.bgAlphaChanged.emit(alpha)
+            self.grid_bridge.bgAlphaChanged.emit(1.0)
             
         # Update the detail view behind the scenes
         if hasattr(self, 'detail_view'):
-            self.detail_view.set_accent_color(color, alpha)
+            self.detail_view.set_accent_color(color)
         
         # Keep the search bar and burger menu colors synced
         in_detail = self.stack.currentIndex() != 0
@@ -2272,9 +2241,8 @@ class LibraryGridBrowser(QWidget):
             
             self.refresh_grid()
             
-        if hasattr(self, 'detail_view') and hasattr(self.detail_view, 'track_list'):
-            self.detail_view.client = client 
-            self.detail_view.track_list.client = client
+        if hasattr(self, 'detail_view'):
+            self.detail_view.client = client
 
     def update_server_count_ui(self, true_server_count):
         """Updates the status label with the instant server count."""

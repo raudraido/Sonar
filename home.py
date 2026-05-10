@@ -840,7 +840,7 @@ class HomeView(QWidget):
         self._rewire_keyboard_nav()
         self._load_row_order()
 
-        self.set_accent_color("#888888", 0.3)
+        self.set_accent_color("#888888")
 
         if self.client:
             self.load_data()
@@ -1109,9 +1109,9 @@ class HomeView(QWidget):
 
     # ── Theming ───────────────────────────────────────────────────────────
 
-    def set_accent_color(self, color, alpha=0.3):
+    def set_accent_color(self, color):
         self.current_accent = color
-        self.setStyleSheet(f"#HomePanel {{ background-color: rgba(12,12,12,{alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#HomePanel {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color

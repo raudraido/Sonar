@@ -1744,11 +1744,11 @@ class ArtistRichDetailView(QWidget):
             return
         super().keyPressEvent(event)
 
-    def set_accent_color(self, color, alpha=0.3):
+    def set_accent_color(self, color):
         
         self.current_accent = color
         
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
         
         scrollbar_style = f"""
             QScrollArea {{ border: none; background: transparent; }} 
@@ -2513,13 +2513,6 @@ class ArtistGridBrowser(QWidget):
         # 🟢 NEW: Pass the client
         self.detail_view = AlbumDetailView(self.client)
         
-        # 🟢 NEW: Wire up the internal TracksBrowser signals to the main app
-        self.detail_view.track_list.play_track.connect(self.play_track_signal.emit)
-        self.detail_view.track_list.play_multiple_tracks.connect(self.play_album_signal.emit)
-        self.detail_view.track_list.queue_track.connect(self.queue_track_signal.emit)
-        self.detail_view.track_list.play_next.connect(self.play_next_signal.emit)
-        self.detail_view.track_list.switch_to_album_tab.connect(self.switch_to_album_tab.emit)
-        self.detail_view.track_list.switch_to_artist_tab.connect(lambda name: self.show_artist_details({'name': name, 'id': None}))
 
         # Wire up the header buttons
         self.detail_view.play_clicked.connect(self.on_play_all_clicked)
@@ -3129,21 +3122,21 @@ class ArtistGridBrowser(QWidget):
             if getattr(self, 'current_header_cover_id', None) == str(cover_id):
                 self.artist_view.set_header_image(pixmap)
 
-    def set_accent_color(self, color, alpha=0.3):
+    def set_accent_color(self, color):
         self.current_accent = color
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
                 "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
             )
 
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgba(12, 12, 12, {alpha}); border-radius: 0; }}")
+        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb(12,12,12); border-radius: 0; }}")
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
-            self.grid_bridge.bgAlphaChanged.emit(alpha)
+            self.grid_bridge.bgAlphaChanged.emit(1.0)
 
-        self.detail_view.set_accent_color(color, alpha)
-        self.artist_view.set_accent_color(color, alpha)
+        self.detail_view.set_accent_color(color)
+        self.artist_view.set_accent_color(color)
 
         if hasattr(self, 'search_btn'):
             try:

@@ -29,10 +29,6 @@ class PersistenceMixin:
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
             
-            if getattr(self, 'static_bg_path', None):
-                self.settings.setValue('static_bg_path', self.static_bg_path)
-            else:
-                self.settings.remove('static_bg_path')
             if hasattr(self, 'album_browser') and hasattr(self.album_browser, 'get_state'):
                 self.settings.setValue('album_state', json.dumps(self.album_browser.get_state()))
             if hasattr(self, 'artist_browser') and hasattr(self.artist_browser, 'get_state'):
@@ -364,10 +360,6 @@ class PersistenceMixin:
             self.artist_browser.cover_worker.wait()
 
         # 4. Stop remaining Python worker threads
-        if hasattr(self, 'blur_thread') and self.blur_thread and self.blur_thread.isRunning(): 
-            self.blur_thread.quit()
-            self.blur_thread.wait()
-            
         if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning(): 
             self.loading_thread.quit()
             self.loading_thread.wait()
@@ -401,11 +393,6 @@ class PersistenceMixin:
         event.accept()
 
     def resizeEvent(self, event):
-        # 1. Resize the background label containers (free geometry operation)
-        if hasattr(self, 'bg_label_old'):
-            self.bg_label_old.resize(self.size())
-        if hasattr(self, 'bg_label'):
-            self.bg_label.resize(self.size())
 
         # Actual SmoothTransformation pixel scaling is deferred 120 ms so it only fires
         # once when the user stops dragging — not on every pixel of resize.
