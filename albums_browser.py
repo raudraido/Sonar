@@ -746,6 +746,10 @@ class ClickableArtistLabel(QWidget):
         text = self.text()
         return QSize(fm.horizontalAdvance(text) if text else 100, fm.height() + 4)
 
+    def set_color(self, color: str):
+        self._color = color
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -756,12 +760,13 @@ class ClickableArtistLabel(QWidget):
         fm = painter.fontMetrics()
         x = 0
         y = fm.ascent() + 2
+        artist_color = QColor(getattr(self, '_color', '#cccccc'))
         self.artist_rects = []
         for text, is_sep in self._parts:
             is_hovered = (not is_sep and self.hovered_artist == text)
             font.setUnderline(is_hovered)
             painter.setFont(font)
-            painter.setPen(QColor("#777777") if is_sep else QColor("#cccccc"))
+            painter.setPen(QColor("#777777") if is_sep else artist_color)
             w = fm.horizontalAdvance(text)
             if not is_sep:
                 self.artist_rects.append((text, QRect(x, 0, w, self.height())))
@@ -859,7 +864,8 @@ class AlbumDetailView(QWidget):
         meta_layout.setContentsMargins(0, 8, 0, 8)
         meta_layout.setSpacing(5)
 
-        self.lbl_type = QLabel("ALBUM")
+        self.lbl_type = QLabel("")
+        self.lbl_type.setFixedHeight(16)
         self.lbl_type.setStyleSheet("color: #ddd; font-weight: bold; font-size: 11px;")
 
         self.lbl_title = QLabel("Album Title")
@@ -911,8 +917,8 @@ class AlbumDetailView(QWidget):
         
         meta_layout.addWidget(self.lbl_type)
         meta_layout.addWidget(self.lbl_title)
-        meta_layout.addWidget(self.lbl_meta)
         meta_layout.addWidget(self.lbl_artist)
+        meta_layout.addWidget(self.lbl_meta)
         meta_layout.addWidget(btn_row)
         meta_layout.addStretch()
         
@@ -1007,6 +1013,8 @@ class AlbumDetailView(QWidget):
     def set_accent_color(self, color):
         self._accent_color = QColor(color)
         self._update_bg()
+        if hasattr(self, 'lbl_artist'):
+            self.lbl_artist.set_color(color)
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
