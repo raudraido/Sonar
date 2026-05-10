@@ -74,11 +74,11 @@ if __name__ == '__main__':
     app.setStyle("Fusion")
 
     # REQUIRED: Tells QSettings exactly where to save your data in the OS
-    app.setApplicationName("Sonar")
-    app.setOrganizationName("Sonar")
+    app.setApplicationName("Icoshahedron")
+    app.setOrganizationName("Icoshahedron")
     _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     app.setWindowIcon(QIcon(os.path.join(_base, "img", "icon.png")))
-    app.setDesktopFileName("Sonar")
+    app.setDesktopFileName("Icoshahedron")
     
     settings = QSettings()
     
@@ -87,7 +87,7 @@ if __name__ == '__main__':
     user = settings.value("navidrome/username", "")
     
     # 🟢 Fetch the password securely from the OS Keyring
-    password = keyring.get_password("Sonar", user) if user else None
+    password = keyring.get_password("Icoshahedron", user) if user else None
     
     client = None
     
@@ -132,11 +132,11 @@ if __name__ == '__main__':
                     if dialog.remember_cb.isChecked():
                         settings.setValue("navidrome/url", url)
                         settings.setValue("navidrome/username", user)
-                        keyring.set_password("Sonar", user, password)
+                        keyring.set_password("Icoshahedron", user, password)
                     else:
                         settings.remove("navidrome/url")
                         settings.remove("navidrome/username")
-                        try: keyring.delete_password("Sonar", user)
+                        try: keyring.delete_password("Icoshahedron", user)
                         except keyring.errors.PasswordDeleteError: pass
                         
                     break # Success! Break the loop and launch the app

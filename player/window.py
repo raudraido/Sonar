@@ -228,7 +228,7 @@ class SonarPlayer(
         QApplication.instance().installEventFilter(self._tooltip_filter)
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
-        self.setWindowTitle(f"Sonar {__version__}")
+        self.setWindowTitle(f"Icoshahedron {__version__}")
         self.resize(1625, 1070)  #Screen Size Pixels
         self.setAcceptDrops(True)
         self.last_gapless_time = 0

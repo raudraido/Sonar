@@ -929,7 +929,7 @@ class SettingsWindow(QWidget):
 
             # Wipe keyring password
             if user:
-                try: keyring.delete_password("Sonar", user)
+                try: keyring.delete_password("Icoshahedron", user)
                 except keyring.errors.PasswordDeleteError: pass
 
             # Wipe all user-specific settings so the next user starts clean

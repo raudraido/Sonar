@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit,
-                             QCheckBox, QPushButton, QMessageBox, QComboBox)
+                             QCheckBox, QPushButton, QMessageBox, QComboBox, QWidget)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 import os
@@ -103,14 +103,30 @@ class LoginDialog(QDialog):
         layout.setSpacing(8)
 
         # --- HEADER ---
-        logo_label = QLabel()
-        pixmap = QPixmap(os.path.join(BASE_DIR, "img", "icon.png"))
-        logo_label.setPixmap(pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(logo_label)
+        _logo_size = 80
+        _icon_ctr = QWidget()
+        _icon_ctr.setFixedSize(_logo_size, _logo_size)
+        _icon_ctr.setStyleSheet("QWidget { border: none; }")
+
+        _base = QLabel(_icon_ctr)
+        _base.setGeometry(0, 0, _logo_size, _logo_size)
+        _pix_base = QPixmap(os.path.join(BASE_DIR, "img", "shahedron2.png"))
+        if not _pix_base.isNull():
+            _pix_base = _pix_base.scaled(_logo_size, _logo_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        _base.setPixmap(_pix_base)
+
+        _top = QLabel(_icon_ctr)
+        _top.setGeometry(0, 0, _logo_size, _logo_size)
+        _pix_top = QPixmap(os.path.join(BASE_DIR, "img", "shahedron3.png"))
+        if not _pix_top.isNull():
+            _pix_top = _pix_top.scaled(_logo_size, _logo_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        _top.setPixmap(_pix_top)
+        _top.raise_()
+
+        layout.addWidget(_icon_ctr, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(12)
 
-        title = QLabel("SONAR")
+        title = QLabel("ICOSHAHEDRON")
         title.setObjectName("Title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -183,7 +199,7 @@ class LoginDialog(QDialog):
             
         if saved_user:
             self.user_input.setText(saved_user)
-            saved_pass = keyring.get_password("Sonar", saved_user)
+            saved_pass = keyring.get_password("Icoshahedron", saved_user)
             if saved_pass:
                 self.pass_input.setText(saved_pass)
                 self.remember_cb.setChecked(True)

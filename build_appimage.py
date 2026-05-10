@@ -20,7 +20,7 @@ from build_exe import (
     _SEP,
 )
 
-APP_NAME    = "Sonar"
+APP_NAME    = "Icoshahedron"
 ENTRY_POINT = "main.py"
 
 
@@ -113,8 +113,8 @@ def _write_desktop_file(binary_path):
         print(f"  Icon copied: {dst_icon}")
 
     desktop_content = f"""[Desktop Entry]
-Name=Sonar
-Comment=Sonar Music Player
+Name=Icoshahedron
+Comment=Icoshahedron Music Player
 Exec=env QT_QPA_PLATFORM=xcb {binary_abs}
 Icon={dst_icon}
 Type=Application

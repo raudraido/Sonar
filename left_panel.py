@@ -6,7 +6,7 @@ mirrors the queue panel header for visual alignment.
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QSizePolicy, QGraphicsOpacityEffect,
+    QPushButton, QSizePolicy, QGraphicsOpacityEffect, QLabel,
 )
 from PyQt6.QtCore import (
     Qt, QSize, QPropertyAnimation, QEasingCurve, QEvent,
@@ -217,6 +217,32 @@ class LeftPanel(QWidget):
         self.header_layout = QHBoxLayout(self.header)
         self.header_layout.setContentsMargins(8, 0, 8, 0)
         self.header_layout.setSpacing(4)
+
+        _logo_size = 46  # 62px header − 8px top − 8px bottom
+        _logo_ctr = QWidget()
+        _logo_ctr.setFixedSize(_logo_size, _logo_size)
+        _logo_ctr.setStyleSheet("QWidget { border: none; }")
+
+        self._logo_base = QLabel(_logo_ctr)
+        self._logo_base.setGeometry(0, 0, _logo_size, _logo_size)
+        _pix_base = QPixmap(resource_path("img/shahedron2.png"))
+        if not _pix_base.isNull():
+            _pix_base = _pix_base.scaled(
+                _logo_size, _logo_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self._logo_base.setPixmap(_pix_base)
+        self._logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._logo_tint = QLabel(_logo_ctr)
+        self._logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
+        self._logo_tint.setPixmap(self._tint_logo("#fafafa", _logo_size))
+        self._logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._logo_tint.raise_()
+
+        self._logo_size = _logo_size
+        self.header_layout.addWidget(_logo_ctr)
         self.header_layout.addStretch()
         _left_outer.addWidget(self.header)
 
@@ -273,3 +299,23 @@ class LeftPanel(QWidget):
         if not int(settings.value('section_vis_visible', 1)):
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(0, self.vis_section._toggle)
+
+    def _tint_logo(self, color: str, size: int | None = None) -> QPixmap:
+        sz = size if size is not None else self._logo_size
+        raw = QPixmap(resource_path("img/shahedron1.png"))
+        if raw.isNull():
+            return QPixmap()
+        raw = raw.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+        out = QPixmap(raw.size())
+        out.fill(Qt.GlobalColor.transparent)
+        p = _QPainter(out)
+        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        p.drawPixmap(0, 0, raw)
+        p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(out.rect(), QColor(color))
+        p.end()
+        return out
+
+    def set_master_color(self, color: str):
+        self._logo_tint.setPixmap(self._tint_logo(color))

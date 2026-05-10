@@ -324,6 +324,7 @@ class VisualsMixin:
 
         for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None)]:
             if _sec: _sec.set_master_color(mc)
+        if hasattr(self, '_left_panel'): self._left_panel.set_master_color(mc)
 
         self.btn_shuffle.master_color = mc; self.btn_repeat.master_color = mc
         self.btn_shuffle.setIcon(get_cached_icon("img/shuffle.png", mc)); self.btn_repeat.setIcon(get_cached_icon("img/repeat.png", mc))
@@ -610,7 +611,7 @@ class VisualsMixin:
             artist = track.get('artist', '')
             self.setWindowTitle(f"({status}) [{self.current_index + 1}/{len(self.playlist_data)}] {title} — {artist}")
         else:
-            self.setWindowTitle(f"Sonar {__version__}")
+            self.setWindowTitle(f"Icoshahedron {__version__}")
 
     def update_volume(self, value):
         """Optimized: Only updates audio engine and icon, skips full UI refresh."""
