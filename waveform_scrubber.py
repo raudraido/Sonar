@@ -59,11 +59,10 @@ class WaveformScrubber(QWidget):
         self.render_timer = QTimer(self)
         self.render_timer.setInterval(16)
         self.render_timer.timeout.connect(self._auto_scroll)
-        self.render_timer.start()
         self.last_render_time = time.time()
 
         # THE DISPLAY MODE (0=Scratch, 1=Minimal, 2=SoundCloud)
-        self.display_mode = 0
+        self.display_mode = 2
 
         self._color_cache = {}
 

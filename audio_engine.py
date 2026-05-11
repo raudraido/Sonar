@@ -195,20 +195,18 @@ class AudioEngine(QObject):
 
             if self.lib.check_track_switch() == 1:
                 self.total_ms = self.lib.get_duration()
-                if self._visualizer_active:
-                    self.durationChanged.emit(int(self.total_ms))
-                    self.positionChanged.emit(0)
+                self.durationChanged.emit(int(self.total_ms))
+                self.positionChanged.emit(0)
                 self.mediaSwitched.emit()
 
-            if self._visualizer_active:
-                self.positionChanged.emit(pos)
-                if self.is_playing:
-                    self.lib.get_vis_data(self.vis_buffer)
-                    self._vis_list = self.vis_buffer[:700]
-                    self.visualizerDataReady.emit(self._vis_list)
+            self.positionChanged.emit(pos)
 
-                    true_rms = self.lib.get_vu_rms()
-                    self.vuDataReady.emit(true_rms)
+            if self._visualizer_active and self.is_playing:
+                self.lib.get_vis_data(self.vis_buffer)
+                self._vis_list = self.vis_buffer[:700]
+                self.visualizerDataReady.emit(self._vis_list)
+                true_rms = self.lib.get_vu_rms()
+                self.vuDataReady.emit(true_rms)
 
             if time.time() > getattr(self, 'ignore_end_checks_until', 0):
                 if self.total_ms > 0 and pos >= (self.total_ms - 200):
@@ -220,7 +218,7 @@ class AudioEngine(QObject):
 
     def set_visualizer_active(self, enabled: bool):
         self._visualizer_active = enabled
-        self.update_timer.setInterval(16 if enabled else 1000)
+        self.update_timer.setInterval(16 if enabled else 50)
         if self.lib:
             self.lib.set_vis_active(1 if enabled else 0)
 

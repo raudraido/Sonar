@@ -72,7 +72,7 @@ class AudioVisualizer(QWidget):
         self.audio_engine = audio_engine
 
         self.visualizer_enabled = True # The Master Switch
-        self.vis_mode = 0              # 0 = bars, 1 = VU meter
+        self.vis_mode = 1              # 0 = bars, 1 = VU meter
         self.master_color = QColor("#1db954") # Default fallback color
 
         # VU meter ballistic state
@@ -82,7 +82,7 @@ class AudioVisualizer(QWidget):
         self._raw_vis_data = []
         self._vu_debug_frame = 0
         _s = QSettings("Icoshahedron", "Visualizer")
-        self._vu_ref_level = int(_s.value("vu_ref_level", -18))
+        self._vu_ref_level = int(_s.value("vu_ref_level", -10))
 
         self.num_bars = NUM_BARS
         self.vis_data = [0.0] * self.num_bars
@@ -377,7 +377,7 @@ class AudioVisualizer(QWidget):
         self.btn_ref_level.setText(f"{self._vu_ref_level} dBFS")
 
     def _reset_ref_level(self):
-        self._vu_ref_level = -18
+        self._vu_ref_level = -10
         self._update_ref_btn_text()
         QSettings("Icoshahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
 

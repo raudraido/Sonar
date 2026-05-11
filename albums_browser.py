@@ -867,7 +867,7 @@ class _TrackHeader(QHeaderView):
         f = QFont(); f.setPointSize(8); f.setBold(True)
         painter.setFont(f)
         painter.setPen(QColor('#555555'))
-        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4) else Qt.AlignmentFlag.AlignLeft
+        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4, 5) else Qt.AlignmentFlag.AlignLeft
         painter.drawText(rect.adjusted(4, 0, -4, -8),
                          h_align | Qt.AlignmentFlag.AlignBottom, text)
 
@@ -965,12 +965,18 @@ class _TrackListDelegate(QStyledItemDelegate):
             fm = QFontMetrics(f)
             ax = draw_rect.left() + 4
             ay = draw_rect.center().y()
+            right_edge = draw_rect.right() - 4
             row = index.row()
             painter.save()
             painter.setFont(f)
             for part, is_sep in _split_artist(artist):
                 pw = fm.horizontalAdvance(part)
-                if ax + pw > draw_rect.right():
+                available = right_edge - ax
+                if ax + pw > right_edge:
+                    if available > 0:
+                        elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
+                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor('#dddddd')))
+                        painter.drawText(ax, ay + fm.ascent() // 2, elided)
                     break
                 hovered = (not is_sep and self._hover_artist == (row, part.strip()))
                 if is_sep:
@@ -1291,6 +1297,7 @@ class AlbumDetailView(QWidget):
             item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             for col in range(6):
                 item.setForeground(col, QColor('#dddddd'))
             self.track_tree.addTopLevelItem(item)

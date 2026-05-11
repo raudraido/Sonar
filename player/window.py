@@ -229,7 +229,7 @@ class SonarPlayer(
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
         self.setWindowTitle(f"Icoshahedron {__version__}")
-        self.resize(1625, 1070)  #Screen Size Pixels
+        self.resize(1750, 1070)  #Screen Size Pixels
         self.setAcceptDrops(True)
         self.last_gapless_time = 0
       
@@ -802,7 +802,7 @@ class SonarPlayer(
             lambda ms: self.current_time_label.setText(self.format_time(ms)) if hasattr(self, 'current_time_label') else None
         )
 
-        saved_mode = int(self.settings.value('waveform_mode', 0))
+        saved_mode = int(self.settings.value('waveform_mode', 2))
         if saved_mode in (1, 2):
             self.seek_bar.display_mode = saved_mode
             self.seek_bar.render_timer.stop()
