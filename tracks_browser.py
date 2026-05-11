@@ -2129,18 +2129,12 @@ class TracksBrowser(QWidget):
         # These columns never grow beyond their default on window resize (user can still drag them)
         self.col_max_widths = {5: 70, 7: 60, 8: 70, 9: 75, 10: 60, 11: 110, 12: 65}
 
-        self.tree.setColumnWidth(1, 350) # TRACK (Combined)
-        self.tree.setColumnWidth(2, 200) # TITLE
-        self.tree.setColumnWidth(3, 200) # ARTIST
-        self.tree.setColumnWidth(4, 240) # ALBUM
-        self.tree.setColumnWidth(5, 70)  # YEAR
-        self.tree.setColumnWidth(6, 120) # GENRE
-        self.tree.setColumnWidth(7, 60)  # ♥
-        self.tree.setColumnWidth(8, 70)  # PLAYS
-        self.tree.setColumnWidth(9, 75)  # LENGTH
-        self.tree.setColumnWidth(10, 55) # NO.
-        self.tree.setColumnWidth(11, 95) # DATE ADDED
-        self.tree.setColumnWidth(12, 60) # BPM
+        _default_widths = {1: 350, 2: 200, 3: 200, 4: 240, 5: 70, 6: 120,
+                           7: 60, 8: 70, 9: 75, 10: 55, 11: 95, 12: 60}
+        for col, w in _default_widths.items():
+            self.tree.setColumnWidth(col, w)
+        # Intended widths — what the user actually set, unaffected by _clamp_columns
+        self._saved_widths = dict(_default_widths)
 
         self._col_resize_guard = False
         self.tree.header().sectionResized.connect(self._on_section_resized)
@@ -2909,7 +2903,7 @@ class TracksBrowser(QWidget):
         for i in range(13):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
-                'width': self.tree.columnWidth(i) if i != 1 else 0,  # col 1 is Stretch — Qt manages width
+                'width': self._saved_widths.get(i, self.tree.columnWidth(i)) if i != 1 else 0,
                 'visual': hdr.visualIndex(i),
             }
         try:
@@ -2933,6 +2927,7 @@ class TracksBrowser(QWidget):
                         w = val.get('width', 0)
                         if w > 0 and col_idx != 1:  # col 1 is Stretch — skip width restore
                             hdr.resizeSection(col_idx, w)
+                            self._saved_widths[col_idx] = w
                     else:
                         self.tree.setColumnHidden(col_idx, val)
                 # Second pass: visual order (col 0 is fixed, skip it)
@@ -2994,6 +2989,8 @@ class TracksBrowser(QWidget):
             self._col_resize_guard = True
             self.tree.header().resizeSection(logical_index, min_w)
             self._col_resize_guard = False
+            new_size = min_w
+        self._saved_widths[logical_index] = new_size
         self._col_save_timer.start()
 
     def _clamp_columns(self):
@@ -3024,9 +3021,8 @@ class TracksBrowser(QWidget):
         self._col_resize_guard = False
 
     def _on_drag_finished(self):
-        self._clamp_columns()
-        self._fit_columns_to_viewport()
         self.save_column_state()
+        self._clamp_columns()
 
     # --- COLUMN FILTERS ---
 

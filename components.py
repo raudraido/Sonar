@@ -528,6 +528,7 @@ class TrackInfoDialog(QDialog):
         self.on_album_click = on_album_click
         self.detected_bpm = detected_bpm
         self._value_labels = {}
+        self._drag_pos = None
 
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -546,6 +547,22 @@ class TrackInfoDialog(QDialog):
 
         if client and track.get('id'):
             threading.Thread(target=self._fetch_full_data, daemon=True).start()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._suppress_close = True
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        self._suppress_close = False
+        super().mouseReleaseEvent(event)
 
     def exec(self):
         from PyQt6.QtCore import QEventLoop
