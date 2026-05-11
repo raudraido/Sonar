@@ -535,7 +535,7 @@ class TrackInfoDialog(QDialog):
         main_win = parent.window() if parent else None
         margin = 40
         if main_win:
-            self.setFixedWidth(min(620, main_win.width() - margin * 2))
+            self.setFixedWidth(min(500, main_win.width() - margin * 2))
             self.setFixedHeight(main_win.height() - margin * 2)
         else:
             self.setFixedWidth(620)
@@ -588,14 +588,18 @@ class TrackInfoDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
+        main_win = self.parent().window() if self.parent() else None
+        theme = getattr(main_win, 'theme', None)
+        bg = getattr(theme, 'main_panel_bg', '17,17,17')
+        bc = getattr(theme, 'border_color', '#2a2a2a')
         self.bg = QFrame()
         self.bg.setObjectName("trackInfoBg")
-        self.bg.setStyleSheet("""
-            QFrame#trackInfoBg {
-                background-color: #111;
-                border: 1px solid #2a2a2a;
+        self.bg.setStyleSheet(f"""
+            QFrame#trackInfoBg {{
+                background-color: rgb({bg});
+                border: 1px solid {bc};
                 border-radius: 10px;
-            }
+            }}
         """)
         outer.addWidget(self.bg)
 

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent, QThread, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QPainterPath
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 
       
 
@@ -441,18 +442,36 @@ class SpotlightSearch(QWidget):
                 
         return filtered_results
     
+    _SPACING     = 8
+    _SCROLLBAR_W = 6
+
     def apply_list_stylesheet(self):
-        mc = getattr(getattr(self.parent_window, 'theme', None), 'accent', '#ffffff')
-        self.list_widget.setStyleSheet(f"""
-            QListWidget {{ background: transparent; border: none; outline: none; margin-top: 5px; }}
-            QListWidget::item {{ border-radius: 6px; margin: 2px 10px; border: none; }}
-            QListWidget::item:selected {{ background-color: rgba(255, 255, 255, 0.06); border: none; }}
-            QScrollBar:vertical {{ border: none; background: rgba(0, 0, 0, 0.05); width: 10px; margin: 0; }} 
-            QScrollBar::handle:vertical {{ background: #333; min-height: 30px; border-radius: 5px; }} 
-            QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{ background: {mc}; }} 
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }} 
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-        """)
+        theme = getattr(self.parent_window, 'theme', None)
+        mc = getattr(theme, 'accent', '#ffffff')
+        bg = getattr(theme, 'main_panel_bg', '14,14,14')
+        bc = getattr(theme, 'border_color', '#2a2a2a')
+        self.container.setStyleSheet(f"#SpotlightContainer {{ background-color: rgb({bg}); border-radius: 8px; border: 1px solid {bc}; }}")
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(self.list_widget.viewport(), self.list_widget.verticalScrollBar())
+            self.list_widget.verticalScrollBar().rangeChanged.connect(self._update_list_right_margin)
+        self._scroll_reveal.color = mc
+        self._apply_list_item_css(mc)
+
+    def _update_list_right_margin(self, min_val, max_val):
+        self._list_has_scroll = max_val > min_val
+        theme = getattr(self.parent_window, 'theme', None)
+        mc = getattr(theme, 'accent', '#ffffff')
+        self._apply_list_item_css(mc)
+
+    def _apply_list_item_css(self, mc):
+        has_scroll = getattr(self, '_list_has_scroll', False)
+        right_m = self._SPACING - self._SCROLLBAR_W if has_scroll else self._SPACING
+        self.list_widget.setStyleSheet(
+            "QListWidget { background: transparent; border: none; outline: none; margin-top: 5px; }"
+            f"QListWidget::item {{ border-radius: 6px; margin: 2px {right_m}px 2px {self._SPACING}px; border: none; }}"
+            "QListWidget::item:selected { background-color: rgba(255, 255, 255, 0.06); border: none; }"
+            + scrollbar_css(mc, hide_horizontal=True)
+        )
 
     def on_selection_changed(self, current, previous):
         if previous:

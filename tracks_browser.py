@@ -712,19 +712,24 @@ class SmartSortHeader(QHeaderView):
 
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setFixedHeight(30)
         self.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setStretchLastSection(False)
         self.up_icon   = QIcon(resource_path("img/filter_up.png"))
         self.down_icon = QIcon(resource_path("img/filter_down.png"))
         self.filter_icon     = QIcon(resource_path("img/filter.png"))
         self.filter_off_icon = QIcon(resource_path("img/filter.png"))
-        self._active_filter_cols = set()  # cols that have an active filter
-        self._filter_icon_rects = {}  # logical_index -> QRect (viewport coords, set during paint)
-        self._hovered_col = -1
+        self._active_filter_cols = set()
+        self._filter_icon_rects = {}
         self._pending_click_col = None
         self._pending_click_pos = None
         self.album_mode = False
+        self._accent = QColor('#555555')
         self.viewport().setMouseTracking(True)
+
+    def set_accent(self, color: str):
+        self._accent = QColor(color)
+        self.viewport().update()
 
     _CLICK_THRESHOLD = 4  # pixels — more than this = drag, not click
 
@@ -745,22 +750,18 @@ class SmartSortHeader(QHeaderView):
         return self._filter_icon_rects.get(logical_index, QRect())
 
     def mouseMoveEvent(self, event):
-        col = self.logicalIndexAt(event.pos())
-        hovered = col if col != 0 else -1
-        if hovered != self._hovered_col:
-            self._hovered_col = hovered
-            self.viewport().update()
-        # Cancel pending click if the mouse moved enough to be a drag
         if (self._pending_click_pos is not None
                 and abs(event.pos().x() - self._pending_click_pos.x()) > self._CLICK_THRESHOLD):
             self._pending_click_col = None
             self._pending_click_pos = None
+        if not self._is_resize_zone(event.pos()):
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
-        if self._hovered_col != -1:
-            self._hovered_col = -1
-            self.viewport().update()
+        self.unsetCursor()
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -793,97 +794,59 @@ class SmartSortHeader(QHeaderView):
 
     def paintSection(self, painter, rect, logicalIndex):
         painter.save()
-        
-        opt = QStyleOptionHeader()
-        self.initStyleOption(opt)
-        opt.rect = rect
-        opt.section = logicalIndex
-        
-        label_text = opt.text
-        if not label_text:
-            model = self.model()
-            if model:
-                label_text = model.headerData(logicalIndex, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
-        
-        if label_text is None: label_text = ""
-        
-        # Clear default indicator so we can draw our own
-        opt.sortIndicator = QStyleOptionHeader.SortIndicator.None_
-        opt.text = "" 
-        
-        self.style().drawControl(QStyle.ControlElement.CE_Header, opt, painter, self)
-        
-        painter.setFont(self.font())
-        
-        fm = painter.fontMetrics()
-        text_width = fm.horizontalAdvance(label_text)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(rect, Qt.GlobalColor.transparent)
 
-        sz = self.FILTER_ICON_SIZE
-        icon_spacing = 4
-        show_icon = logicalIndex != 0  # col 0 = # — no icon
-        content_width = text_width + (icon_spacing + sz if show_icon else 0)
+        text = self.model().headerData(logicalIndex, Qt.Orientation.Horizontal) or ''
+        f = QFont(); f.setPointSize(8); f.setBold(True)
+        fm = QFontMetrics(f)
+        painter.setFont(f)
+        painter.setPen(QColor('#555555'))
 
-        alignment = opt.textAlignment
+        centered_cols = {0, 7, 9, 10}
+        h_align = Qt.AlignmentFlag.AlignHCenter if logicalIndex in centered_cols else Qt.AlignmentFlag.AlignLeft
+        painter.drawText(rect.adjusted(4, 0, -4, -8), h_align | Qt.AlignmentFlag.AlignBottom, text)
 
-        # 🟢 FORCE ALIGNMENTS
-        if logicalIndex in (0, 7, 9, 10):
-             alignment = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-        elif logicalIndex == 1:
-             alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        # Bottom border
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
 
-        padding_left = 5
+        # Column separator
+        if 0 < logicalIndex < self.count() - 1:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            pen = QPen(self._accent.darker(250), 1)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawLine(rect.right(), rect.top() + 8, rect.right(), rect.bottom() - 8)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        if alignment & Qt.AlignmentFlag.AlignRight:
-            start_x = rect.right() - padding_left - content_width
-        elif alignment & Qt.AlignmentFlag.AlignCenter:
-            start_x = rect.left() + (rect.width() - content_width) // 2
-        else:
-            start_x = rect.left() + padding_left
-
-        # 🟢 THE FOOLPROOF FIX: Brutally force the TRACK header to the left edge,
-        # completely ignoring whatever centering rules Qt is trying to apply to it!
-        if logicalIndex == 1:
-            start_x = rect.left() + 15
-
-        text_rect = QRect(int(start_x), rect.top(), int(text_width) + 10, rect.height())
-
-        painter.setPen(QColor("#888"))
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label_text)
-
-        # Highlight whole section on hover (not in album mode)
-        is_hovered = (not self.album_mode) and logicalIndex == self._hovered_col
-        if is_hovered and show_icon:
-            painter.fillRect(rect, QColor(255, 255, 255, 18))
-
-        # Draw icon right after text — only when hovered or active/sorted; never in album mode
-        is_sort_indicator_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
-        is_sorted = logicalIndex in self.SORT_COLS and is_sort_indicator_shown
-        is_col_sorted = is_sort_indicator_shown  # any col can be sorted
+        # Sort/filter icon — only when sorted or active filter
+        show_icon = logicalIndex != 0
+        is_sort_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
         is_active = logicalIndex in self._active_filter_cols
-        show_icon_now = (not self.album_mode) and show_icon and (is_hovered or is_sorted or is_col_sorted or is_active)
+        show_icon_now = (not self.album_mode) and show_icon and (is_sort_shown or is_active)
 
         if show_icon_now:
-            fx = int(start_x + text_width + icon_spacing)
-            fy = rect.center().y() - sz // 2
+            sz = self.FILTER_ICON_SIZE
+            text_w = fm.horizontalAdvance(text)
+            if logicalIndex in centered_cols:
+                content_w = text_w + 4 + sz
+                fx = rect.left() + (rect.width() - content_w) // 2 + text_w + 4
+            else:
+                fx = rect.left() + 4 + text_w + 4
+            fy = rect.bottom() - sz - 8
 
             if is_active and logicalIndex not in self.SORT_COLS:
-                # Active filter takes priority — show filter_off icon, white tint
                 px = self.filter_off_icon.pixmap(sz, sz)
-                tint = QColor("#ffffff")
-            elif is_col_sorted and logicalIndex not in self.SORT_COLS:
-                # Filter column with active sort — show up/down arrow
+                tint = QColor("#aaaaaa")
+            elif is_sort_shown and logicalIndex not in self.SORT_COLS:
                 icon = self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon
-                tint = QColor("#ffffff") if is_hovered else QColor("#aaaaaa")
                 px = icon.pixmap(sz, sz)
-            elif logicalIndex in self.SORT_COLS:
-                icon = (self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
-                        else self.up_icon) if is_sorted else self.up_icon
-                tint = QColor("#ffffff") if is_hovered else QColor("#aaaaaa")
-                px = icon.pixmap(sz, sz)
+                tint = QColor("#aaaaaa")
             else:
-                # Hovered filter column, no active filter or sort
-                px = self.filter_icon.pixmap(sz, sz)
-                tint = QColor("#ffffff") if is_hovered else QColor("#555555")
+                icon = (self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon)
+                px = icon.pixmap(sz, sz)
+                tint = QColor("#aaaaaa")
 
             tinted = QPixmap(px.size())
             tinted.fill(Qt.GlobalColor.transparent)
@@ -893,9 +856,8 @@ class SmartSortHeader(QHeaderView):
             p2.fillRect(tinted.rect(), tint)
             p2.end()
             painter.drawPixmap(fx, int(fy), tinted)
-
-        if show_icon and not show_icon_now:
-            # Still cache a zeroed rect so click detection stays consistent
+            self._filter_icon_rects[logicalIndex] = QRect(fx, int(fy), sz, sz)
+        elif show_icon:
             self._filter_icon_rects[logicalIndex] = QRect()
 
         painter.restore()
@@ -926,22 +888,32 @@ class _TrackTree(QTreeWidget):
                     self.viewport().update()
         return super().eventFilter(obj, event)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._fix_scrollbar_geometry)
+
+    def _fix_scrollbar_geometry(self):
+        sb = self.verticalScrollBar()
+        hdr_h = self.header().height() if not self.isHeaderHidden() else 0
+        geo = sb.geometry()
+        if geo.y() != hdr_h:
+            sb.setGeometry(geo.x(), hdr_h, geo.width(), self.height() - hdr_h)
+
     def drawRow(self, painter, option, index):
-        rect = option.rect.adjusted(8, 0, -8, 0)
+        sb = self.verticalScrollBar()
+        right_inset = max(8 - (sb.width() if sb.isVisible() else 0), 0)
+        rect = option.rect.adjusted(8, 0, -right_inset, 0)
         is_sel = bool(option.state & QStyle.StateFlag.State_Selected)
         is_hov = (not is_sel) and index.row() == self._hov_row
         if is_sel or is_hov:
             painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(self._sel_color if is_sel else self._hov_color)
-            painter.drawRect(rect)
+            painter.drawRoundedRect(rect, 6, 6)
             painter.restore()
         super().drawRow(painter, option, index)
-        y = option.rect.bottom()
-        painter.save()
-        painter.setPen(self._sep_pen)
-        painter.drawLine(8, y, self.viewport().width() - 8, y)
-        painter.restore()
 
 
 class NoFocusDelegate(QStyledItemDelegate):
@@ -988,6 +960,51 @@ class SkeletonDelegate(QStyledItemDelegate):
         
         w = min(w, max(10, rect.width() - 20)) 
         painter.drawRoundedRect(int(x), int(y), int(w), int(h), h//2, h//2)
+        painter.restore()
+
+
+# --- DELEGATE: HEART / FAVORITE ---
+
+class HeartDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._filled_pix = QPixmap()
+        self._empty_pix  = QPixmap()
+        self._rebuild_pixmaps("#E91E63")
+
+    def set_master_color(self, color: str):
+        pass  # heart colors are fixed, not accent-dependent
+
+    def _rebuild_pixmaps(self, accent: str):
+        self._filled_pix = self._tinted_pix(resource_path("img/heart_filled.png"), "#E91E63")
+        self._empty_pix  = self._tinted_pix(resource_path("img/heart.png"), "#555555")
+
+    @staticmethod
+    def _tinted_pix(path: str, color: str) -> QPixmap:
+        base = QPixmap(path)
+        if base.isNull():
+            return QPixmap()
+        base = base.scaled(QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        pix = QPixmap(base.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.drawPixmap(0, 0, base)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(pix.rect(), QColor(color))
+        p.end()
+        return pix
+
+    def paint(self, painter, option, index):
+        is_fav = index.data() == '♥'
+        pix = self._filled_pix if is_fav else self._empty_pix
+        if pix.isNull():
+            super().paint(painter, option, index)
+            return
+        painter.save()
+        px = option.rect.center().x() - pix.width() // 2
+        py = option.rect.center().y() - pix.height() // 2
+        painter.drawPixmap(px, py, pix)
         painter.restore()
 
 
@@ -2016,12 +2033,13 @@ class TracksBrowser(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.tree.setItemDelegate(NoFocusDelegate(self.tree))
         self.setFocusProxy(self.tree)
+        self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
 
         self.tree.setHeader(SmartSortHeader(self.tree))
      
         
         
-        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"])
+        self.tree.setHeaderLabels(["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"])
         self.tree.headerItem().setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
@@ -2046,8 +2064,10 @@ class TracksBrowser(QWidget):
 
         # Col 0 (#): auto-size to fit content
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        # Cols 1-12: all freely interactive
-        for i in range(1, 13):
+        # Col 1 (TRACK): stretch — fills remaining space automatically
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Cols 2-12: freely interactive
+        for i in range(2, 13):
             self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
         self.col_min_widths = {1: 100, 2: 80, 3: 80, 4: 80, 5: 50, 6: 60, 7: 40, 8: 50, 9: 60, 10: 40, 11: 80, 12: 50}
@@ -2070,6 +2090,10 @@ class TracksBrowser(QWidget):
         self._col_resize_guard = False
         self.tree.header().sectionResized.connect(self._on_section_resized)
         self.tree.header().section_drag_finished.connect(self._on_drag_finished)
+        self._col_save_timer = QTimer(self)
+        self._col_save_timer.setSingleShot(True)
+        self._col_save_timer.setInterval(400)
+        self._col_save_timer.timeout.connect(self.save_column_state)
 
         # Column filters: col -> set of allowed string values (empty set = no filter)
         self._col_filters = {}
@@ -2096,6 +2120,9 @@ class TracksBrowser(QWidget):
         self.genre_delegate = MultiGenreDelegate(self.tree)
         self.genre_delegate.genre_filter_requested.connect(lambda g: self._apply_col_filter(6, {g}))
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
+
+        self.heart_delegate = HeartDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(7, self.heart_delegate)
 
         self.date_added_delegate = PlainWrapDelegate(self.tree)
         self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
@@ -2226,7 +2253,7 @@ class TracksBrowser(QWidget):
         _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
         menu.setStyleSheet(f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }} QMenu::item {{ padding: 6px 25px; }} QMenu::item:selected {{ background-color: #333; }}")
         
-        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "♥", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
+        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
 
         for i, name in enumerate(headers):
             action = QAction(name, menu)
@@ -2420,6 +2447,7 @@ class TracksBrowser(QWidget):
         self.tree.setItemDelegateForColumn(4, self.album_delegate)
         self.tree.setItemDelegateForColumn(5, self.year_delegate)
         self.tree.setItemDelegateForColumn(6, self.genre_delegate)
+        self.tree.setItemDelegateForColumn(7, self.heart_delegate)
         self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
         
         # Only update total/pages from a successful (non-empty) response so a
@@ -2646,9 +2674,6 @@ class TracksBrowser(QWidget):
         else: item.setText(6, '')
         
         item.setText(7, "♥" if is_fav else "♡")
-        # 🟢 MASTER COLOR FIX
-        item.setForeground(7, QColor(self.current_accent) if is_fav else QColor("#555"))
-        item.setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
         
         # 🟢 PLAY COUNT FIX
         raw_plays = t.get('playCount') or t.get('play_count') or 0
@@ -2827,7 +2852,7 @@ class TracksBrowser(QWidget):
         for i in range(13):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
-                'width': self.tree.columnWidth(i),
+                'width': self.tree.columnWidth(i) if i != 1 else 0,  # col 1 is Stretch — Qt manages width
                 'visual': hdr.visualIndex(i),
             }
         try:
@@ -2848,7 +2873,7 @@ class TracksBrowser(QWidget):
                     if isinstance(val, dict):
                         self.tree.setColumnHidden(col_idx, val.get('hidden', False))
                         w = val.get('width', 0)
-                        if w > 0:
+                        if w > 0 and col_idx != 1:  # col 1 is Stretch — skip width restore
                             hdr.resizeSection(col_idx, w)
                     else:
                         self.tree.setColumnHidden(col_idx, val)
@@ -2903,6 +2928,7 @@ class TracksBrowser(QWidget):
         """Enforce minimum widths while dragging, then persist the new size."""
         if getattr(self, '_col_resize_guard', False): return
         if getattr(self, 'is_album_mode', False): return
+        if logical_index == 1: return  # stretch col — Qt manages it
         if logical_index not in self.col_min_widths: return
         if self.tree.isColumnHidden(logical_index): return
         min_w = self.col_min_widths[logical_index]
@@ -2910,29 +2936,39 @@ class TracksBrowser(QWidget):
             self._col_resize_guard = True
             self.tree.header().resizeSection(logical_index, min_w)
             self._col_resize_guard = False
-        self.save_column_state()
+        self._col_save_timer.start()
 
     def _clamp_columns(self):
-        """After drag ends: shrink any column that pushed others below their minimum."""
+        """Proportionally scale down interactive columns so their total fits the viewport."""
         if getattr(self, 'is_album_mode', False): return
         viewport_w = self.tree.viewport().width()
+        if viewport_w <= 0: return
+
+        visible = [c for c in range(2, 13) if not self.tree.isColumnHidden(c)]
+        if not visible: return
+
+        col0_w = self.tree.columnWidth(0)
+        available = viewport_w - col0_w
+        if available <= 0: return
+
+        total = sum(self.tree.columnWidth(c) for c in visible)
+        if total <= available: return  # already fits
+
         self._col_resize_guard = True
-        for col in range(1, 13):
-            if self.tree.isColumnHidden(col): continue
-            used_by_others = self.tree.columnWidth(0)
-            for other in range(1, 13):
-                if other == col or self.tree.isColumnHidden(other): continue
-                used_by_others += self.col_min_widths.get(other, 60)
-            max_w = viewport_w - used_by_others
-            cur_w = self.tree.columnWidth(col)
-            if cur_w > max_w:
-                self.tree.header().resizeSection(col, max(self.col_min_widths.get(col, 60), max_w))
+        scale = available / total
+        widths = {c: max(self.col_min_widths.get(c, 60), int(self.tree.columnWidth(c) * scale))
+                  for c in visible}
+        # If minimums still overflow, just set everything to minimum
+        if sum(widths.values()) > available:
+            widths = {c: self.col_min_widths.get(c, 60) for c in visible}
+        for col, w in widths.items():
+            self.tree.header().resizeSection(col, w)
         self._col_resize_guard = False
 
     def _on_drag_finished(self):
         self._clamp_columns()
         self._fit_columns_to_viewport()
-        self.save_column_state()
+        self._col_save_timer.start()
 
     # --- COLUMN FILTERS ---
 
@@ -3138,56 +3174,19 @@ class TracksBrowser(QWidget):
             QTimer.singleShot(0, self._fit_columns_to_viewport)
 
     def _fit_columns_to_viewport(self):
-        """Scale flex columns proportionally to fill viewport; fixed-size cols stay capped."""
+        """Cap fixed-size columns at their max width, then clamp all interactive columns to fit the viewport."""
         if getattr(self, 'is_album_mode', False): return
         cols = self._visible_cols()
         if not cols: return
-        viewport_w = self.tree.viewport().width()
-        if viewport_w <= 0: return
-
-        # Fixed-size cols: cap at their max, don't change unless user dragged them smaller
-        fixed_cols = [c for c in cols if c in self.col_max_widths]
-        flex_cols  = [c for c in cols if c not in self.col_max_widths]
-
         self._col_resize_guard = True
-
-        # First pass: apply caps to fixed-size cols
-        for col in fixed_cols:
-            cur_w = self.tree.columnWidth(col)
-            capped = min(cur_w, self.col_max_widths[col])
-            if cur_w != capped:
-                self.tree.header().resizeSection(col, capped)
-
-        if not flex_cols:
-            self._col_resize_guard = False
-            return
-
-        # Available space for flex cols = viewport - col0 - all fixed-size cols
-        used = self.tree.columnWidth(0)
-        for col in fixed_cols:
-            used += self.tree.columnWidth(col)
-        available = viewport_w - used
-        if available <= 0:
-            self._col_resize_guard = False
-            return
-
-        total_cur = sum(self.tree.columnWidth(c) for c in flex_cols)
-        if total_cur <= 0:
-            self._col_resize_guard = False
-            return
-
-        # Distribute available space proportionally among flex cols
-        assigned = 0
-        for i, col in enumerate(flex_cols):
-            if i == len(flex_cols) - 1:
-                new_w = available - assigned
-            else:
-                new_w = int(self.tree.columnWidth(col) / total_cur * available)
-            new_w = max(new_w, self.col_min_widths.get(col, 60))
-            self.tree.header().resizeSection(col, new_w)
-            assigned += new_w
-
+        for col in cols:
+            if col in self.col_max_widths:
+                cur_w = self.tree.columnWidth(col)
+                capped = min(cur_w, self.col_max_widths[col])
+                if cur_w != capped:
+                    self.tree.header().resizeSection(col, capped)
         self._col_resize_guard = False
+        self._clamp_columns()
 
 
     def get_sort_string(self):
@@ -3437,9 +3436,7 @@ class TracksBrowser(QWidget):
             data_variant['data'] = track
             item.setData(0, Qt.ItemDataRole.UserRole, data_variant)
             item.setText(7, "♥" if new_state else "♡")
-            # 🟢 MASTER COLOR FIX
-            item.setForeground(7, QColor(self.current_accent) if new_state else QColor("#555"))
-            
+            self.tree.viewport().update()
             if self.client: self.client.set_favorite(track.get('id'), new_state)
 
     def on_item_double_clicked(self, item, column):
@@ -3488,9 +3485,7 @@ class TracksBrowser(QWidget):
         data_variant['data'] = track
         item.setData(0, Qt.ItemDataRole.UserRole, data_variant)
         item.setText(7, "♥" if new_state else "♡")
-        # 🟢 MASTER COLOR FIX
-        item.setForeground(7, QColor(self.current_accent) if new_state else QColor("#555"))
-        
+        self.tree.viewport().update()
         if self.client: self.client.set_favorite(track.get('id'), new_state)
 
     def play_full_album(self, album_id):
@@ -3838,10 +3833,8 @@ class TracksBrowser(QWidget):
         self.current_accent = color
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border-bottom: 1px solid rgba(255,255,255,0.06); }"
+                "QWidget { background-color: transparent; border: none; }"
             )
-        if not hasattr(self, '_scroll_reveal'):
-            self._scroll_reveal = install_scroll_reveal(self.tree.viewport(), self.tree.verticalScrollBar())
         self._scroll_reveal.color = color
 
         # 🟢 FREEZE THE UI: Prevents all layout jumping and stylesheet flickering!
@@ -3852,6 +3845,7 @@ class TracksBrowser(QWidget):
             if hasattr(self, 'artist_delegate'): self.artist_delegate.set_master_color(color)
             if hasattr(self, 'album_delegate'): self.album_delegate.set_master_color(color)
             if hasattr(self, 'year_delegate'): self.year_delegate.set_master_color(color)
+            if hasattr(self, 'heart_delegate'): self.heart_delegate.set_master_color(color)
             if hasattr(self, 'genre_delegate'): self.genre_delegate.set_master_color(color)
             if hasattr(self, 'date_added_delegate'): self.date_added_delegate.set_master_color(color)
             
@@ -3942,12 +3936,12 @@ class TracksBrowser(QWidget):
         QTreeWidget::item:selected {{ background: transparent; color: {color_hex}; }}
         QTreeWidget::item:hover {{ background: transparent; color: {color_hex}; }}
         
-        QHeaderView::section {{ background: transparent; color: #888; border: none; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 5px; font-weight: bold; text-transform: uppercase; font-size: 11px; }} 
-        QHeaderView::section:first {{ padding-right: 5px; }} 
-        QHeaderView::section:first:hover {{ background: transparent; }} 
-        QHeaderView::section:first:pressed {{ background: transparent; }}
+        QHeaderView::section {{ background: transparent; border: none; }}
+        QHeaderView::section:hover {{ background: transparent; }}
+        QHeaderView::section:pressed {{ background: transparent; }}
         """
         self.tree.setStyleSheet(css)
-        
+        self.tree.header().set_accent(color_hex)
+
         # 🟢 ALSO apply the alpha to the outer container so the blank space at the bottom matches!
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")

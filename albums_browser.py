@@ -743,9 +743,13 @@ class ClickableArtistLabel(QWidget):
     def text(self):
         return "".join(p for p, _ in self._parts)
 
+    def _primary_px(self) -> int:
+        theme = getattr(self.window(), 'theme', None)
+        return getattr(theme, 'font_size_primary', 14) if theme else 14
+
     def sizeHint(self):
         font = QFont()
-        font.setPointSize(11)
+        font.setPixelSize(self._primary_px())
         font.setBold(True)
         fm = QFontMetrics(font)
         text = self.text()
@@ -759,7 +763,7 @@ class ClickableArtistLabel(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont()
-        font.setPointSize(11)
+        font.setPixelSize(self._primary_px())
         font.setBold(True)
         painter.setFont(font)
         fm = painter.fontMetrics()
@@ -891,11 +895,20 @@ class _TrackListDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.playing_row = -1
         self.accent = QColor('#cccccc')
+        self.font_size = 14
         self._movie = None
         self._is_playing = False
         self._hover_artist = None   # (row, part_text)
         self._heart_filled_pix = QPixmap()
         self._heart_empty_pix  = QPixmap()
+
+    def set_font_size(self, size: int):
+        self.font_size = size
+
+    def _primary_px(self) -> int:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_size_primary', self.font_size) if _theme else self.font_size
 
     def set_movie(self, movie):
         self._movie = movie
@@ -961,7 +974,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         if index.column() == 2:
             artist = index.data() or ''
             f = QFont()
-            f.setPointSize(10)
+            f.setPixelSize(self._primary_px())
             fm = QFontMetrics(f)
             ax = draw_rect.left() + 4
             ay = draw_rect.center().y()
@@ -990,11 +1003,11 @@ class _TrackListDelegate(QStyledItemDelegate):
             painter.restore()
             return
 
-        # Col 1 — title at 10px
+        # Col 1 — title at theme primary font size
         if index.column() == 1:
             text = index.data() or ''
             f = QFont()
-            f.setPointSize(10)
+            f.setPixelSize(self._primary_px())
             fm = QFontMetrics(f)
             painter.save()
             painter.setFont(f)
@@ -1009,6 +1022,9 @@ class _TrackListDelegate(QStyledItemDelegate):
         opt = option.__class__(option)
         opt.rect = draw_rect
         opt.state = opt.state & ~QStyle.StateFlag.State_MouseOver & ~QStyle.StateFlag.State_Selected
+        f = QFont(opt.font)
+        f.setPixelSize(self._primary_px())
+        opt.font = f
         super().paint(painter, opt, index)
 
 
@@ -1647,6 +1663,14 @@ class AlbumDetailView(QWidget):
             self.lbl_artist.set_color(color)
         if hasattr(self, '_track_header'):
             self._track_header.set_accent(color)
+        if hasattr(self, '_track_delegate'):
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self._track_delegate.set_font_size(theme.font_size_primary)
+        if hasattr(self, 'lbl_meta'):
+            theme = getattr(self.window(), 'theme', None)
+            sec = getattr(theme, 'font_size_secondary', 12) if theme else 12
+            self.lbl_meta.setStyleSheet(f"color: #aaa; font-weight: bold; font-size: {sec}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
