@@ -848,6 +848,14 @@ class _TrackHeader(QHeaderView):
         self._accent = QColor(color)
         self.update()
 
+    def _theme(self):
+        w = self.window() if hasattr(self, 'window') else None
+        return getattr(w, 'theme', None)
+    def _secondary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#555555') if t else '#555555'
+
     def _flex_boundary_x(self):
         return self.sectionViewportPosition(self._FLEX_COL) + self.sectionSize(self._FLEX_COL)
 
@@ -894,9 +902,9 @@ class _TrackHeader(QHeaderView):
         painter.fillRect(rect, Qt.GlobalColor.transparent)
 
         text = self.model().headerData(logical_index, Qt.Orientation.Horizontal) or ''
-        f = QFont(); f.setPointSize(8); f.setBold(True)
+        f = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
         painter.setFont(f)
-        painter.setPen(QColor('#555555'))
+        painter.setPen(QColor(self._secondary_color()))
         h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4, 5) else Qt.AlignmentFlag.AlignLeft
         painter.drawText(rect.adjusted(4, 0, -4, -8),
                          h_align | Qt.AlignmentFlag.AlignBottom, text)
@@ -1354,8 +1362,10 @@ class AlbumDetailView(QWidget):
             item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            _theme = getattr(self.window(), 'theme', None)
+            _pri_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
             for col in range(6):
-                item.setForeground(col, QColor('#dddddd'))
+                item.setForeground(col, _pri_color)
             self.track_tree.addTopLevelItem(item)
         self.track_tree.setUpdatesEnabled(True)
         row_h = self.track_tree.sizeHintForRow(0) if tracks else 38
@@ -1679,7 +1689,8 @@ class AlbumDetailView(QWidget):
         self._last_playing_accent = accent
         playing_row = next((i for i, t in enumerate(self._tracks) if str(t.get('id')) == str(playing_id)), -1) if is_playing else -1
         accent_color = QColor(accent)
-        default_color = QColor('#dddddd')
+        _theme = getattr(self.window(), 'theme', None)
+        default_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
         for i in range(self.track_tree.topLevelItemCount()):
             item = self.track_tree.topLevelItem(i)
             color = accent_color if i == playing_row else default_color

@@ -7,10 +7,18 @@ Item {
     id: root
 
     property string accentColor: "#1db954"
+    property int    fontSizePrimary:    13
+    property int    fontSizeSecondary:  12
+    property string fontColorPrimary:   "#eeeeee"
+    property string fontColorSecondary: "#cccccc"
 
     Connections {
         target: sectionBridge
         function onAccentColorChanged(color) { root.accentColor = color }
+        function onFontSizePrimaryChanged(size)    { root.fontSizePrimary = size }
+        function onFontSizeSecondaryChanged(size)  { root.fontSizeSecondary = size }
+        function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
+        function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
         function onSelectIndex(idx) {
             if (idx >= 0 && idx < grid.count) {
                 grid.currentIndex = idx
@@ -166,8 +174,8 @@ Item {
                     Text {
                         width: parent.width
                         text: albumTitle
-                        color: cardRoot.isHovered ? root.accentColor : "#eee"
-                        font.pixelSize: 13
+                        color: cardRoot.isHovered ? root.accentColor : root.fontColorPrimary
+                        font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
                     }
@@ -183,9 +191,9 @@ Item {
                                 property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
                                 property bool hov: false
                                 text: modelData
-                                color: isSep ? "#777" : (hov ? root.accentColor : "#ccc")
+                                color: isSep ? "#777" : (hov ? root.accentColor : root.fontColorSecondary)
                                 font.underline: !isSep && hov
-                                font.pixelSize: 12
+                                font.pixelSize: root.fontSizeSecondary
                                 MouseArea {
                                     anchors.fill: parent
                                     enabled: !parent.isSep
@@ -207,8 +215,8 @@ Item {
                     Text {
                         width: parent.width
                         text: albumYear
-                        color: "#777"
-                        font.pixelSize: 11
+                        color: root.fontColorSecondary
+                        font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
                     }
                 }

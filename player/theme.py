@@ -25,7 +25,7 @@ class Theme:
     font_size_primary:   int = 14        # track titles, main content (px)
     font_size_secondary: int = 12        # artist names, subtitles (px)
     font_color_primary:   str = "#dddddd" # track titles, main content
-    font_color_secondary: str = "#aaaaaa" # artist names, subtitles
+    font_color_secondary: str = "#999999" # artist names, subtitles
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px

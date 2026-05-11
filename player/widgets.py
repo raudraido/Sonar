@@ -586,19 +586,39 @@ class KeyCaptureButton(QPushButton):
 
 class SettingsWindow(QWidget):
     def __init__(self, parent):
-        super().__init__()
+        super().__init__(None)
         self.parent = parent
-        self.setWindowTitle("Settings")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(900)
-        self.setWindowFlags(Qt.WindowType.Tool)
-        self.setStyleSheet("background-color: #181818; color: #ddd; font-family: sans-serif;")
+        self.setStyleSheet("color: #ddd; font-family: sans-serif;")
+        self._drag_pos = None
+
+        # Themed frame — same approach as TrackInfoDialog
+        theme = getattr(parent, 'theme', None)
+        bg = getattr(theme, 'main_panel_bg', '24,24,24') if theme else '24,24,24'
+        bc = getattr(theme, 'border_color', '#2a2a2a') if theme else '#2a2a2a'
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.bg = QFrame()
+        self.bg.setObjectName("settingsBg")
+        self.bg.setStyleSheet(f"""
+            QFrame#settingsBg {{
+                background-color: rgb({bg});
+                border: 1px solid {bc};
+                border-radius: 10px;
+            }}
+        """)
+        root_layout.addWidget(self.bg)
 
         _scroll_ss = (
             "QScrollArea { background: transparent; border: none; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         )
 
-        outer = QHBoxLayout(self)
+        outer = QHBoxLayout(self.bg)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(1)
 
@@ -641,12 +661,29 @@ class SettingsWindow(QWidget):
         header.setSpacing(10)
         header.setContentsMargins(0, 4, 0, 4)
 
-        logo_lbl = QLabel()
-        px = QPixmap(resource_path('img/icon.png'))
-        if not px.isNull():
-            logo_lbl.setPixmap(px.scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio,
-                                         Qt.TransformationMode.SmoothTransformation))
-        header.addWidget(logo_lbl)
+        _logo_size = 62
+        _logo_ctr = QWidget()
+        _logo_ctr.setFixedSize(_logo_size, _logo_size)
+        _logo_ctr.setStyleSheet("QWidget { border: none; background: transparent; }")
+
+        self._settings_logo_base = QLabel(_logo_ctr)
+        self._settings_logo_base.setGeometry(0, 0, _logo_size, _logo_size)
+        _pix_base = QPixmap(resource_path("img/shahedron2.png"))
+        if not _pix_base.isNull():
+            _pix_base = _pix_base.scaled(_logo_size, _logo_size,
+                                          Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+        self._settings_logo_base.setPixmap(_pix_base)
+        self._settings_logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._settings_logo_tint = QLabel(_logo_ctr)
+        self._settings_logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
+        self._settings_logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._settings_logo_tint.raise_()
+        self._settings_logo_size = _logo_size
+        self._update_settings_logo_tint(self.parent.theme.accent)
+
+        header.addWidget(_logo_ctr)
 
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
@@ -829,6 +866,7 @@ class SettingsWindow(QWidget):
 
     def _apply_slider_color(self):
         mc = getattr(self.parent, 'master_color', '#ffffff')
+        self._update_settings_logo_tint(mc)
         _sb_ss = (
             "QScrollArea { background: transparent; border: none; }"
             f"QScrollBar:vertical {{ border: none; background: #1a1a1a; width: 6px; margin: 0; }}"
@@ -865,6 +903,41 @@ class SettingsWindow(QWidget):
             if not QRect(tl, br).contains(pos):
                 self.hide()
         return False
+
+    def _update_settings_logo_tint(self, color: str):
+        if not hasattr(self, '_settings_logo_tint'):
+            return
+        from player import resource_path
+        from PyQt6.QtGui import QPainter as _P
+        sz = self._settings_logo_size
+        raw = QPixmap(resource_path("img/shahedron1.png"))
+        if raw.isNull():
+            return
+        raw = raw.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+        out = QPixmap(raw.size())
+        out.fill(Qt.GlobalColor.transparent)
+        p = _P(out)
+        p.setRenderHint(_P.RenderHint.Antialiasing)
+        p.drawPixmap(0, 0, raw)
+        p.setCompositionMode(_P.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(out.rect(), QColor(color))
+        p.end()
+        self._settings_logo_tint.setPixmap(out)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
 
     def toggle_dynamic_color(self):
         self.parent.theme.dynamic_accent = self.dynamic_check.isChecked()

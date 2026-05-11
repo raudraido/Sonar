@@ -375,6 +375,17 @@ class PopularTrackDelegate(QStyledItemDelegate):
     def update_color(self, color):
         self.accent_color = color
 
+    def _theme(self):
+        p = self.parent()
+        w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
+
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+
     def paint(self, painter, option, index):
         painter.save()
         is_selected = option.state & QStyle.StateFlag.State_Selected
@@ -413,13 +424,13 @@ class PopularTrackDelegate(QStyledItemDelegate):
             text_x = cover_rect.right() + 15
             title = track.get('title', 'Unknown')
             
-            painter.setFont(QFont("sans-serif", 12))
-            
-            # TITLE COLOR: Accent color on hover or select, White normally!
+            f = QFont(); f.setPixelSize(self._primary_px())
+            painter.setFont(f)
+
             if is_selected or is_hovered:
                 painter.setPen(QColor(self.accent_color))
             else:
-                painter.setPen(QColor("#ffffff"))
+                painter.setPen(QColor(self._primary_color()))
                 
             title_rect = QRect(text_x, rect.y(), rect.width() - text_x, rect.height())
             
@@ -440,6 +451,17 @@ class AlbumLinkDelegate(QStyledItemDelegate):
 
     def update_color(self, color):
         self.accent_color = color
+
+    def _theme(self):
+        p = self.parent()
+        w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
+
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
     
     def set_hovered(self, row):
         self.hovered_row = row
@@ -452,16 +474,15 @@ class AlbumLinkDelegate(QStyledItemDelegate):
         is_row_hovered = option.state & QStyle.StateFlag.State_MouseOver
         is_cell_hovered = (index.row() == self.hovered_row)
         
-        font = QFont("sans-serif", 11)
-        
-        # Use the accent color for hovering and selecting!
+        font = QFont(); font.setPixelSize(self._primary_px())
+
         if is_cell_hovered:
             font.setUnderline(True)
             painter.setPen(QColor(self.accent_color))
         elif is_row_hovered or is_selected:
             painter.setPen(QColor(self.accent_color))
         else:
-            painter.setPen(QColor("#a0a0a0")) 
+            painter.setPen(QColor(self._primary_color())) 
             
         painter.setFont(font)
         
@@ -541,29 +562,32 @@ class SongListWidget(QTreeWidget):
         super().leaveEvent(event)
 
     def update_style(self, accent_color):
-
         self.track_delegate.update_color(accent_color)
         self.album_delegate.update_color(accent_color)
-        
+
+        theme = getattr(self.window(), 'theme', None) if self.window() else None
+        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
+        pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
 
         self.setStyleSheet(f"""
-            QTreeWidget {{ 
-                background: transparent; 
-                border: none; 
-                outline: none; 
+            QTreeWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
             }}
-            QTreeWidget::item {{ 
-                height: 44px; 
-                color: #a0a0a0; 
-                border-bottom: 1px solid rgba(255,255,255,0.02); 
+            QTreeWidget::item {{
+                height: 44px;
+                color: {pri_color};
+                font-size: {pri_size}px;
+                border-bottom: 1px solid rgba(255,255,255,0.02);
             }}
-            QTreeWidget::item:hover {{ 
-                background: rgba(255, 255, 255, 0.06); 
-                color: {accent_color}; 
+            QTreeWidget::item:hover {{
+                background: rgba(255, 255, 255, 0.06);
+                color: {accent_color};
             }}
-            QTreeWidget::item:selected {{ 
-                background: rgba(255, 255, 255, 0.08); 
-                color: {accent_color}; 
+            QTreeWidget::item:selected {{
+                background: rgba(255, 255, 255, 0.08);
+                color: {accent_color};
             }}
         """)
         self.viewport().update()
@@ -572,7 +596,9 @@ class SongListWidget(QTreeWidget):
         self.clear()
         from PyQt6.QtGui import QFont
         from PyQt6.QtCore import Qt
-        normal_font = QFont("sans-serif", 11)
+        theme = getattr(self.window(), 'theme', None) if self.window() else None
+        pri_size = getattr(theme, 'font_size_primary', 14) if theme else 14
+        normal_font = QFont(); normal_font.setPixelSize(pri_size)
         
         for i, s in enumerate(songs):
             item = QTreeWidgetItem([str(i+1), "", s.get('album', ''), s.get('duration', '')])
@@ -643,12 +669,16 @@ class SectionCoverProvider(QQuickImageProvider):
 
 
 class SectionGridBridge(QObject):
-    accentColorChanged   = pyqtSignal(str)
-    selectIndex          = pyqtSignal(int)
-    itemClicked          = pyqtSignal(int)
-    playClicked          = pyqtSignal(int)
-    artistNameClicked    = pyqtSignal(str)
-    contentHeightChanged = pyqtSignal(int)
+    accentColorChanged        = pyqtSignal(str)
+    selectIndex               = pyqtSignal(int)
+    itemClicked               = pyqtSignal(int)
+    playClicked               = pyqtSignal(int)
+    artistNameClicked         = pyqtSignal(str)
+    contentHeightChanged      = pyqtSignal(int)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
 
     def __init__(self, model):
         super().__init__()
@@ -732,6 +762,15 @@ class QMLAlbumSectionWidget(QWidget):
         ctx.setContextProperty("sectionBridge", self.bridge)
 
         self.qml_widget.setSource(QUrl.fromLocalFile(resource_path("artist_section_grid.qml")))
+        from PyQt6.QtCore import QTimer as _QTimer
+        def _emit_section_typography():
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+        _QTimer.singleShot(0, _emit_section_typography)
         outer.addWidget(self.qml_widget)
 
         # facade so legacy code doing `row.list_widget.count()` etc. still works
@@ -769,6 +808,12 @@ class QMLAlbumSectionWidget(QWidget):
 
     def set_accent_color(self, color):
         self.bridge.accentColorChanged.emit(color)
+        theme = getattr(self.window(), 'theme', None)
+        if theme:
+            self.bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+            self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+            self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+            self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
 
     def populate(self, albums):
         # Normalise so AlbumModel's cover_id key is always populated
@@ -999,6 +1044,17 @@ class CircularArtistDelegate(QStyledItemDelegate):
     def set_master_color(self, color):
         self.master_color = QColor(color)
 
+    def _theme(self):
+        p = self.parent()
+        w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
+
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#eeeeee') if t else '#eeeeee'
+
     def paint(self, painter, option, index):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1061,11 +1117,11 @@ class CircularArtistDelegate(QStyledItemDelegate):
         data = index.data(Qt.ItemDataRole.UserRole)
         if data:
             name = data.get('name') or data.get('title') or ''
-            text_color = self.master_color.name() if (is_hovered or is_selected) else '#eeeeee'
+            text_color = self.master_color.name() if (is_hovered or is_selected) else self._primary_color()
             painter.setPen(QColor(text_color))
             font = painter.font()
             font.setBold(True)
-            font.setPointSize(10)
+            font.setPixelSize(self._primary_px())
             painter.setFont(font)
             fm = QFontMetrics(font)
             text_y = img_rect.bottom() + 10
@@ -1180,7 +1236,7 @@ class RelatedArtistRowWidget(QWidget):
             QListWidget::item:selected { background: transparent; }
         """)
 
-        self.delegate = CircularArtistDelegate()
+        self.delegate = CircularArtistDelegate(self.list_widget)
         self.list_widget.setItemDelegate(self.delegate)
 
         placeholder = QPixmap(self.CELL_W, self.CELL_W)
@@ -1769,6 +1825,16 @@ class ArtistRichDetailView(QWidget):
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color
+
+        theme = getattr(self.window(), 'theme', None)
+        sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
+        sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
+        if hasattr(self, 'lbl_stats'):
+            self.lbl_stats.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px;")
+        if hasattr(self, 'lbl_bio'):
+            self.lbl_bio.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; line-height: 1.4; padding-left: 8px;")
+        if hasattr(self, 'lbl_bio_toggle'):
+            self.lbl_bio_toggle.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; padding-left: 8px; padding-top: 2px;")
 
         if hasattr(self, 'btn_shuffle'):
             import os

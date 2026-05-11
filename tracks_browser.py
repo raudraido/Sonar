@@ -731,6 +731,14 @@ class SmartSortHeader(QHeaderView):
         self._accent = QColor(color)
         self.viewport().update()
 
+    def _theme(self):
+        w = self.window() if hasattr(self, 'window') else None
+        return getattr(w, 'theme', None)
+    def _secondary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#555555') if t else '#555555'
+
     _CLICK_THRESHOLD = 4  # pixels — more than this = drag, not click
 
     def _is_resize_zone(self, pos):
@@ -798,12 +806,12 @@ class SmartSortHeader(QHeaderView):
         painter.fillRect(rect, Qt.GlobalColor.transparent)
 
         text = self.model().headerData(logicalIndex, Qt.Orientation.Horizontal) or ''
-        f = QFont(); f.setPointSize(8); f.setBold(True)
+        f = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
         fm = QFontMetrics(f)
         painter.setFont(f)
-        painter.setPen(QColor('#555555'))
+        painter.setPen(QColor(self._secondary_color()))
 
-        centered_cols = {0, 7, 9, 10}
+        centered_cols = {0, 7, 9, 10, 11}
         h_align = Qt.AlignmentFlag.AlignHCenter if logicalIndex in centered_cols else Qt.AlignmentFlag.AlignLeft
         painter.drawText(rect.adjusted(4, 0, -4, -8), h_align | Qt.AlignmentFlag.AlignBottom, text)
 
@@ -1016,10 +1024,18 @@ class LinkDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.hovered_index = None
-        self.master_color = QColor("#cccccc") 
+        self.master_color = QColor("#cccccc")
 
     def set_master_color(self, color):
         self.master_color = QColor(color)
+
+    def _theme(self):
+        p = self.parent(); w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
 
     def clear_hover(self):
         if self.hovered_index is not None:
@@ -1073,7 +1089,7 @@ class LinkDelegate(QStyledItemDelegate):
             painter.setPen(QColor("#ffffff"))
             f = painter.font(); f.setUnderline(True); painter.setFont(f)
         else:
-            painter.setPen(QColor("#cccccc"))
+            painter.setPen(QColor(self._primary_color()))
 
         # 🟢 Define the drawing area (with a 5px buffer on the sides)
         draw_rect = opts.rect.adjusted(5, 0, -5, 0)
@@ -1158,6 +1174,12 @@ class PlainWrapDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.master_color = QColor("#cccccc")
 
+    def _theme(self):
+        p = self.parent(); w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+
     def set_master_color(self, color):
         self.master_color = QColor(color)
 
@@ -1178,7 +1200,7 @@ class PlainWrapDelegate(QStyledItemDelegate):
         if is_selected or is_row_hover:
             painter.setPen(self.master_color)
         else:
-            painter.setPen(QColor("#cccccc"))
+            painter.setPen(QColor(self._primary_color()))
 
         draw_rect = opts.rect.adjusted(5, 0, -5, 0)
         from PyQt6.QtGui import QTextLayout
@@ -1206,7 +1228,7 @@ class PlainWrapDelegate(QStyledItemDelegate):
         total_height = len(display_lines) * line_spacing
         start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2 + fm.ascent()
         for i, line_str in enumerate(display_lines):
-            painter.drawText(draw_rect.left(), int(start_y + i * line_spacing), line_str)
+            painter.drawText(draw_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, line_str)
         painter.restore()
 
     def sizeHint(self, option, index):
@@ -1227,8 +1249,15 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         self.split_regex = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )')
         
     def set_master_color(self, color):
-        """Update the master color for this delegate"""
         self.master_color = QColor(color)
+
+    def _theme(self):
+        p = self.parent(); w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
 
     def paint(self, painter, option, index):
         if not index.isValid(): return
@@ -1236,8 +1265,7 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         opts = QStyleOptionViewItem(option)
         self.initStyleOption(opts, index)
         opts.state &= ~QStyle.StateFlag.State_HasFocus
-        
-        # Draw background
+
         style = opts.widget.style() if opts.widget else QApplication.style()
         style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opts, painter, opts.widget)
 
@@ -1251,7 +1279,7 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         if is_selected or is_row_hover:
             base_color = self.master_color
         else:
-            base_color = QColor("#cccccc")
+            base_color = QColor(self._primary_color())
 
         parsed_parts = self.parse_text(text)
         x_offset = rect.left() + 5 
@@ -1378,6 +1406,14 @@ class MultiGenreDelegate(QStyledItemDelegate):
     def set_master_color(self, color):
         self.master_color = QColor(color)
 
+    def _theme(self):
+        p = self.parent(); w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
+
     def clear_hover(self):
         if self.current_hover != (None, None):
             self.current_hover = (None, None)
@@ -1405,7 +1441,7 @@ class MultiGenreDelegate(QStyledItemDelegate):
 
         is_selected = (opts.state & QStyle.StateFlag.State_Selected)
         is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-        base_color = self.master_color if (is_selected or is_row_hover) else QColor("#cccccc")
+        base_color = self.master_color if (is_selected or is_row_hover) else QColor(self._primary_color())
 
         hovered_idx, hovered_genre = self.current_hover
         painter.save()
@@ -1532,13 +1568,25 @@ class CombinedTrackDelegate(QStyledItemDelegate):
     def set_master_color(self, color):
         self.master_color = QColor(color)
 
+    def _theme(self):
+        p = self.parent(); w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+    def _primary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _primary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#aaaaaa') if t else '#aaaaaa'
+    def _secondary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
+
     def paint(self, painter, option, index):
         if not index.isValid(): return
-        
+
         opts = QStyleOptionViewItem(option)
         self.initStyleOption(opts, index)
         opts.state &= ~QStyle.StateFlag.State_HasFocus
-        
+
         style = opts.widget.style() if opts.widget else QApplication.style()
         style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opts, painter, opts.widget)
 
@@ -1555,20 +1603,20 @@ class CombinedTrackDelegate(QStyledItemDelegate):
         is_selected = (opts.state & QStyle.StateFlag.State_Selected)
         is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
         
-        if is_selected or is_row_hover: 
+        if is_selected or is_row_hover:
             main_text_color = self.master_color.name()
-        else: 
-            main_text_color = "#cccccc"
+        else:
+            main_text_color = self._primary_color()
 
         painter.save()
 
         # --- 1. FONTS & TEXT SETUP ---
         title_font = QFont(opts.font)
-        title_font.setPointSize(10)
+        title_font.setPixelSize(self._primary_px())
         title_font.setBold(True)
-        
+
         artist_font = QFont(opts.font)
-        artist_font.setPointSize(9)
+        artist_font.setPixelSize(self._secondary_px())
 
         fm_title = QFontMetrics(title_font)
         fm_artist = QFontMetrics(artist_font)
@@ -1689,7 +1737,7 @@ class CombinedTrackDelegate(QStyledItemDelegate):
         if is_selected or is_row_hover:
             base_artist_pen = QColor(main_text_color)
         else:
-            base_artist_pen = QColor("#aaaaaa")
+            base_artist_pen = QColor(self._secondary_color())
 
         hovered_idx, hovered_token = self.current_hover
 
@@ -1935,7 +1983,7 @@ class TracksBrowser(QWidget):
         header_layout.setSpacing(15)
         
         self.status_label = QLabel("Tracks")
-        self.status_label.setStyleSheet("color: #888; font-weight: bold; background: transparent; border: none;")
+        self.status_label.setStyleSheet("color: #aaaaaa; font-weight: bold; background: transparent; border: none;")
         
         # (Sync button and progress bar completely removed from here!)
 
@@ -2045,6 +2093,7 @@ class TracksBrowser(QWidget):
         self.tree.headerItem().setTextAlignment(7, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(9, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(10, Qt.AlignmentFlag.AlignCenter)
+        self.tree.headerItem().setTextAlignment(11, Qt.AlignmentFlag.AlignCenter)
         self.tree.headerItem().setTextAlignment(12, Qt.AlignmentFlag.AlignCenter)
 
         self.tree.setRootIsDecorated(False)
@@ -2517,7 +2566,7 @@ class TracksBrowser(QWidget):
 
         else:
             if hasattr(self, 'status_label'):
-                self.status_label.setText(f"{self.total_items:,} tracks")
+                self.status_label.setText(f"{self.total_items:,} tracks".replace(",", " "))
 
             if hasattr(self, 'footer'):
                 self.footer.render_pagination(self.current_page, self.total_pages)
@@ -2786,7 +2835,8 @@ class TracksBrowser(QWidget):
         
         rgb = QColor(color_hex) if color_hex else QColor("#1DB954")
         highlight_bg = QColor(rgb.red(), rgb.green(), rgb.blue(), 40)
-        default_color = QColor("#ddd")
+        theme = getattr(self.window(), 'theme', None)
+        default_color = QColor(getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd')
         transparent = QColor(0, 0, 0, 0)
         
         normal_font = QFont("sans-serif", 10)
@@ -2857,6 +2907,7 @@ class TracksBrowser(QWidget):
             }
         try:
             self._settings.setValue('tracks_columns_hidden', json.dumps(state))
+            self._settings.sync()
         except: pass
 
     def load_column_state(self):
@@ -2968,7 +3019,7 @@ class TracksBrowser(QWidget):
     def _on_drag_finished(self):
         self._clamp_columns()
         self._fit_columns_to_viewport()
-        self._col_save_timer.start()
+        self.save_column_state()
 
     # --- COLUMN FILTERS ---
 
@@ -3174,18 +3225,8 @@ class TracksBrowser(QWidget):
             QTimer.singleShot(0, self._fit_columns_to_viewport)
 
     def _fit_columns_to_viewport(self):
-        """Cap fixed-size columns at their max width, then clamp all interactive columns to fit the viewport."""
+        """Clamp interactive columns to fit the viewport when the window shrinks."""
         if getattr(self, 'is_album_mode', False): return
-        cols = self._visible_cols()
-        if not cols: return
-        self._col_resize_guard = True
-        for col in cols:
-            if col in self.col_max_widths:
-                cur_w = self.tree.columnWidth(col)
-                capped = min(cur_w, self.col_max_widths[col])
-                if cur_w != capped:
-                    self.tree.header().resizeSection(col, capped)
-        self._col_resize_guard = False
         self._clamp_columns()
 
 
@@ -3836,6 +3877,13 @@ class TracksBrowser(QWidget):
                 "QWidget { background-color: transparent; border: none; }"
             )
         self._scroll_reveal.color = color
+        if hasattr(self, 'status_label'):
+            _theme = getattr(self.window(), 'theme', None)
+            _pri_size  = getattr(_theme, 'font_size_primary', 14) if _theme else 14
+            _sec_color = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+            self.status_label.setStyleSheet(
+                f"color: {_sec_color}; font-size: {_pri_size}px; font-weight: bold; background: transparent; border: none;"
+            )
 
         # 🟢 FREEZE THE UI: Prevents all layout jumping and stylesheet flickering!
         self.setUpdatesEnabled(False)
@@ -3927,12 +3975,15 @@ class TracksBrowser(QWidget):
 
     def update_scrollbar_color(self, color_hex):
         row_height = "50px" if getattr(self, 'is_album_mode', False) else "75px"
-        
+        theme = getattr(self.window(), 'theme', None)
+        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
+        pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
+
         css = f"""
         {scrollbar_css(color_hex)}
-        
-        QTreeWidget {{ background: transparent; border: none; font-size: 10pt; outline: none; }}
-        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: #ddd; }}
+
+        QTreeWidget {{ background: transparent; border: none; font-size: {pri_size}px; outline: none; }}
+        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: {pri_color}; }}
         QTreeWidget::item:selected {{ background: transparent; color: {color_hex}; }}
         QTreeWidget::item:hover {{ background: transparent; color: {color_hex}; }}
         
