@@ -21,8 +21,8 @@ class PlaybackMixin:
         """Convert a raw numeric duration (seconds) to 'm:ss' in-place."""
         dur = track_data.get('duration', 0)
         if isinstance(dur, (int, float)):
-            m, s = divmod(int(dur), 60)
-            track_data['duration'] = f"{m}:{s:02d}"
+            h, rem = divmod(int(dur), 3600)
+            track_data['duration'] = f"{h}:{rem // 60:02d}:{rem % 60:02d}" if h else f"{rem // 60}:{rem % 60:02d}"
 
     def _build_tree_item(self, track_data: dict) -> QTreeWidgetItem:
         """
@@ -640,9 +640,10 @@ class PlaybackMixin:
                         if 0 <= self.current_index < len(self.playlist_data):
                             self.playlist_data[self.current_index]['duration'] = formatted
      
-    def format_time(self, ms): 
-        ms = int(ms); seconds = (ms // 1000) % 60; minutes = (ms // 60000) % 60
-        return f"{minutes}:{seconds:02d}"
+    def format_time(self, ms):
+        ms = int(ms); total_sec = ms // 1000
+        h, rem = divmod(total_sec, 3600)
+        return f"{h}:{rem // 60:02d}:{rem % 60:02d}" if h else f"{rem // 60}:{rem % 60:02d}"
     
     def on_waveform_seek(self, target_ms): 
         is_pending = 0

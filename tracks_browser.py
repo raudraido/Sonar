@@ -718,7 +718,6 @@ class SmartSortHeader(QHeaderView):
         self.up_icon   = QIcon(resource_path("img/filter_up.png"))
         self.down_icon = QIcon(resource_path("img/filter_down.png"))
         self.filter_icon     = QIcon(resource_path("img/filter.png"))
-        self.filter_off_icon = QIcon(resource_path("img/filter.png"))
         self._active_filter_cols = set()
         self._filter_icon_rects = {}
         self._pending_click_col = None
@@ -773,8 +772,10 @@ class SmartSortHeader(QHeaderView):
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        _is_click = self._pending_click_col is not None
         super().mouseReleaseEvent(event)
-        self.section_drag_finished.emit()
+        if not _is_click:
+            self.section_drag_finished.emit()
         if event.button() == Qt.MouseButton.LeftButton and self._pending_click_col is not None:
             col = self._pending_click_col
             self._pending_click_col = None
@@ -811,16 +812,41 @@ class SmartSortHeader(QHeaderView):
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
 
-        centered_cols = {0, 7, 9, 10, 11}
-        h_align = Qt.AlignmentFlag.AlignHCenter if logicalIndex in centered_cols else Qt.AlignmentFlag.AlignLeft
-        painter.drawText(rect.adjusted(4, 0, -4, -8), h_align | Qt.AlignmentFlag.AlignBottom, text)
+        centered_cols = {0, 5, 7, 9, 10, 11, 12}
+
+        # Pre-calculate icon visibility so text placement can account for it
+        show_icon = logicalIndex != 0
+        is_sort_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
+        is_active = logicalIndex in self._active_filter_cols
+        # Active filters no longer show an icon — accent text color is used instead
+        show_icon_now = (not self.album_mode) and show_icon and is_sort_shown
+
+        sz = self.FILTER_ICON_SIZE
+        text_w = fm.horizontalAdvance(text)
+
+        painter.setPen(self._accent if is_active else QColor(self._secondary_color()))
+
+        if logicalIndex in centered_cols and show_icon_now:
+            # Draw text + icon as a centered group so the icon never overlaps text
+            content_w = text_w + 4 + sz
+            group_x = rect.left() + 4 + max(0, (rect.width() - 8 - content_w) // 2)
+            painter.drawText(
+                QRect(group_x, rect.top(), text_w, rect.height() - 8),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, text)
+            fx = group_x + text_w + 4
+        else:
+            h_align = Qt.AlignmentFlag.AlignHCenter if logicalIndex in centered_cols else Qt.AlignmentFlag.AlignLeft
+            painter.drawText(rect.adjusted(4, 0, -4, -8), h_align | Qt.AlignmentFlag.AlignBottom, text)
+            fx = rect.left() + 4 + text_w + 4
+
+        fy = rect.bottom() - sz - 8
 
         # Bottom border
         painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
         painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
 
         # Column separator
-        if 0 < logicalIndex < self.count() - 1:
+        if logicalIndex != 0 and self.visualIndex(logicalIndex) < self.count() - 1:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             pen = QPen(self._accent.darker(250), 1)
             pen.setCosmetic(True)
@@ -828,33 +854,10 @@ class SmartSortHeader(QHeaderView):
             painter.drawLine(rect.right(), rect.top() + 8, rect.right(), rect.bottom() - 8)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # Sort/filter icon — only when sorted or active filter
-        show_icon = logicalIndex != 0
-        is_sort_shown = self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex
-        is_active = logicalIndex in self._active_filter_cols
-        show_icon_now = (not self.album_mode) and show_icon and (is_sort_shown or is_active)
-
         if show_icon_now:
-            sz = self.FILTER_ICON_SIZE
-            text_w = fm.horizontalAdvance(text)
-            if logicalIndex in centered_cols:
-                content_w = text_w + 4 + sz
-                fx = rect.left() + (rect.width() - content_w) // 2 + text_w + 4
-            else:
-                fx = rect.left() + 4 + text_w + 4
-            fy = rect.bottom() - sz - 8
-
-            if is_active and logicalIndex not in self.SORT_COLS:
-                px = self.filter_off_icon.pixmap(sz, sz)
-                tint = QColor("#aaaaaa")
-            elif is_sort_shown and logicalIndex not in self.SORT_COLS:
-                icon = self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon
-                px = icon.pixmap(sz, sz)
-                tint = QColor("#aaaaaa")
-            else:
-                icon = (self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon)
-                px = icon.pixmap(sz, sz)
-                tint = QColor("#aaaaaa")
+            icon = self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon
+            px = icon.pixmap(sz, sz)
+            tint = QColor("#aaaaaa")
 
             tinted = QPixmap(px.size())
             tinted.fill(Qt.GlobalColor.transparent)
@@ -1021,10 +1024,11 @@ class HeartDelegate(QStyledItemDelegate):
 class LinkDelegate(QStyledItemDelegate):
     clicked = pyqtSignal(QModelIndex)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, center_text=False):
         super().__init__(parent)
         self.hovered_index = None
         self.master_color = QColor("#cccccc")
+        self.center_text = center_text
 
     def set_master_color(self, color):
         self.master_color = QColor(color)
@@ -1129,8 +1133,10 @@ class LinkDelegate(QStyledItemDelegate):
         start_y = draw_rect.top() + (draw_rect.height() - total_height) // 2 + fm.ascent()
         
         for i, line_str in enumerate(display_lines):
-            painter.drawText(draw_rect.left(), int(start_y + i * line_spacing), line_str)
-            
+            x = (draw_rect.left() + (draw_rect.width() - fm.horizontalAdvance(line_str)) // 2
+                 if self.center_text else draw_rect.left())
+            painter.drawText(x, int(start_y + i * line_spacing), line_str)
+
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
@@ -2176,7 +2182,7 @@ class TracksBrowser(QWidget):
         self.date_added_delegate = PlainWrapDelegate(self.tree)
         self.tree.setItemDelegateForColumn(11, self.date_added_delegate)
 
-        self.year_delegate = LinkDelegate(self.tree)
+        self.year_delegate = LinkDelegate(self.tree, center_text=True)
         self.year_delegate.clicked.connect(lambda idx: self._apply_col_filter(5, {idx.data()}))
         self.tree.setItemDelegateForColumn(5, self.year_delegate)
         
@@ -2711,6 +2717,7 @@ class TracksBrowser(QWidget):
         item.setText(3, str(t.get('artist') or 'Unknown'))
         item.setText(4, str(t.get('album') or 'Unknown'))
         item.setText(5, str(t.get('year') or ''))
+        item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter)
         
         genre_raw = t.get('genre', '')
         if genre_raw:
@@ -3552,8 +3559,21 @@ class TracksBrowser(QWidget):
         track_ids = [str(t.get('id')) for t in selected_tracks if t.get('id')]
         
         menu = QMenu(self)
-        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }} QMenu::item {{ padding: 6px 25px; }} QMenu::item:selected {{ background-color: #333; }} QMenu::item:disabled {{ color: #555; }} QMenu::separator {{ height: 1px; background: {_bc}; margin: 5px 0; }}")
+        _theme = getattr(self.window(), 'theme', None)
+        _bc  = getattr(_theme, 'border_color',        '#444444')
+        _bg  = getattr(_theme, 'main_panel_bg',       '20,20,20')
+        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary', '#777777')
+        _px  = getattr(_theme, 'font_size_primary',    14)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px;"
+            f" border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: rgba(255,255,255,0.08); }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
+            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
+        )
         
         action_play = menu.addAction(f"Play Now ({count})" if is_multi else "Play Now")
         if not is_multi:

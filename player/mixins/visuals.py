@@ -285,6 +285,8 @@ class VisualsMixin:
 
         self.now_playing_widget.set_accent_color(mc)
         self.now_playing_widget.set_expand_btn_style(mc)
+        self.now_playing_widget.apply_theme(self.theme)
+        if hasattr(self, '_queue_panel'): self._queue_panel.apply_theme(self.theme)
         if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
             self._update_art_close_btn_style()
 

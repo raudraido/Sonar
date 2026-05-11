@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QAbstractItemView, QStyledItemDelegate, QMenu,
     QPushButton, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPoint, QSettings, QEvent, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QRectF, QPoint, QSettings, QEvent, QTimer
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap
 import re
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal
@@ -226,9 +226,22 @@ class _QueueDelegate(QStyledItemDelegate):
 
         from PyQt6.QtWidgets import QStyle
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(r, QColor(255, 255, 255, 18))
+            halo_color = QColor(255, 255, 255, 18)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(r, QColor(255, 255, 255, 8))
+            halo_color = QColor(255, 255, 255, 8)
+        else:
+            halo_color = None
+        if halo_color:
+            view = option.widget
+            vp_w = view.viewport().width() if view else r.width()
+            sb = view.verticalScrollBar() if view else None
+            sb_w = sb.width() if (sb and sb.isVisible()) else 0
+            # right inset shrinks by scrollbar width so visual gap = 8px to widget edge
+            right_inset = max(1, 8 - sb_w)
+            halo = QRectF(8, r.top(), vp_w - 8 - right_inset, r.height())
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(halo_color)
+            painter.drawRoundedRect(halo, 6, 6)
 
         # Track number / playing GIF
         num_rect = QRect(r.left() + 6, r.top(), NUM_W, r.height())
@@ -284,13 +297,15 @@ class _QueueDelegate(QStyledItemDelegate):
 
         # Title
         f_title = QFont()
-        f_title.setPixelSize(14)
+        f_title.setPixelSize(panel._primary_px)
         f_title.setBold(is_current)
         painter.setFont(f_title)
         if is_current:
             painter.setPen(QColor(panel._accent_color))
         else:
-            painter.setPen(QColor(255, 255, 255, 90 if is_past else 210))
+            c = QColor(panel._primary_color)
+            c.setAlpha(90 if is_past else 210)
+            painter.setPen(c)
         title = data.get('title', data.get('name', 'Unknown'))
         title_e = QFontMetrics(f_title).elidedText(title, Qt.TextElideMode.ElideRight, text_w)
         painter.drawText(QRect(text_x, r.top() + 8, text_w, 20),
@@ -298,7 +313,7 @@ class _QueueDelegate(QStyledItemDelegate):
 
         # Artist — split on separators, draw each part
         f_art = QFont()
-        f_art.setPixelSize(12)
+        f_art.setPixelSize(panel._secondary_px)
         painter.setFont(f_art)
         fm_art = QFontMetrics(f_art)
         artist = data.get('artist', '')
@@ -315,8 +330,14 @@ class _QueueDelegate(QStyledItemDelegate):
                 painter.setPen(QColor(120, 120, 120, 160))
             elif is_current:
                 painter.setPen(QColor(panel._accent_color))
+            elif is_past:
+                c = QColor(panel._secondary_color)
+                c.setAlpha(60)
+                painter.setPen(c)
             else:
-                painter.setPen(QColor(255, 255, 255, 60 if is_past else 210))
+                c = QColor(panel._secondary_color)
+                c.setAlpha(210)
+                painter.setPen(c)
             painter.drawText(QRect(ax, ay, pw, 18),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, part)
             if hovered:
@@ -345,6 +366,10 @@ class QueuePanel(QWidget):
         super().__init__(parent)
         self._embedded         = embedded
         self._accent_color     = '#cccccc'
+        self._primary_px       = 14
+        self._primary_color    = '#dddddd'
+        self._secondary_px     = 12
+        self._secondary_color  = '#777777'
         self._settings         = QSettings()
         self._hover_artist     = None  # (row, part_text) currently hovered
         self._pending_refresh  = None  # (playlist_data, current_index, is_playing) deferred while hidden
@@ -592,6 +617,13 @@ class QueuePanel(QWidget):
         self._duration_lbl.setStyleSheet(
             f'color: {color}; font-size: 11px; background: transparent; border: none;'
         )
+
+    def apply_theme(self, theme):
+        self._primary_px      = getattr(theme, 'font_size_primary',    14)
+        self._primary_color   = getattr(theme, 'font_color_primary',   '#dddddd')
+        self._secondary_px    = getattr(theme, 'font_size_secondary',  12)
+        self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
+        self._list.viewport().update()
 
     def toggle_favorite_at(self, idx: int):
         item = self._list.item(idx)

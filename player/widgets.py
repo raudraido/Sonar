@@ -143,6 +143,9 @@ class NowPlayingFooterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_track = None
+        self._primary_px = 15
+        self._secondary_px = 12
+        self._secondary_color = "#777777"
 
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -216,7 +219,7 @@ class NowPlayingFooterWidget(QWidget):
             lambda _: self.track_right_clicked.emit(self._current_track) if self._current_track else None
         )
         f = self.title_lbl.font()
-        f.setPixelSize(15)
+        f.setPixelSize(self._primary_px)
         f.setBold(True)
         self.title_lbl.setFont(f)
         self.title_lbl.setStyleSheet("color: white; background: transparent;")
@@ -236,7 +239,8 @@ class NowPlayingFooterWidget(QWidget):
         # BPM
         self._current_bpm = None
         self.bpm_lbl = QLabel("")
-        self.bpm_lbl.setStyleSheet("font-size: 12px; color: #777; background: transparent;")
+        self.bpm_lbl.setStyleSheet(
+            f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
         self.bpm_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bpm_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.bpm_lbl.customContextMenuRequested.connect(self._show_bpm_menu)
@@ -264,10 +268,12 @@ class NowPlayingFooterWidget(QWidget):
             if not part: continue
             if re.match(r'( /// | • | / |, | feat\. | Feat\. | vs\. )', part):
                 sep_lbl = QLabel(part)
-                sep_lbl.setStyleSheet("font-size: 13px; color: #777; background: transparent;")
+                sep_lbl.setStyleSheet(
+                    f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
                 self.artist_layout.addWidget(sep_lbl)
             else:
                 lbl = FooterClickableLabel(part)
+                lbl.set_secondary_style(self._secondary_px, self._secondary_color)
                 lbl.clicked.connect(self.artist_clicked.emit)
                 self.artist_layout.addWidget(lbl)
         
@@ -337,6 +343,27 @@ class NowPlayingFooterWidget(QWidget):
             QPushButton::menu-indicator {{ width: 0; image: none; }}
         """)
 
+    def apply_theme(self, theme):
+        self._primary_px      = getattr(theme, 'font_size_primary',   15)
+        self._secondary_px    = getattr(theme, 'font_size_secondary', 12)
+        self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
+        # Title font size
+        f = self.title_lbl.font()
+        f.setPixelSize(self._primary_px)
+        self.title_lbl.setFont(f)
+        # Album
+        self.album_lbl.set_secondary_style(self._secondary_px, self._secondary_color)
+        # BPM row
+        self.bpm_lbl.setStyleSheet(
+            f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
+        # Artist row — restyle existing children in place
+        for child in self.artist_widget.findChildren(QLabel):
+            if isinstance(child, FooterClickableLabel):
+                child.set_secondary_style(self._secondary_px, self._secondary_color)
+            else:
+                child.setStyleSheet(
+                    f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
+
     def set_file_type(self, file_type):
         self._file_type = file_type
 
@@ -383,8 +410,23 @@ class FooterClickableLabel(QLabel):
         super().__init__(text, parent)
         self.full_text = text
         self.setMouseTracking(True)
-        self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
+        self._sec_px = 13
+        self._sec_color = "#bbbbbb"
+        self._apply_normal()
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    def set_secondary_style(self, px: int, color: str):
+        self._sec_px = px
+        self._sec_color = color
+        self._apply_normal()
+
+    def _apply_normal(self):
+        self.setStyleSheet(
+            f"font-size: {self._sec_px}px; color: {self._sec_color}; background: transparent; text-decoration: none;")
+
+    def _apply_hover(self):
+        self.setStyleSheet(
+            f"font-size: {self._sec_px}px; color: #fff; background: transparent; text-decoration: underline;")
 
     def _text_w(self):
         return QFontMetrics(self.font()).horizontalAdvance(self.text())
@@ -392,20 +434,20 @@ class FooterClickableLabel(QLabel):
     def enterEvent(self, event):
         from PyQt6.QtGui import QCursor
         if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
-            self.setStyleSheet("font-size: 13px; color: #fff; background: transparent; text-decoration: underline;")
+            self._apply_hover()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
+        self._apply_normal()
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
     def mouseMoveEvent(self, event):
         if event.pos().x() <= self._text_w():
-            self.setStyleSheet("font-size: 13px; color: #fff; background: transparent; text-decoration: underline;")
+            self._apply_hover()
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setStyleSheet("font-size: 13px; color: #bbb; background: transparent; text-decoration: none;")
+            self._apply_normal()
             self.setCursor(Qt.CursorShape.ArrowCursor)
         super().mouseMoveEvent(event)
 
@@ -687,7 +729,7 @@ class SettingsWindow(QWidget):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
-        name_lbl = QLabel("Sonar")
+        name_lbl = QLabel("Icosahedron")
         name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #fff; background: transparent;")
         ver_lbl = QLabel(f"v{__version__}")
         ver_lbl.setStyleSheet("font-size: 11px; color: #555; background: transparent;")
