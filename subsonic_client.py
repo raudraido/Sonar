@@ -378,11 +378,18 @@ class SubsonicClient:
             
             clean_artists = []
             for item in data:
+                stats = item.get('stats') or {}
+                song_count = max(
+                    (stats.get('albumartist') or {}).get('songCount', 0),
+                    (stats.get('artist') or {}).get('songCount', 0),
+                    item.get('songCount', 0)
+                )
                 clean_artists.append({
                     'id': item.get('id'),
                     'name': item.get('name', 'Unknown Artist'),
-                    'coverArt': item.get('id'), 
+                    'coverArt': item.get('id'),
                     'albumCount': item.get('albumCount', 0),
+                    'songCount': song_count,
                     'playCount': item.get('playCount', 0)
                 })
             return clean_artists, total_count
@@ -607,6 +614,7 @@ class SubsonicClient:
                         'name': artist.get('name', 'Unknown Artist'),
                         'coverArt': artist.get('coverArt'),
                         'albumCount': artist.get('albumCount', 0),
+                        'songCount': artist.get('songCount', 0),
                         'playCount': artist.get('playCount', 0)
                     })
             print(f"[Client] Found {len(clean_artists)} total artists. Saving to disk cache.")
@@ -1136,6 +1144,7 @@ class SubsonicClient:
                             'name': artist.get('name'),
                             'coverArt': artist.get('coverArt'),
                             'albumCount': artist.get('albumCount', 0),
+                            'songCount': artist.get('songCount', 0),
                             'playCount': artist.get('playCount', 0)
                         })
         except Exception as e:

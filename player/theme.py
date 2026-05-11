@@ -24,13 +24,17 @@ class Theme:
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_primary:   int = 14        # track titles, main content (px)
     font_size_secondary: int = 12        # artist names, subtitles (px)
+    font_color_primary:   str = "#dddddd" # track titles, main content
+    font_color_secondary: str = "#aaaaaa" # artist names, subtitles
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px
     border_color: str = "#0e0e0e"        # derived from accent; updated at runtime
 
     # Fields that are code constants — never saved to or loaded from QSettings.
-    _NO_PERSIST = frozenset({"border_width", "border_color", "font_size_primary", "font_size_secondary"})
+    _NO_PERSIST = frozenset({"border_width", "border_color",
+                             "font_size_primary", "font_size_secondary",
+                             "font_color_primary", "font_color_secondary"})
 
     # ── Serialisation ────────────────────────────────────────────────────────
     def to_json(self) -> str:

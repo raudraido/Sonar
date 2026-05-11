@@ -2291,10 +2291,12 @@ class ArtistRichDetailView(QWidget):
             self.set_header_image(pixmap)
 
 class ArtistModel(QAbstractListModel):
-    NAME_ROLE      = Qt.ItemDataRole.UserRole + 1
-    COVER_ID_ROLE  = Qt.ItemDataRole.UserRole + 2
-    RAW_DATA_ROLE  = Qt.ItemDataRole.UserRole + 3
-    IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 4
+    NAME_ROLE        = Qt.ItemDataRole.UserRole + 1
+    COVER_ID_ROLE    = Qt.ItemDataRole.UserRole + 2
+    RAW_DATA_ROLE    = Qt.ItemDataRole.UserRole + 3
+    IS_LOADING_ROLE  = Qt.ItemDataRole.UserRole + 4
+    ALBUM_COUNT_ROLE = Qt.ItemDataRole.UserRole + 5
+    SONG_COUNT_ROLE  = Qt.ItemDataRole.UserRole + 6
 
     def __init__(self):
         super().__init__()
@@ -2306,18 +2308,22 @@ class ArtistModel(QAbstractListModel):
     def data(self, index, role):
         if not index.isValid(): return None
         a = self.artists[index.row()]
-        if role == self.NAME_ROLE:      return a.get('name') or a.get('artist') or 'Unknown'
-        if role == self.COVER_ID_ROLE:  return a.get('coverId_forced') or a.get('cover_id') or ''
-        if role == self.RAW_DATA_ROLE:  return a
-        if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
+        if role == self.NAME_ROLE:        return a.get('name') or a.get('artist') or 'Unknown'
+        if role == self.COVER_ID_ROLE:    return a.get('coverId_forced') or a.get('cover_id') or ''
+        if role == self.RAW_DATA_ROLE:    return a
+        if role == self.IS_LOADING_ROLE:  return a.get('type') == 'placeholder'
+        if role == self.ALBUM_COUNT_ROLE: return int(a.get('albumCount') or 0)
+        if role == self.SONG_COUNT_ROLE:  return int(a.get('songCount') or 0)
         return None
 
     def roleNames(self):
         return {
-            self.NAME_ROLE:      b"artistName",
-            self.COVER_ID_ROLE:  b"coverId",
-            self.RAW_DATA_ROLE:  b"rawData",
-            self.IS_LOADING_ROLE: b"isLoading",
+            self.NAME_ROLE:        b"artistName",
+            self.COVER_ID_ROLE:    b"coverId",
+            self.RAW_DATA_ROLE:    b"rawData",
+            self.IS_LOADING_ROLE:  b"isLoading",
+            self.ALBUM_COUNT_ROLE: b"albumCount",
+            self.SONG_COUNT_ROLE:  b"songCount",
         }
 
     def append_artists(self, new_artists):
@@ -2344,10 +2350,14 @@ class ArtistGridBridge(QObject):
     itemClicked         = pyqtSignal(dict)
     playClicked         = pyqtSignal(dict)
     visibleRangeChanged = pyqtSignal(int, int)
-    accentColorChanged  = pyqtSignal(str)
-    bgAlphaChanged      = pyqtSignal(float)
-    cancelScroll        = pyqtSignal()
-    scrollBy            = pyqtSignal(float)
+    accentColorChanged        = pyqtSignal(str)
+    bgAlphaChanged            = pyqtSignal(float)
+    cancelScroll              = pyqtSignal()
+    scrollBy                  = pyqtSignal(float)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
 
     def __init__(self, artist_model):
         super().__init__()
@@ -2458,7 +2468,7 @@ class ArtistGridBrowser(QWidget):
         header_layout.setSpacing(15)
         
         self.status_label = QLabel(f"Loading artists...")
-        self.status_label.setStyleSheet("color: #888; font-weight: bold; background: transparent; border: none;")
+        self.status_label.setStyleSheet("color: #aaaaaa; font-weight: bold; background: transparent; border: none;")
 
         # --- SMART SEARCH CONTAINER ---
         self.search_container = SmartSearchContainer(placeholder="Search artists...")
@@ -2510,6 +2520,15 @@ class ArtistGridBrowser(QWidget):
             engine.addImageProvider("artistcovers", self.cover_provider)
 
         self.qml_view.setSource(QUrl.fromLocalFile(resource_path("artist_grid.qml")))
+        from PyQt6.QtCore import QTimer as _QTimer
+        def _emit_initial_typography():
+            theme = getattr(self.window(), 'theme', None)
+            if theme and hasattr(self, 'grid_bridge'):
+                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+        _QTimer.singleShot(0, _emit_initial_typography)
 
         self.grid_view = self.qml_view  # keep alias so existing code doesn't break
         self.stack.addWidget(self.grid_view)
@@ -2862,7 +2881,7 @@ class ArtistGridBrowser(QWidget):
             return
 
         total_count = self.true_server_count
-        self.status_label.setText(f"{total_count:,} artists")
+        self.status_label.setText(f"{total_count:,} artists".replace(",", " "))
         
         # 4. Inject Placeholders
         if total_count > 0:
@@ -2924,7 +2943,8 @@ class ArtistGridBrowser(QWidget):
                 self.artist_model.index(start_row, 0),
                 self.artist_model.index(start_row + items_written - 1, 0),
                 [self.artist_model.NAME_ROLE, self.artist_model.COVER_ID_ROLE,
-                 self.artist_model.IS_LOADING_ROLE]
+                 self.artist_model.IS_LOADING_ROLE, self.artist_model.ALBUM_COUNT_ROLE,
+                 self.artist_model.SONG_COUNT_ROLE]
             )
 
         if hasattr(self, 'cover_worker') and self.cover_worker:
@@ -3139,9 +3159,23 @@ class ArtistGridBrowser(QWidget):
 
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
 
+        if hasattr(self, 'status_label'):
+            _theme = getattr(self.window(), 'theme', None)
+            _sec_color = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+            _pri_size  = getattr(_theme, 'font_size_primary', 14) if _theme else 14
+            self.status_label.setStyleSheet(
+                f"color: {_sec_color}; font-size: {_pri_size}px; font-weight: bold; background: transparent; border: none;"
+            )
+
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
             self.grid_bridge.bgAlphaChanged.emit(1.0)
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
 
         self.detail_view.set_accent_color(color)
         self.artist_view.set_accent_color(color)

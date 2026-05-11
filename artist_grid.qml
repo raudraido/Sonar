@@ -23,6 +23,10 @@ Rectangle {
 
     property string accentColor: "#1db954"
     property bool isScrollActive: false
+    property int    fontSizePrimary:    13
+    property int    fontSizeSecondary:  12
+    property string fontColorPrimary:   "#eeeeee"
+    property string fontColorSecondary: "#aaaaaa"
 
     Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
@@ -30,6 +34,10 @@ Rectangle {
         target: artistBridge
         function onAccentColorChanged(color) { root.accentColor = color }
         function onBgAlphaChanged(alpha) { root.bgAlpha = alpha }
+        function onFontSizePrimaryChanged(size)    { root.fontSizePrimary = size }
+        function onFontSizeSecondaryChanged(size)  { root.fontSizeSecondary = size }
+        function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
+        function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
 
         // 👇 🟢 CATCH THE KILL SIGNAL FROM PYTHON
         function onCancelScroll() {
@@ -124,7 +132,7 @@ Rectangle {
         property real widthPerItem: availableWidth / itemsPerRow
 
         cellWidth: widthPerItem
-        cellHeight: widthPerItem + 50
+        cellHeight: widthPerItem + 80
 
         model: artistModel
         clip: true
@@ -242,20 +250,39 @@ Rectangle {
                     }
                 }
 
-                // Artist name below the cover
-                Text {
+                Column {
                     visible: !isLoading
                     z: 2
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8
                     anchors.left: parent.left
                     anchors.right: parent.right
+                    spacing: 2
 
-                    text: artistName
-                    color: cardRoot.isHovered ? root.accentColor : "#eee"
-                    font.pixelSize: 13
-                    font.bold: true
-                    elide: Text.ElideRight
+                    Text {
+                        width: parent.width
+                        text: artistName
+                        color: cardRoot.isHovered ? root.accentColor : root.fontColorPrimary
+                        font.pixelSize: root.fontSizePrimary
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        width: parent.width
+                        text: albumCount + " albums"
+                        color: root.fontColorSecondary
+                        font.pixelSize: root.fontSizeSecondary
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        width: parent.width
+                        text: songCount > 0 ? (songCount + " tracks") : ""
+                        color: root.fontColorSecondary
+                        font.pixelSize: root.fontSizeSecondary
+                        elide: Text.ElideRight
+                    }
                 }
 
                 MouseArea {

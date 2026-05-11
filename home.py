@@ -556,7 +556,7 @@ class HomeAlbumRowWidget(QWidget):
         cw = self._cell_w()
         if cw <= 0:
             return
-        ch  = cw + 50
+        ch  = cw + 70
         lw  = self.list_widget
         w   = self._carousel.width() or cw * self._n_cols
 

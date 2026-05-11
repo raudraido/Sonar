@@ -80,6 +80,10 @@ class GridBridge(QObject):
     visibleRangeChanged = pyqtSignal(int, int)
     accentColorChanged = pyqtSignal(str)
     bgAlphaChanged = pyqtSignal(float)
+    fontSizePrimaryChanged   = pyqtSignal(int)
+    fontSizeSecondaryChanged = pyqtSignal(int)
+    fontColorPrimaryChanged  = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
     indexChanged = pyqtSignal(int)
@@ -557,6 +561,27 @@ class GridItemDelegate(QStyledItemDelegate):
     def set_master_color(self, color):
         self.master_color = QColor(color)
 
+    def _theme(self):
+        p = self.parent()
+        w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+
+    def _primary_px(self):
+        t = self._theme()
+        return getattr(t, 'font_size_primary', 14) if t else 14
+
+    def _secondary_px(self):
+        t = self._theme()
+        return getattr(t, 'font_size_secondary', 12) if t else 12
+
+    def _primary_color(self):
+        t = self._theme()
+        return getattr(t, 'font_color_primary', '#eeeeee') if t else '#eeeeee'
+
+    def _secondary_color(self):
+        t = self._theme()
+        return getattr(t, 'font_color_secondary', '#cccccc') if t else '#cccccc'
+
     def set_hovered_artist_row(self, row):
         self.hovered_artist_row = row
 
@@ -677,36 +702,37 @@ class GridItemDelegate(QStyledItemDelegate):
             text_x     = rect.x() + 10
             current_y  = icon_rect.bottom() + 10
 
-            # Title: interpolate #eee → accent colour (instant in QML, smooth here)
-            mc = self.master_color
-            r  = int(238 + (mc.red()   - 238) * hover_p)
-            g  = int(238 + (mc.green() - 238) * hover_p)
-            b  = int(238 + (mc.blue()  - 238) * hover_p)
+            # Title: interpolate primary color → accent on hover
+            mc  = self.master_color
+            pc  = QColor(self._primary_color())
+            r   = int(pc.red()   + (mc.red()   - pc.red())   * hover_p)
+            g   = int(pc.green() + (mc.green() - pc.green()) * hover_p)
+            b   = int(pc.blue()  + (mc.blue()  - pc.blue())  * hover_p)
             painter.setPen(QColor(r, g, b))
-            font = painter.font(); font.setBold(True); font.setPointSize(10); painter.setFont(font)
+            font = painter.font(); font.setBold(True); font.setPixelSize(self._primary_px()); painter.setFont(font)
             fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, 20),
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
                              Qt.AlignmentFlag.AlignLeft,
                              fm.elidedText(title, Qt.TextElideMode.ElideRight, text_width))
 
-            current_y += 20
-            font.setBold(False); font.setPointSize(9)
+            current_y += fm.height() + 2
+            font.setBold(False); font.setPixelSize(self._secondary_px())
             artist_hovered = (index.row() == self.hovered_artist_row)
             if artist_hovered:
                 font.setUnderline(True)
                 painter.setPen(QColor(self.master_color))
             else:
                 font.setUnderline(False)
-                painter.setPen(QColor("#cccccc"))
+                painter.setPen(QColor(self._secondary_color()))
             painter.setFont(font); fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, 20),
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
                              Qt.AlignmentFlag.AlignLeft,
                              fm.elidedText(artist, Qt.TextElideMode.ElideRight, text_width))
             font.setUnderline(False); painter.setFont(font)
-            
-            current_y += 18
-            painter.setPen(QColor("#999999"))
-            painter.drawText(QRect(text_x, current_y, text_width, 20), Qt.AlignmentFlag.AlignLeft, fm.elidedText(year, Qt.TextElideMode.ElideRight, text_width))
+
+            current_y += fm.height() + 2
+            painter.setPen(QColor(self._secondary_color()))
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()), Qt.AlignmentFlag.AlignLeft, fm.elidedText(year, Qt.TextElideMode.ElideRight, text_width))
 
         painter.restore()
 
@@ -910,6 +936,16 @@ class _TrackListDelegate(QStyledItemDelegate):
         _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
         return getattr(_theme, 'font_size_primary', self.font_size) if _theme else self.font_size
 
+    def _primary_color(self) -> str:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd'
+
+    def _secondary_color(self) -> str:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+
     def set_movie(self, movie):
         self._movie = movie
 
@@ -988,14 +1024,14 @@ class _TrackListDelegate(QStyledItemDelegate):
                 if ax + pw > right_edge:
                     if available > 0:
                         elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
-                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor('#dddddd')))
+                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor(self._primary_color())))
                         painter.drawText(ax, ay + fm.ascent() // 2, elided)
                     break
                 hovered = (not is_sep and self._hover_artist == (row, part.strip()))
                 if is_sep:
                     painter.setPen(QColor(120, 120, 120))
                 else:
-                    painter.setPen(self.accent if row == self.playing_row else QColor('#dddddd'))
+                    painter.setPen(self.accent if row == self.playing_row else QColor(self._primary_color()))
                 painter.drawText(ax, ay + fm.ascent() // 2, part)
                 if hovered:
                     painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
@@ -1011,7 +1047,7 @@ class _TrackListDelegate(QStyledItemDelegate):
             fm = QFontMetrics(f)
             painter.save()
             painter.setFont(f)
-            painter.setPen(QColor(index.data(Qt.ItemDataRole.ForegroundRole)) if index.data(Qt.ItemDataRole.ForegroundRole) else QColor('#dddddd'))
+            painter.setPen(QColor(index.data(Qt.ItemDataRole.ForegroundRole)) if index.data(Qt.ItemDataRole.ForegroundRole) else QColor(self._primary_color()))
             x = draw_rect.left() + 4
             y = draw_rect.center().y() + fm.ascent() // 2
             painter.drawText(x, y, fm.elidedText(text, Qt.TextElideMode.ElideRight, draw_rect.width() - 8))
@@ -1025,6 +1061,10 @@ class _TrackListDelegate(QStyledItemDelegate):
         f = QFont(opt.font)
         f.setPixelSize(self._primary_px())
         opt.font = f
+        from PyQt6.QtGui import QPalette
+        pal = QPalette(opt.palette)
+        pal.setColor(QPalette.ColorRole.Text, QColor(self._primary_color()))
+        opt.palette = pal
         super().paint(painter, opt, index)
 
 
@@ -1669,8 +1709,9 @@ class AlbumDetailView(QWidget):
                 self._track_delegate.set_font_size(theme.font_size_primary)
         if hasattr(self, 'lbl_meta'):
             theme = getattr(self.window(), 'theme', None)
-            sec = getattr(theme, 'font_size_secondary', 12) if theme else 12
-            self.lbl_meta.setStyleSheet(f"color: #aaa; font-weight: bold; font-size: {sec}px;")
+            sec_size = getattr(theme, 'font_size_secondary', 12) if theme else 12
+            sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
+            self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
@@ -2056,7 +2097,7 @@ class LibraryGridBrowser(QWidget):
         header_layout.setSpacing(15)
         
         self.status_label = QLabel(f"Loading albums...")
-        self.status_label.setStyleSheet("color: #888; font-weight: bold; background: transparent; border: none;")
+        self.status_label.setStyleSheet("color: #aaaaaa; font-weight: bold; background: transparent; border: none;")
         
         
         self.sort_states = {
@@ -2133,6 +2174,16 @@ class LibraryGridBrowser(QWidget):
             engine.addImageProvider("covers", self.cover_provider)
             
         self.qml_view.setSource(QUrl.fromLocalFile(resource_path("album_grid.qml")))
+        # Push initial theme typography values to QML immediately
+        from PyQt6.QtCore import QTimer as _QTimer
+        def _emit_initial_typography():
+            theme = getattr(self.window(), 'theme', None)
+            if theme and hasattr(self, 'grid_bridge'):
+                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+        _QTimer.singleShot(0, _emit_initial_typography)
         
         self.grid_view = self.qml_view 
         self.stack.addWidget(self.grid_view)
@@ -2448,7 +2499,7 @@ class LibraryGridBrowser(QWidget):
         tc = total_count if total_count is not None else 0
         display_count = tc if tc > 0 else len(albums)
         
-        self.status_label.setText(f"{display_count:,} albums")
+        self.status_label.setText(f"{display_count:,} albums".replace(",", " "))
         self.populate_grid(albums)
         
         if hasattr(self, 'qml_view') and self.isVisible():
@@ -2461,7 +2512,7 @@ class LibraryGridBrowser(QWidget):
         if not albums:
             self.status_label.setText("0 albums")
             return
-        self.status_label.setText(f"{len(albums):,} albums")
+        self.status_label.setText(f"{len(albums):,} albums".replace(",", " "))
         self.populate_grid(albums)
         if hasattr(self, 'qml_view') and self.isVisible():
             search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
@@ -2641,7 +2692,21 @@ class LibraryGridBrowser(QWidget):
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
             self.grid_bridge.bgAlphaChanged.emit(1.0)
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
             
+        if hasattr(self, 'status_label'):
+            _theme = getattr(self.window(), 'theme', None)
+            _sec_color = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+            _pri_size  = getattr(_theme, 'font_size_primary', 14) if _theme else 14
+            self.status_label.setStyleSheet(
+                f"color: {_sec_color}; font-size: {_pri_size}px; font-weight: bold; background: transparent; border: none;"
+            )
+
         # Update the detail view behind the scenes
         if hasattr(self, 'detail_view'):
             self.detail_view.set_accent_color(color)
@@ -2778,7 +2843,7 @@ class LibraryGridBrowser(QWidget):
             return
         self.all_albums_cache = albums
         self.all_albums_sort = cache_key
-        self.status_label.setText(f"{len(albums):,} albums")
+        self.status_label.setText(f"{len(albums):,} albums".replace(",", " "))
         # Reset model to sorted placeholders then fill in chunks
         placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(len(albums))]
         self.album_model.clear()
@@ -2869,7 +2934,7 @@ class LibraryGridBrowser(QWidget):
             return
 
         if self.true_server_count > 0:
-            self.status_label.setText(f"{self.true_server_count:,} albums")
+            self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
             placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
             self.album_model.clear()
             self.album_model.append_albums(placeholders)
@@ -2946,7 +3011,7 @@ class LibraryGridBrowser(QWidget):
         
         # Only update the base label if we are NOT currently searching
         if not getattr(self, 'current_query', ''):
-            self.status_label.setText(f"{self.true_server_count:,} albums")
+            self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
             
         # If we are in descending mode but had 0 items when we loaded, trigger a reload now that we have the count!
         is_ascending = self.sort_states.get(getattr(self, 'current_sort', 'latest'), True)
