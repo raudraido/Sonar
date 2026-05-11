@@ -784,7 +784,7 @@ class PlaybackMixin:
             try: self.current_index = self.playlist_data.index(playing_track)
             except ValueError: self.current_index = -1
         if self.current_index == -1 and playing_track: self.audio_engine.stop()
-        self.setWindowTitle(f"Icoshahedron {__version__}")
+        self.setWindowTitle(f"Icosahedron {__version__}")
         for i in range(self.tree.topLevelItemCount()): self.tree.topLevelItem(i).setText(0, str(i + 1))
         self.refresh_ui_styles()
         self.update_indicator()

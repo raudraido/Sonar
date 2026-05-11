@@ -266,7 +266,7 @@ def generate_ico():
 
 def build():
     entry_point = "main.py"
-    app_name    = "Icoshahedron"
+    app_name    = "Icosahedron"
     current_os  = platform.system()
 
     # 1. Auto-detect and install missing dependencies

@@ -63,7 +63,7 @@ class SubsonicClient:
         self.username = username
         self.password = password
         self.api_version = "1.30.0"
-        self.client_name = "Icoshahedron"
+        self.client_name = "Icosahedron"
         self._api_cache = LRUCache(max_size=20)
         self._artists_cache = None
         self._scan_status_cache = None

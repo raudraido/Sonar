@@ -80,11 +80,11 @@ if __name__ == '__main__':
     app.setFont(_font)
 
     # REQUIRED: Tells QSettings exactly where to save your data in the OS
-    app.setApplicationName("Icoshahedron")
-    app.setOrganizationName("Icoshahedron")
+    app.setApplicationName("Icosahedron")
+    app.setOrganizationName("Icosahedron")
     _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     app.setWindowIcon(QIcon(os.path.join(_base, "img", "icon.png")))
-    app.setDesktopFileName("Icoshahedron")
+    app.setDesktopFileName("Icosahedron")
     
     settings = QSettings()
     
@@ -93,7 +93,7 @@ if __name__ == '__main__':
     user = settings.value("navidrome/username", "")
     
     # 🟢 Fetch the password securely from the OS Keyring
-    password = keyring.get_password("Icoshahedron", user) if user else None
+    password = keyring.get_password("Icosahedron", user) if user else None
     
     client = None
     
@@ -138,11 +138,11 @@ if __name__ == '__main__':
                     if dialog.remember_cb.isChecked():
                         settings.setValue("navidrome/url", url)
                         settings.setValue("navidrome/username", user)
-                        keyring.set_password("Icoshahedron", user, password)
+                        keyring.set_password("Icosahedron", user, password)
                     else:
                         settings.remove("navidrome/url")
                         settings.remove("navidrome/username")
-                        try: keyring.delete_password("Icoshahedron", user)
+                        try: keyring.delete_password("Icosahedron", user)
                         except keyring.errors.PasswordDeleteError: pass
                         
                     break # Success! Break the loop and launch the app

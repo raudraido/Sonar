@@ -81,7 +81,7 @@ class AudioVisualizer(QWidget):
         self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
         self._raw_vis_data = []
         self._vu_debug_frame = 0
-        _s = QSettings("Icoshahedron", "Visualizer")
+        _s = QSettings("Icosahedron", "Visualizer")
         self._vu_ref_level = int(_s.value("vu_ref_level", -10))
 
         self.num_bars = NUM_BARS
@@ -354,7 +354,7 @@ class AudioVisualizer(QWidget):
         if new_val != self._vu_ref_level:
             self._vu_ref_level = new_val
             self._update_ref_btn_text()
-            QSettings("Icoshahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+            QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
         event.accept()
 
     def _init_ref_opacity_effect(self):
@@ -379,7 +379,7 @@ class AudioVisualizer(QWidget):
     def _reset_ref_level(self):
         self._vu_ref_level = -10
         self._update_ref_btn_text()
-        QSettings("Icoshahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+        QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
 
     # ── Data processing ───────────────────────────────────────────────────────
 

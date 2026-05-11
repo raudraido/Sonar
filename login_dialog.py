@@ -199,7 +199,7 @@ class LoginDialog(QDialog):
             
         if saved_user:
             self.user_input.setText(saved_user)
-            saved_pass = keyring.get_password("Icoshahedron", saved_user)
+            saved_pass = keyring.get_password("Icosahedron", saved_user)
             if saved_pass:
                 self.pass_input.setText(saved_pass)
                 self.remember_cb.setChecked(True)

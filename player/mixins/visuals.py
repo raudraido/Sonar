@@ -576,7 +576,7 @@ class VisualsMixin:
             artist = track.get('artist', '')
             self.setWindowTitle(f"({status}) [{self.current_index + 1}/{len(self.playlist_data)}] {title} — {artist}")
         else:
-            self.setWindowTitle(f"Icoshahedron {__version__}")
+            self.setWindowTitle(f"Icosahedron {__version__}")
 
     def update_volume(self, value):
         """Optimized: Only updates audio engine and icon, skips full UI refresh."""
