@@ -126,7 +126,7 @@ class LoginDialog(QDialog):
         layout.addWidget(_icon_ctr, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(12)
 
-        title = QLabel("ICOSHAHEDRON")
+        title = QLabel("ICOSAHEDRON")
         title.setObjectName("Title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
