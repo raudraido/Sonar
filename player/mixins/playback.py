@@ -312,15 +312,29 @@ class PlaybackMixin:
 
             print(f"[TIMING] +{time.time() - t0:.3f}s | Request Sent to Manager")
 
+    def _rebuild_shuffle_queue(self):
+        """Shuffle all visible tracks except the current one; call when starting shuffle or queue exhausted."""
+        visible = self.get_visible_indices()
+        remaining = [i for i in visible if i != self.current_index]
+        random.shuffle(remaining)
+        self._shuffle_queue = remaining
+
+    def _next_shuffle_index(self, peek=False):
+        """Return the next index from the shuffle queue. Rebuilds when exhausted."""
+        visible = set(self.get_visible_indices())
+        # Prune entries that are no longer visible
+        self._shuffle_queue = [i for i in self._shuffle_queue if i in visible]
+        if not self._shuffle_queue:
+            self._rebuild_shuffle_queue()
+        if not self._shuffle_queue:
+            return self.current_index
+        return self._shuffle_queue[0] if peek else self._shuffle_queue.pop(0)
+
     def play_next(self):
         visible_indices = self.get_visible_indices()
         if not visible_indices: return
         if self.is_shuffle:
-            if len(visible_indices) > 1:
-                new_idx = self.current_index
-                while new_idx == self.current_index: new_idx = random.choice(visible_indices)
-            else:
-                new_idx = visible_indices[0]
+            new_idx = self._next_shuffle_index(peek=False)
         else:
             if self.current_index in visible_indices:
                 current_pos = visible_indices.index(self.current_index)
@@ -545,16 +559,7 @@ class PlaybackMixin:
             return self.current_index
 
         if self.is_shuffle:
-            # Shuffle logic might be the cause of "skipping" if it's random
-            # Ideally shuffle order should be pre-determined to be gapless-safe
-            if len(visible_indices) > 1:
-                # Simple random for now (risk of repeating)
-                new_idx = self.current_index
-                while new_idx == self.current_index: 
-                    new_idx = random.choice(visible_indices)
-                return new_idx
-            else: 
-                return visible_indices[0]
+            return self._next_shuffle_index(peek=True)
 
         # Sequential Logic
         if self.current_index in visible_indices:
@@ -570,8 +575,12 @@ class PlaybackMixin:
     def toggle_shuffle(self):
         self.is_shuffle = self.btn_shuffle.isChecked()
         self.btn_shuffle.setToolTip(f"Shuffle {'on' if self.is_shuffle else 'off'}")
+        if self.is_shuffle:
+            self._rebuild_shuffle_queue()
+        else:
+            self._shuffle_queue.clear()
         self.refresh_ui_styles()
-        self.preload_next() 
+        self.preload_next()
 
     def toggle_repeat(self):
         self.is_repeat = self.btn_repeat.isChecked()

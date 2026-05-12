@@ -249,6 +249,7 @@ class SonarPlayer(
         self._logging_out = False
 
         self.history = []
+        self._shuffle_queue = []
         self.temp_files = []
 
         self.settings = QSettings()
@@ -1149,6 +1150,7 @@ class SonarPlayer(
         self.playlist_data = clean
         self.current_index = new_current
         self.history.clear()
+        self._shuffle_queue.clear()
         self.tree.blockSignals(True)
         self.tree.clear()
         for i, track in enumerate(clean):
@@ -1183,6 +1185,7 @@ class SonarPlayer(
         if not (0 <= idx < len(self.playlist_data)):
             return
         self.history.clear()
+        self._shuffle_queue.clear()
         playing_track = (self.playlist_data[self.current_index]
                          if 0 <= self.current_index < len(self.playlist_data) else None)
         self.playlist_data.pop(idx)
