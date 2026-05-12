@@ -609,6 +609,9 @@ class TrackInfoDialog(QDialog):
         theme = getattr(main_win, 'theme', None)
         bg = getattr(theme, 'main_panel_bg', '17,17,17')
         bc = getattr(theme, 'border_color', '#2a2a2a')
+        self._fs_primary  = getattr(theme, 'font_size_primary',   14)
+        self._fc_primary  = getattr(theme, 'font_color_primary',  '#dddddd')
+        self._fc_secondary = getattr(theme, 'font_color_secondary', '#999999')
         self.bg = QFrame()
         self.bg.setObjectName("trackInfoBg")
         self.bg.setStyleSheet(f"""
@@ -735,7 +738,7 @@ class TrackInfoDialog(QDialog):
 
             lbl = QLabel(label)
             lbl.setFixedWidth(110)
-            lbl.setStyleSheet("color: #666; font-size: 13px; background: transparent;")
+            lbl.setStyleSheet(f"color: {self._fc_secondary}; font-size: {self._fs_primary}px; background: transparent;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             lay.addWidget(lbl)
 
@@ -755,7 +758,7 @@ class TrackInfoDialog(QDialog):
                 val_lbl = self._build_link_label(
                     names, separator=' • ',
                     callback=self.on_artist_click,
-                    fallback_style="color: #ddd; font-size: 13px; background: transparent;"
+                    fallback_style=f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;"
                 )
                 lay.addWidget(val_lbl, 1)
 
@@ -764,13 +767,13 @@ class TrackInfoDialog(QDialog):
                 val_lbl = self._build_link_label(
                     album_name, separator=None,
                     callback=self.on_album_click,
-                    fallback_style="color: #ddd; font-size: 13px; background: transparent;"
+                    fallback_style=f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;"
                 )
                 lay.addWidget(val_lbl, 1)
 
             else:
                 val_lbl = QLabel(value or '—')
-                val_lbl.setStyleSheet("color: #ddd; font-size: 13px; background: transparent;")
+                val_lbl.setStyleSheet(f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;")
                 val_lbl.setWordWrap(True)
                 val_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 val_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -873,7 +876,7 @@ class TrackInfoDialog(QDialog):
         left_lay.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         lbl_header = QLabel("Path")
-        lbl_header.setStyleSheet("color: #666; font-size: 13px; background: transparent;")
+        lbl_header.setStyleSheet(f"color: {self._fc_secondary}; font-size: {self._fs_primary}px; background: transparent;")
         left_lay.addWidget(lbl_header)
 
         icons_row = QHBoxLayout()
@@ -898,7 +901,7 @@ class TrackInfoDialog(QDialog):
 
         # Right column: path text, word-wrapped, aligned with other values
         self._path_lbl = QLabel(path or '—')
-        self._path_lbl.setStyleSheet("color: #ddd; font-size: 13px; background: transparent;")
+        self._path_lbl.setStyleSheet(f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;")
         self._path_lbl.setWordWrap(True)
         self._path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._path_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)

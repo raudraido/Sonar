@@ -754,8 +754,8 @@ class NowPlayingPanel(QWidget):
             menu.addSeparator()
             info_action = QAction("Get Info", menu)
             first_track = tracks[0]
-            accent = getattr(self, '_current_accent', '#1DB954')
             mw = self.main_window
+            accent = getattr(getattr(mw, 'theme', None), 'accent', None) or getattr(self, '_current_accent', '#1DB954')
             album_data = {
                 'id': first_track.get('albumId'),
                 'title': first_track.get('album', ''),

@@ -2112,15 +2112,15 @@ class TracksBrowser(QWidget):
         self.tree.setMouseTracking(True)
 
         self.tree.header().setSectionsMovable(True)
-        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setStretchLastSection(True)
         self.tree.header().setSectionsClickable(False)
         self.tree.header().setSortIndicatorShown(True)
         self.tree.header().setSortIndicator(self.sort_col, self.sort_order)
 
         # Col 0 (#): auto-size to fit content
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        # Col 1 (TRACK): stretch — fills remaining space automatically
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Col 1 (TRACK): interactive — user controls its width
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         # Cols 2-12: freely interactive
         for i in range(2, 13):
             self.tree.header().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
@@ -2903,7 +2903,7 @@ class TracksBrowser(QWidget):
         for i in range(13):
             state[str(i)] = {
                 'hidden': self.tree.isColumnHidden(i),
-                'width': self._saved_widths.get(i, self.tree.columnWidth(i)) if i != 1 else 0,
+                'width': self._saved_widths.get(i, self.tree.columnWidth(i)),
                 'visual': hdr.visualIndex(i),
             }
         try:
@@ -2925,7 +2925,7 @@ class TracksBrowser(QWidget):
                     if isinstance(val, dict):
                         self.tree.setColumnHidden(col_idx, val.get('hidden', False))
                         w = val.get('width', 0)
-                        if w > 0 and col_idx != 1:  # col 1 is Stretch — skip width restore
+                        if w > 0:
                             hdr.resizeSection(col_idx, w)
                             self._saved_widths[col_idx] = w
                     else:
@@ -2977,43 +2977,76 @@ class TracksBrowser(QWidget):
                 return i
         return -1
 
+    def _stretch_last_col(self):
+        """Return the logical index of the rightmost visible non-# column (Qt's stretch target)."""
+        hdr = self.tree.header()
+        for vi in range(hdr.count() - 1, -1, -1):
+            lc = hdr.logicalIndex(vi)
+            if lc != 0 and not self.tree.isColumnHidden(lc):
+                return lc
+        return None
+
     def _on_section_resized(self, logical_index, old_size, new_size):
-        """Enforce minimum widths while dragging, then persist the new size."""
+        """Enforce minimums; protect the stretch (last) column from collapsing."""
         if getattr(self, '_col_resize_guard', False): return
         if getattr(self, 'is_album_mode', False): return
-        if logical_index == 1: return  # stretch col — Qt manages it
         if logical_index not in self.col_min_widths: return
         if self.tree.isColumnHidden(logical_index): return
+
+        last_col = self._stretch_last_col()
+        # Qt manages the stretch column — don't touch it or save its width
+        if logical_index == last_col:
+            return
+
         min_w = self.col_min_widths[logical_index]
-        if new_size < min_w:
+        clamped = max(min_w, new_size)
+
+        # Cap so the stretch column retains its own minimum
+        if last_col is not None:
+            viewport_w = self.tree.viewport().width()
+            col0_w = self.tree.columnWidth(0)
+            last_min = self.col_min_widths.get(last_col, 60)
+            others = sum(
+                self.tree.columnWidth(c)
+                for c in range(1, 13)
+                if c != last_col and c != logical_index and not self.tree.isColumnHidden(c)
+            )
+            max_w = max(min_w, viewport_w - col0_w - last_min - others)
+            clamped = min(clamped, max_w)
+
+        if clamped != new_size:
             self._col_resize_guard = True
-            self.tree.header().resizeSection(logical_index, min_w)
+            self.tree.header().resizeSection(logical_index, clamped)
             self._col_resize_guard = False
-            new_size = min_w
+            new_size = clamped
+
         self._saved_widths[logical_index] = new_size
         self._col_save_timer.start()
 
     def _clamp_columns(self):
-        """Proportionally scale down interactive columns so their total fits the viewport."""
+        """Proportionally scale non-stretch columns to fit viewport on window shrink."""
         if getattr(self, 'is_album_mode', False): return
         viewport_w = self.tree.viewport().width()
         if viewport_w <= 0: return
 
-        visible = [c for c in range(2, 13) if not self.tree.isColumnHidden(c)]
+        last_col = self._stretch_last_col()
+        # Exclude col 0 (ResizeToContents) and last col (Qt's stretch target)
+        visible = [c for c in range(1, 13)
+                   if not self.tree.isColumnHidden(c) and c != last_col]
         if not visible: return
 
         col0_w = self.tree.columnWidth(0)
-        available = viewport_w - col0_w
+        last_min = self.col_min_widths.get(last_col, 60) if last_col is not None else 0
+        available = viewport_w - col0_w - last_min
         if available <= 0: return
 
         total = sum(self.tree.columnWidth(c) for c in visible)
-        if total <= available: return  # already fits
+        if total <= available: return
 
         self._col_resize_guard = True
         scale = available / total
         widths = {c: max(self.col_min_widths.get(c, 60), int(self.tree.columnWidth(c) * scale))
                   for c in visible}
-        # If minimums still overflow, just set everything to minimum
         if sum(widths.values()) > available:
             widths = {c: self.col_min_widths.get(c, 60) for c in visible}
         for col, w in widths.items():
@@ -3744,7 +3777,7 @@ class TracksBrowser(QWidget):
     def _show_track_info(self, track):
         client = getattr(self, 'client', None)
         win = self.window()
-        accent = getattr(win, 'master_color', None) or getattr(self, 'current_accent', '#1DB954')
+        accent = getattr(getattr(win, 'theme', None), 'accent', None) or getattr(win, 'master_color', None) or '#1DB954'
         bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
         tid = str(track.get('id', ''))
         detected_bpm = bpm_cache.get(tid)
