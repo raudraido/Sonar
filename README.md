@@ -2,7 +2,7 @@
   <img src="img/icon.png" width="120" alt="Sonar logo">
 </p>
 
-# Sonar Music Player
+# Icosahedron
 
 Keyboard warrior friendly desktop music player for self-hosted [Navidrome](https://www.navidrome.org/) servers (Subsonic-compatible API). Built with Python/PyQt6 and a custom C++ audio engine for gapless playback.
 
