@@ -812,7 +812,7 @@ class SmartSortHeader(QHeaderView):
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
 
-        centered_cols = {0, 5, 7, 9, 10, 11, 12}
+        centered_cols = {0, 5, 6, 7, 9, 10, 11, 12}
 
         # Pre-calculate icon visibility so text placement can account for it
         show_icon = logicalIndex != 0
@@ -1464,7 +1464,8 @@ class MultiGenreDelegate(QStyledItemDelegate):
 
         for line_idx, line_str in enumerate(display_lines):
             y = int(start_y + line_idx * line_spacing)
-            x = draw_rect.left()
+            line_w = fm.horizontalAdvance(line_str)
+            x = draw_rect.left() + max(0, (draw_rect.width() - line_w) // 2)
             for part in self.split_regex.split(line_str):
                 if not part:
                     continue
