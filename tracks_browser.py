@@ -812,7 +812,7 @@ class SmartSortHeader(QHeaderView):
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
 
-        centered_cols = {0, 5, 6, 7, 9, 10, 11, 12}
+        centered_cols = {0, 5, 6, 7, 8, 9, 10, 11, 12}
 
         # Pre-calculate icon visibility so text placement can account for it
         show_icon = logicalIndex != 0
@@ -2731,6 +2731,7 @@ class TracksBrowser(QWidget):
         try: plays = int(raw_plays)
         except: plays = 0
         item.setText(8, str(plays) if plays > 0 else "")
+        item.setTextAlignment(8, Qt.AlignmentFlag.AlignCenter)
         
         # 🟢 LENGTH COLUMN FIX: Safely handles both formatted strings ("3:45") and raw seconds
         raw_dur = t.get('duration', 0)
