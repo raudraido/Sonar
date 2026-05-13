@@ -1936,7 +1936,7 @@ class TracksBrowser(QWidget):
         super().__init__()
         self.client = client
         self.last_reload_time = time.time()
-        self._settings = QSettings("Sonar", "Sonar")
+        self._settings = QSettings("Icosahedron", "Icosahedron")
         self.sync_worker = None
         self.current_accent = "#0066cc" # Default, updated by set_accent_color
      

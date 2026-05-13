@@ -1,7 +1,7 @@
 """
-player/window.py — SonarPlayer main window.
+player/window.py — IcosahedronPlayer main window.
 
-SonarPlayer composes all behaviour from five focused mixins.
+IcosahedronPlayer composes all behaviour from five focused mixins.
 Only __init__ and init_ui live here; everything else is in
 player/mixins/*.py.
 """
@@ -338,9 +338,7 @@ class SonarPlayer(
                     self.update_background_threaded(track_for_bg['path'])
                     started_bg = True
 
-            # 4. Ultimate Fallback if settings are empty — stay dark until real art loads
-            if not started_bg:
-                self.bg_label.setStyleSheet("background-color: #080808;")
+            # 4. No fallback needed — window is already dark from default styles
 
         except Exception as e:
             print(f"Startup restore error: {e}")

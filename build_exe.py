@@ -366,7 +366,7 @@ def build():
         '--hidden-import=pyatv.protocols.mrp',
     ] + added_data
 
-    # Generate icon.ico from the Sonar design (Windows requires .ico)
+    # Generate icon.ico from the Icosahedron design (Windows requires .ico)
     print("\n--- Generating App Icon ---")
     if current_os == "Windows":
         generate_ico()

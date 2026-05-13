@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="img/icon.png" width="120" alt="Sonar logo">
+  <img src="img/icon.png" width="120" alt="Icosahedron logo">
 </p>
 
 # Icosahedron
@@ -147,17 +147,17 @@ Pull requests are welcome. Please open an issue first for anything larger than a
 
 ## License
 
-Sonar is free software released under the **GNU General Public License v3.0**.  
+Icosahedron is free software released under the **GNU General Public License v3.0**.  
 See [LICENSE](LICENSE) for the full license text.
 
-This means you are free to use, study, modify, and distribute Sonar, provided
+This means you are free to use, study, modify, and distribute Icosahedron, provided
 that any distributed version (modified or not) is also released under the GPL-3.0.
 
 ---
 
 ## Third-Party Acknowledgements
 
-Sonar is built on the shoulders of several excellent open-source libraries.  
+Icosahedron is built on the shoulders of several excellent open-source libraries.  
 See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full list of
 dependencies and their respective copyright notices and licenses.
 

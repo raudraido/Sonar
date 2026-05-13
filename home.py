@@ -962,10 +962,10 @@ class HomeView(QWidget):
         key_map = {self.recent_row: 'recent', self.random_row: 'random',
                    self.most_played_row: 'most_played'}
         order = ','.join(key_map[r] for r in self._row_order)
-        QSettings("Sonar", "Sonar").setValue('home_row_order', order)
+        QSettings("Icosahedron", "Icosahedron").setValue('home_row_order', order)
 
     def _load_row_order(self):
-        saved = QSettings("Sonar", "Sonar").value('home_row_order', '')
+        saved = QSettings("Icosahedron", "Icosahedron").value('home_row_order', '')
         key_map = {'recent': self.recent_row, 'random': self.random_row,
                    'most_played': self.most_played_row}
         if saved:

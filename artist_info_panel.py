@@ -66,7 +66,7 @@ class _BandsintownWorker(QThread):
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            req = urllib.request.Request(url, headers={"User-Agent": "Sonar/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Icosahedron/1.0"})
             with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
                 raw = r.read().decode()
             print(f"[BIT] {self._name} → {raw[:200]}")
@@ -96,7 +96,7 @@ class _ImageWorker(QThread):
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            req = urllib.request.Request(self._url, headers={"User-Agent": "Sonar/1.0"})
+            req = urllib.request.Request(self._url, headers={"User-Agent": "Icosahedron/1.0"})
             with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
                 data = r.read()
             pix = QPixmap()

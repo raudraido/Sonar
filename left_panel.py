@@ -1,5 +1,5 @@
 """
-left_panel.py — LeftPanel widget for SonarPlayer.
+left_panel.py — LeftPanel widget for Icosahedron.
 
 Contains the visualizer section, album-art section, and the top header that
 mirrors the queue panel header for visual alignment.

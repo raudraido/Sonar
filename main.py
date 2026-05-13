@@ -1,5 +1,5 @@
 """
-main.py — Application entry point for Sonar Music Player.
+main.py — Application entry point for Icosahedron Music Player.
 
 Handles login, credential management, and launches the main window.
 All application logic lives in the player/ package.
@@ -51,7 +51,7 @@ def _background_preload():
     except Exception:
         pass
 
-    # 3. Read the BPM cache JSON into the module so SonarPlayer can skip the
+    # 3. Read the BPM cache JSON into the module so IcosahedronPlayer can skip the
     #    file read entirely.
     try:
         import player.mixins.playback as _pb

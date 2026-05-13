@@ -507,7 +507,7 @@ class NowPlayingPanel(QWidget):
 
     def load_column_state(self):
         try:
-            settings = QSettings("Sonar", "Sonar")
+            settings = QSettings("Icosahedron", "Icosahedron")
             raw = settings.value('now_playing_columns_hidden')
             if raw:
                 state = json.loads(raw)
@@ -532,7 +532,7 @@ class NowPlayingPanel(QWidget):
                           'width': self.tree.columnWidth(i)}
                  for i in range(NUM_COLS)}
         try:
-            settings = QSettings("Sonar", "Sonar")
+            settings = QSettings("Icosahedron", "Icosahedron")
             settings.setValue('now_playing_columns_hidden', json.dumps(state))
         except Exception: pass
 

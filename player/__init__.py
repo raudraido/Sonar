@@ -1,11 +1,11 @@
 """
-player — Core application package for Sonar Music Player.
+player — Core application package for Icosahedron Music Player.
 
 Submodules
 ----------
 player.workers  — Background QThread workers (BPM, blur, cover art, etc.)
 player.widgets  — Custom Qt widgets (sliders, tooltips, settings window, etc.)
-player.window   — SonarPlayer main window (composes the mixins below)
+player.window   — IcosahedronPlayer main window (composes the mixins below)
 
 player.mixins.playback    — Transport, queue management, BPM, drag/drop
 player.mixins.navigation  — Tab routing, back/forward, spotlight

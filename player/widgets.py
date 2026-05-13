@@ -2,7 +2,7 @@
 player/widgets.py — Reusable custom Qt widgets.
 
 These are self-contained UI components with no dependency on
-the main SonarPlayer window (except SettingsWindow which takes a
+the main IcosahedronPlayer window (except SettingsWindow which takes a
 parent reference so it can write back to visual_settings).
 """
 import os

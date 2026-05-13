@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-build_appimage.py — Builds a single portable Linux binary for Sonar.
+build_appimage.py — Builds a single portable Linux binary for Icosahedron.
 
 Uses PyInstaller --onefile which self-extracts to /tmp at runtime.
 No FUSE, no AppImage tooling, no _internal/ folder — just one file.
 
-Output: dist/Sonar  (run it anywhere on Linux x86_64)
+Output: dist/Icosahedron  (run it anywhere on Linux x86_64)
 """
 import os
 import sys
@@ -126,9 +126,9 @@ Icon={dst_icon}
 Type=Application
 Categories=Audio;Music;Player;
 Terminal=false
-StartupWMClass=Sonar
+StartupWMClass=Icosahedron
 """
-    desktop_path = os.path.join(dist_dir, "Sonar.desktop")
+    desktop_path = os.path.join(dist_dir, "Icosahedron.desktop")
     with open(desktop_path, "w") as f:
         f.write(desktop_content)
     os.chmod(desktop_path, 0o755)

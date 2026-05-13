@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-Sonar uses the following open-source libraries. Their licenses and copyright
+Icosahedron uses the following open-source libraries. Their licenses and copyright
 notices are reproduced below as required.
 
 ---
@@ -11,7 +11,7 @@ notices are reproduced below as required.
 - **Copyright:** © 2024 Riverbank Computing Limited
 - **Homepage:** https://www.riverbankcomputing.com/software/pyqt/
 - **Notes:** Used under the GPL-3.0 open-source license, consistent with
-  Sonar's own GPL-3.0 license.
+  Icosahedron's own GPL-3.0 license.
 
 ---
 

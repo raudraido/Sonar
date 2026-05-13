@@ -47,7 +47,7 @@ class BPMWorker(QThread):
             elif stream_url:
                 temp_dir = tempfile.gettempdir()
                 # Create a secure temp file in the Windows %TEMP% folder
-                temp_file_path = os.path.join(temp_dir, f"sonar_bpm_{track_id}.mp3")
+                temp_file_path = os.path.join(temp_dir, f"icosahedron_bpm_{track_id}.mp3")
                 
                 response = requests.get(stream_url, stream=True, timeout=10)
                 response.raise_for_status()
