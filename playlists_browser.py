@@ -731,9 +731,12 @@ class PlaylistsBrowser(QWidget):
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QCursor
         
-        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
+        _theme = getattr(self.window(), 'theme', None)
+        _bc = getattr(_theme, 'border_color',       '#444444')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: white; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; }}")
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; color: {_fg}; }}")
 
         add_action = menu.addAction("Add New Playlist")
         
@@ -749,9 +752,12 @@ class PlaylistsBrowser(QWidget):
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QCursor
         
-        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
+        _theme = getattr(self.window(), 'theme', None)
+        _bc = getattr(_theme, 'border_color',       '#444444')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: white; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; }}")
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; color: {_fg}; }}")
 
         rename_action = menu.addAction("Rename Playlist")
         delete_action = menu.addAction("Delete Playlist")

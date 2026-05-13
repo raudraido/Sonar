@@ -424,11 +424,11 @@ class QueuePanel(QWidget):
         hbox.setContentsMargins(14, 0, 8, 0)
         hbox.setSpacing(0)
 
-        lbl = QLabel('Queue')
-        lbl.setStyleSheet(
+        self._queue_lbl = QLabel('Queue')
+        self._queue_lbl.setStyleSheet(
             'color: #ddd; font-weight: bold; font-size: 16px; background: transparent; border: none;'
         )
-        hbox.addWidget(lbl)
+        hbox.addWidget(self._queue_lbl)
         hbox.addSpacing(8)
 
         self._position_lbl = QLabel('') # e.g. "3/12"
@@ -623,6 +623,9 @@ class QueuePanel(QWidget):
         self._primary_color   = getattr(theme, 'font_color_primary',   '#dddddd')
         self._secondary_px    = getattr(theme, 'font_size_secondary',  12)
         self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
+        self._queue_lbl.setStyleSheet(
+            f'color: {self._primary_color}; font-weight: bold; font-size: 16px; background: transparent; border: none;'
+        )
         self._list.viewport().update()
 
     def toggle_favorite_at(self, idx: int):
@@ -828,14 +831,17 @@ class QueuePanel(QWidget):
 
         _main = self.window()
         _theme = getattr(_main, 'theme', None)
-        _bg = getattr(_theme, 'main_panel_bg', '14,14,14')
-        _bc = getattr(_theme, 'border_color', '#2a2a2a')
+        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14')
+        _bc  = getattr(_theme, 'border_color',        '#2a2a2a')
+        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
+        _px  = getattr(_theme, 'font_size_primary',   14)
         MENU_CSS = (
-            f"QMenu {{ background-color: rgb({_bg}); color: #ddd; border: 1px solid {_bc};"
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
-            "QMenu::item { padding: 6px 25px; border-radius: 4px; }"
-            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
-            "QMenu::item:disabled { color: #555; }"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)

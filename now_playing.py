@@ -615,11 +615,15 @@ class NowPlayingPanel(QWidget):
             self.tree.topLevelItem(i).setHidden(False)
 
     def _show_column_menu(self):
+        _theme = getattr(self.window(), 'theme', None)
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
+        _bc = getattr(_theme, 'border_color',       '#444444')
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu { background-color: #222; color: #ddd; border: 1px solid #444; } "
-            "QMenu::item { padding: 6px 25px; } "
-            "QMenu::item:selected { background-color: #333; }"
+            f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; }} "
+            f"QMenu::item {{ padding: 6px 25px; }} "
+            f"QMenu::item:selected {{ background-color: #333; color: {_fg}; }}"
         )
         for i, name in enumerate(HEADERS):
             if i == COL_TRACK:   # TRACK column is always visible
@@ -696,16 +700,19 @@ class NowPlayingPanel(QWidget):
         from components import TrackInfoDialog
         _mw = getattr(self, 'main_window', None)
         _theme = getattr(_mw, 'theme', None)
-        _bg = getattr(_theme, 'main_panel_bg', '14,14,14')
-        _bc = getattr(_theme, 'border_color', '#2a2a2a')
+        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14')
+        _bc  = getattr(_theme, 'border_color',        '#2a2a2a')
+        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
+        _px  = getattr(_theme, 'font_size_primary',   14)
         menu = QMenu()
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
-            f"QMenu {{ background-color: rgb({_bg}); color: #ddd; border: 1px solid {_bc};"
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
-            "QMenu::item { padding: 7px 28px 7px 14px; border-radius: 4px; }"
-            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
-            "QMenu::item:disabled { color: #555; }"
+            f"QMenu::item {{ padding: 7px 28px 7px 14px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
 

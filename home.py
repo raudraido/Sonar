@@ -508,6 +508,9 @@ class HomeAlbumRowWidget(QWidget):
         self._btn_right.set_color(color)
         self._grip.set_color(color)
         self.list_widget.viewport().update()
+        theme = getattr(self.window(), 'theme', None)
+        if theme:
+            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-size: 15px; font-weight: bold; background: transparent;")
 
     # ── Resize ────────────────────────────────────────────────────────────
 

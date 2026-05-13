@@ -596,14 +596,18 @@ class NavigationMixin:
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QAction, QCursor
 
-        _bg = getattr(getattr(self, 'theme', None), 'main_panel_bg', '14,14,14')
-        _bc = getattr(getattr(self, 'theme', None), 'border_color', '#2a2a2a')
+        _t   = getattr(self, 'theme', None)
+        _bg  = getattr(_t, 'main_panel_bg',       '14,14,14')
+        _bc  = getattr(_t, 'border_color',        '#2a2a2a')
+        _fg  = getattr(_t, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_t, 'font_color_secondary','#555555')
+        _px  = getattr(_t, 'font_size_primary',   14)
         MENU_CSS = (
-            f"QMenu {{ background-color: rgb({_bg}); color: #ddd; border: 1px solid {_bc};"
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
-            "QMenu::item { padding: 6px 25px; border-radius: 4px; }"
-            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
-            "QMenu::item:disabled { color: #555; }"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)

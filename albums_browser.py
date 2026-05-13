@@ -1460,13 +1460,16 @@ class AlbumDetailView(QWidget):
 
         bg = getattr(self, '_bg_color', '14,14,14')
         _theme = getattr(self.window(), 'theme', None)
-        _bc = getattr(_theme, 'border_color', '#2a2a2a')
+        _bc  = getattr(_theme, 'border_color',        '#2a2a2a')
+        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
+        _px  = getattr(_theme, 'font_size_primary',   14)
         MENU_CSS = (
-            f"QMenu {{ background-color: rgb({bg}); color: #ddd; border: 1px solid {_bc};"
+            f"QMenu {{ background-color: rgb({bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
-            "QMenu::item { padding: 6px 25px; border-radius: 4px; }"
-            "QMenu::item:selected { background-color: #1e1e1e; color: #fff; }"
-            "QMenu::item:disabled { color: #555; }"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
@@ -1718,11 +1721,15 @@ class AlbumDetailView(QWidget):
             theme = getattr(self.window(), 'theme', None)
             if theme:
                 self._track_delegate.set_font_size(theme.font_size_primary)
-        if hasattr(self, 'lbl_meta'):
+        if hasattr(self, 'lbl_meta') or hasattr(self, 'lbl_title'):
             theme = getattr(self.window(), 'theme', None)
-            sec_size = getattr(theme, 'font_size_secondary', 12) if theme else 12
-            sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
-            self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
+            pri_color = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
+            sec_size  = getattr(theme, 'font_size_secondary', 12)        if theme else 12
+            sec_color = getattr(theme, 'font_color_secondary','#aaaaaa') if theme else '#aaaaaa'
+            if hasattr(self, 'lbl_title'):
+                self.lbl_title.setStyleSheet(f"color: {pri_color}; font-weight: 900; font-size: 36px;")
+            if hasattr(self, 'lbl_meta'):
+                self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         if hasattr(self, 'header_container'):
             self.header_container.setStyleSheet(
@@ -2315,28 +2322,36 @@ class LibraryGridBrowser(QWidget):
 
     def show_sort_menu(self):
         """Show dropdown menu with sort options when burger is clicked"""
+        _theme = getattr(self.window(), 'theme', None)
+        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
+        _bc = getattr(_theme, 'border_color',       '#333333')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #1a1a1a;
-                border: 1px solid #333;
-                border-radius: 4px;
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: rgb({_bg});
+                border: 1px solid {_bc};
+                border-radius: 12px;
                 padding: 4px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 background-color: transparent;
-                color: #ddd;
+                color: {_fg};
+                font-size: {_px}px;
                 padding: 8px 12px;
-                border-radius: 3px;
-            }
-            QMenu::item:selected {
-                background-color: #333;
-            }
-            QMenu::icon {
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: rgba(255,255,255,0.08);
+                color: {_fg};
+            }}
+            QMenu::icon {{
                 padding-left: 4px;
-            }
+            }}
         """)
-        
+
         # Create actions for each sort type
         self.create_sort_action(menu, 'random', 'Random')
         self.create_sort_action(menu, 'latest', 'Latest')

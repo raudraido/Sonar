@@ -372,6 +372,8 @@ class PaginationFooter(QWidget):
         self.current_accent = "#888888"
         self.current_page = 1
         self.total_pages = 1
+        self._font_color = "#dddddd"
+        self._font_size  = 14
 
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -399,6 +401,9 @@ class PaginationFooter(QWidget):
 
     def set_accent_color(self, color):
         self.current_accent = color
+        _theme = getattr(self.window(), 'theme', None)
+        self._font_color = getattr(_theme, 'font_color_primary', '#dddddd')
+        self._font_size  = getattr(_theme, 'font_size_primary',  14)
         self.setStyleSheet("""
             PaginationFooter {
                 background-color: transparent;
@@ -422,19 +427,20 @@ class PaginationFooter(QWidget):
         
         if active:
             style = f"""
-                QPushButton {{ 
-                    background-color: {self.current_accent}; 
-                    color: white; 
-                    border: none; 
-                    border-radius: 4px; 
-                    font-weight: bold; 
+                QPushButton {{
+                    background-color: {self.current_accent};
+                    color: {self._font_color};
+                    border: none;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: {self._font_size}px;
                 }}
             """
         else:
-            style = """
-                QPushButton { background-color: #1a1a1a; color: #ddd; border: none; border-radius: 4px; }
-                QPushButton:hover { background-color: #333; }
-                QPushButton:disabled { color: #555; background-color: #111; }
+            style = f"""
+                QPushButton {{ background-color: #1a1a1a; color: {self._font_color}; font-size: {self._font_size}px; border: none; border-radius: 4px; }}
+                QPushButton:hover {{ background-color: #333; }}
+                QPushButton:disabled {{ color: #555; background-color: #111; }}
             """
         btn.setStyleSheet(style)
         

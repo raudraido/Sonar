@@ -386,12 +386,15 @@ class NowPlayingFooterWidget(QWidget):
             s = f"{v:.2f}".rstrip('0').rstrip('.')
             return f"{s} BPM"
 
-        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
+        _theme = getattr(self.window(), 'theme', None)
+        _bc = getattr(_theme, 'border_color',       '#444444')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
         menu.setStyleSheet(
-            f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }}"
-            "QMenu::item { padding: 6px 25px; }"
-            "QMenu::item:selected { background-color: #333; }"
+            f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; }}"
+            f"QMenu::item {{ padding: 6px 25px; }}"
+            f"QMenu::item:selected {{ background-color: #333; color: {_fg}; }}"
         )
         for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
                              ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:

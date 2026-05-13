@@ -2299,9 +2299,18 @@ class TracksBrowser(QWidget):
     # --- BURGER MENU: COLUMN VISIBILITY ---
     
     def show_column_menu(self):
+        _theme = getattr(self.window(), 'theme', None)
+        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
+        _bc = getattr(_theme, 'border_color',       '#444444')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
-        _bc = getattr(getattr(self.window(), 'theme', None), 'border_color', '#444')
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: #ddd; border: 1px solid {_bc}; }} QMenu::item {{ padding: 6px 25px; }} QMenu::item:selected {{ background-color: #333; }}")
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background-color: rgba(255,255,255,0.08); color: {_fg}; }}"
+        )
         
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
 

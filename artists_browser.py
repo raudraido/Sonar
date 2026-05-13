@@ -723,17 +723,17 @@ class QMLAlbumSectionWidget(QWidget):
         self.title_layout.setSpacing(10)
         self.title_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-        lbl_count = QLabel(str(count))
-        lbl_count.setFixedHeight(22)
-        lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_count.setStyleSheet(
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
+        self.lbl_count = QLabel(str(count))
+        self.lbl_count.setFixedHeight(22)
+        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_count.setStyleSheet(
             "color: #aaa; background-color: #333; border-radius: 4px;"
             " padding: 0px 8px; font-size: 12px; font-weight: bold;")
 
-        self.title_layout.addWidget(lbl_title)
-        self.title_layout.addWidget(lbl_count)
+        self.title_layout.addWidget(self.lbl_title)
+        self.title_layout.addWidget(self.lbl_count)
         self.title_layout.addStretch()
         outer.addWidget(title_container)
 
@@ -770,6 +770,8 @@ class QMLAlbumSectionWidget(QWidget):
                 self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
                 self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
                 self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
         _QTimer.singleShot(0, _emit_section_typography)
         outer.addWidget(self.qml_widget)
 
@@ -814,6 +816,8 @@ class QMLAlbumSectionWidget(QWidget):
             self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
             self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
             self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+            self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
 
     def populate(self, albums):
         # Normalise so AlbumModel's cover_id key is always populated
@@ -886,16 +890,16 @@ class AlbumRowWidget(QWidget):
         self.title_layout.setSpacing(10)
         self.title_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-        
-        lbl_count = QLabel(str(count))
-        lbl_count.setFixedHeight(22)
-        lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_count.setStyleSheet("color: #aaa; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-        
-        self.title_layout.addWidget(lbl_title)
-        self.title_layout.addWidget(lbl_count)
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
+
+        self.lbl_count = QLabel(str(count))
+        self.lbl_count.setFixedHeight(22)
+        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_count.setStyleSheet("color: #aaa; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
+
+        self.title_layout.addWidget(self.lbl_title)
+        self.title_layout.addWidget(self.lbl_count)
         self.title_layout.addStretch()
         self.layout.addWidget(title_container)
 
@@ -918,6 +922,14 @@ class AlbumRowWidget(QWidget):
         self.list_widget.itemClicked.connect(self.on_item_clicked)
         self.layout.addWidget(self.list_widget)
         self.populate(albums)
+
+        from PyQt6.QtCore import QTimer as _QTimer
+        def _apply_title_color():
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
+        _QTimer.singleShot(0, _apply_title_color)
 
     def add_action_widget(self, widget):
         self.title_layout.insertWidget(2, widget)
@@ -992,6 +1004,12 @@ class AlbumRowWidget(QWidget):
 
         if hasattr(self, 'delegate'):
             self.delegate.set_master_color(color)
+        theme = getattr(self.window(), 'theme', None)
+        if theme:
+            if hasattr(self, 'lbl_title'):
+                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+            if hasattr(self, 'lbl_count'):
+                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
 
     def populate(self, albums):
         self.full_albums = albums  
@@ -1195,12 +1213,12 @@ class RelatedArtistRowWidget(QWidget):
         title_row = QWidget()
         title_layout = QHBoxLayout(title_row)
         title_layout.setContentsMargins(10, 0, 10, 0)
-        lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-        lbl_count = QLabel(str(len(artists)))
-        lbl_count.setFixedHeight(22)
-        lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_count.setStyleSheet("color: #aaa; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
+        self.lbl_count = QLabel(str(len(artists)))
+        self.lbl_count.setFixedHeight(22)
+        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_count.setStyleSheet("color: #aaa; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
         self._accent_color = "#888888"
         self._btn_left  = _ArrowButton("left",  self._accent_color)
         self._btn_right = _ArrowButton("right", self._accent_color)
@@ -1208,8 +1226,8 @@ class RelatedArtistRowWidget(QWidget):
         self._btn_left.clicked.connect(lambda: self._scroll_by(-self.CELL_W))
         self._btn_right.clicked.connect(lambda: self._scroll_by(self.CELL_W))
 
-        title_layout.addWidget(lbl_title)
-        title_layout.addWidget(lbl_count)
+        title_layout.addWidget(self.lbl_title)
+        title_layout.addWidget(self.lbl_count)
         title_layout.addStretch()
         title_layout.addWidget(self._btn_left)
         title_layout.addWidget(self._btn_right)
@@ -1255,6 +1273,14 @@ class RelatedArtistRowWidget(QWidget):
 
         layout.addWidget(self.list_widget)
 
+        from PyQt6.QtCore import QTimer as _QTimer
+        def _apply_title_color():
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
+        _QTimer.singleShot(0, _apply_title_color)
+
     def _scroll_by(self, delta):
         sb = self.list_widget.horizontalScrollBar()
         sb.setValue(sb.value() + delta)
@@ -1269,6 +1295,10 @@ class RelatedArtistRowWidget(QWidget):
         self._btn_left.set_color(color)
         self._btn_right.set_color(color)
         self.delegate.set_master_color(color)
+        theme = getattr(self.window(), 'theme', None)
+        if theme:
+            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
+            self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background-color: #333; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
 
     def eventFilter(self, source, event):
         if source is self.list_widget and event.type() == event.Type.Wheel:
@@ -1827,8 +1857,17 @@ class ArtistRichDetailView(QWidget):
         self._scroll_reveal.color = color
 
         theme = getattr(self.window(), 'theme', None)
+        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
+        if hasattr(self, 'lbl_type'):
+            self.lbl_type.setStyleSheet(f"font-weight: bold; color: {sec_color}; font-size: 12px; letter-spacing: 1px;")
+        if hasattr(self, 'lbl_name'):
+            self.lbl_name.setStyleSheet(f"font-weight: 900; color: {pri_color}; font-size: 48px;")
+        if hasattr(self, 'lbl_about_header'):
+            self.lbl_about_header.setStyleSheet(f"color: {pri_color}; font-size: 20px; font-weight: bold; padding-left: 8px; margin-top: 10px;")
+        if hasattr(self, 'lbl_top_tracks'):
+            self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-top: 10px;")
         if hasattr(self, 'lbl_stats'):
             self.lbl_stats.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px;")
         if hasattr(self, 'lbl_bio'):
@@ -2778,28 +2817,36 @@ class ArtistGridBrowser(QWidget):
     
     def show_sort_menu(self):
         """Show dropdown menu with sort options when burger is clicked"""
+        _theme = getattr(self.window(), 'theme', None)
+        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
+        _bc = getattr(_theme, 'border_color',       '#333333')
+        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #1a1a1a;
-                border: 1px solid #333;
-                border-radius: 4px;
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: rgb({_bg});
+                border: 1px solid {_bc};
+                border-radius: 12px;
                 padding: 4px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 background-color: transparent;
-                color: #ddd;
+                color: {_fg};
+                font-size: {_px}px;
                 padding: 8px 12px;
-                border-radius: 3px;
-            }
-            QMenu::item:selected {
-                background-color: #333;
-            }
-            QMenu::icon {
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: rgba(255,255,255,0.08);
+                color: {_fg};
+            }}
+            QMenu::icon {{
                 padding-left: 4px;
-            }
+            }}
         """)
-        
+
         # Create actions for each sort type
         self.create_sort_action(menu, 'random', 'Random')
         self.create_sort_action(menu, 'most_played', 'Most Played')
