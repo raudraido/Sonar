@@ -551,6 +551,7 @@ class SongListWidget(QTreeWidget):
         self.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setAllColumnsShowFocus(False)
 
         self.setColumnWidth(0, 45) 
         self.setColumnWidth(3, 70)
@@ -595,15 +596,20 @@ class SongListWidget(QTreeWidget):
                 height: 44px;
                 color: {pri_color};
                 font-size: {pri_size}px;
-                border-bottom: 1px solid rgba(255,255,255,0.02);
+                border: none;
+                outline: 0;
             }}
             QTreeWidget::item:hover {{
                 background: transparent;
                 color: {accent_color};
+                border: none;
+                outline: 0;
             }}
             QTreeWidget::item:selected {{
                 background: transparent;
                 color: {pri_color};
+                border: none;
+                outline: 0;
             }}
         """)
         self.viewport().update()
