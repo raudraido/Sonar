@@ -13,6 +13,7 @@ import platform
 import threading
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+os.environ.setdefault("QSG_RHI_BACKEND", "opengl")  # HiDPI-correct QQuickWidget rendering on Windows
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
 if platform.system() == "Linux":
     os.environ["QT_QPA_PLATFORMTHEME"] = ""  # Disable GTK/KDE theme override
@@ -20,7 +21,7 @@ if platform.system() == "Linux":
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QIcon, QFont, QFontDatabase
+from PyQt6.QtGui import QIcon, QFont, QFontDatabase, QSurfaceFormat
 
 from subsonic_client import SubsonicClient
 from login_dialog import LoginDialog
@@ -69,6 +70,12 @@ def _background_preload():
 if __name__ == '__main__':
     # Kick off background preloading immediately — runs in parallel with login UI
     threading.Thread(target=_background_preload, daemon=True).start()
+
+    _fmt = QSurfaceFormat()
+    _fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+    _fmt.setVersion(3, 3)
+    _fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(_fmt)
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

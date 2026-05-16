@@ -286,13 +286,13 @@ class HomeAlbumRowWidget(QWidget):
         self._offset       = 0
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 0, 0, 0)
+        layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
 
         # ── Title row ────────────────────────────────────────────────────
         title_row = QWidget()
         title_layout = QHBoxLayout(title_row)
-        title_layout.setContentsMargins(0, 0, 10, 0)
+        title_layout.setContentsMargins(6, 0, 6, 0)
         title_layout.setSpacing(8)
 
         self._grip = _GripHandle()
@@ -549,11 +549,11 @@ class HomeAlbumRowWidget(QWidget):
     def _make_icon(self, cid, cw):
         pix = self._pix_cache.get(cid)
         if pix:
-            size = cw - 16
+            size = cw - 12
             return QIcon(pix.scaled(size, size,
                                     Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                     Qt.TransformationMode.SmoothTransformation))
-        ph = QPixmap(max(1, cw - 16), max(1, cw - 16))
+        ph = QPixmap(max(1, cw - 12), max(1, cw - 12))
         ph.fill(QColor("#1a1a1a"))
         return QIcon(ph)
 
@@ -567,7 +567,7 @@ class HomeAlbumRowWidget(QWidget):
         w   = self._carousel.width() or cw * self._n_cols
 
         lw.setGridSize(QSize(cw, ch))
-        lw.setIconSize(QSize(cw - 16, cw - 16))
+        lw.setIconSize(QSize(cw - 12, cw - 12))
         # Preserve x position (may be off-screen during carousel animation)
         lw.setGeometry(lw.x(), 0, w, ch)
 

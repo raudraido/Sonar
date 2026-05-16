@@ -636,10 +636,10 @@ class GridItemDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = option.rect
-        icon_width  = rect.width() - 20
+        icon_width  = rect.width() - 12
         icon_height = icon_width
-        icon_x      = rect.x() + 10
-        icon_rect   = QRect(icon_x, rect.y() + 10, icon_width, icon_height)
+        icon_x      = rect.x() + 6
+        icon_rect   = QRect(icon_x, rect.y() + 4, icon_width, icon_height)
 
         path = QPainterPath()
         path.addRoundedRect(icon_rect.x(), icon_rect.y(), icon_rect.width(), icon_rect.height(), 10, 10)
@@ -663,7 +663,7 @@ class GridItemDelegate(QStyledItemDelegate):
         # Dark overlay: opacity 0 → 0.4  (QML: color "#000", opacity 0→0.4)
         if hover_p > 0:
             painter.setBrush(QColor(0, 0, 0, int(hover_p * 102)))
-            painter.setPen(QPen(self.master_color, 4))
+            painter.setPen(QPen(self.master_color, 2))
             painter.drawPath(path)
         painter.restore()  # remove clip
 

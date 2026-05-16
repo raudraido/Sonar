@@ -266,6 +266,7 @@ Rectangle {
                         font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
 
                     Text {
@@ -274,6 +275,7 @@ Rectangle {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
 
                     Text {
@@ -282,6 +284,7 @@ Rectangle {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
                 }
 

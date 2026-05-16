@@ -31,10 +31,10 @@ Item {
         id: grid
         anchors.fill: parent
 
-        leftMargin: 20
-        rightMargin: 20
-        topMargin: 10
-        bottomMargin: 10
+        leftMargin: 4
+        rightMargin: 4
+        topMargin: 4
+        bottomMargin: 4
 
         focus: true
         currentIndex: count > 0 ? 0 : -1
@@ -90,7 +90,10 @@ Item {
             Rectangle {
                 id: cardRoot
                 anchors.fill: parent
-                anchors.margins: grid.itemGap
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
                 color: "transparent"
 
                 property bool isMouseHovered: mouseArea.containsMouse || playArea.containsMouse
@@ -178,6 +181,7 @@ Item {
                         font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
 
                     Flow {
@@ -194,6 +198,7 @@ Item {
                                 color: isSep ? "#777" : (hov ? root.accentColor : root.fontColorSecondary)
                                 font.underline: !isSep && hov
                                 font.pixelSize: root.fontSizeSecondary
+                                renderType: Text.NativeRendering
                                 MouseArea {
                                     anchors.fill: parent
                                     enabled: !parent.isSep
@@ -218,6 +223,7 @@ Item {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
                 }
 

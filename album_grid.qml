@@ -279,6 +279,7 @@ Rectangle {
                         font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
 
                     Flow {
@@ -297,6 +298,7 @@ Rectangle {
                                 color: isSep ? "#777" : (hov ? root.accentColor : root.fontColorSecondary)
                                 font.underline: !isSep && hov
                                 font.pixelSize: root.fontSizeSecondary
+                                renderType: Text.NativeRendering
 
                                 MouseArea {
                                     anchors.fill: parent
@@ -323,6 +325,7 @@ Rectangle {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
                 }
 
