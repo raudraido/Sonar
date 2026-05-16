@@ -614,7 +614,8 @@ class TrackInfoDialog(QDialog):
         main_win = self.parent().window() if self.parent() else None
         theme = getattr(main_win, 'theme', None)
         bg = getattr(theme, 'main_panel_bg', '17,17,17')
-        bc = getattr(theme, 'border_color', '#2a2a2a')
+        self._bc           = getattr(theme, 'border_color',         '#2a2a2a')
+        bc = self._bc
         self._fs_primary  = getattr(theme, 'font_size_primary',   14)
         self._fc_primary  = getattr(theme, 'font_color_primary',  '#dddddd')
         self._fc_secondary = getattr(theme, 'font_color_secondary', '#999999')
@@ -640,7 +641,7 @@ class TrackInfoDialog(QDialog):
         h_lay.setContentsMargins(24, 20, 16, 12)
 
         title_lbl = QLabel(self.track.get('title', 'Unknown'))
-        title_lbl.setStyleSheet("color: #fff; font-size: 17px; font-weight: bold; background: transparent;")
+        title_lbl.setStyleSheet(f"color: {self._fc_primary}; font-size: 17px; font-weight: bold; background: transparent;")
         title_lbl.setWordWrap(True)
         h_lay.addWidget(title_lbl, 1)
 
@@ -657,7 +658,7 @@ class TrackInfoDialog(QDialog):
 
         div = QWidget()
         div.setFixedHeight(1)
-        div.setStyleSheet("background: #222;")
+        div.setStyleSheet(f"background-color: {self._bc};")
         root.addWidget(div)
 
         # Scrollable rows
@@ -791,8 +792,8 @@ class TrackInfoDialog(QDialog):
         sep_wrap = QHBoxLayout()
         sep_wrap.setContentsMargins(20, 0, 20, 0)
         sep = QWidget()
-        sep.setFixedHeight(2)
-        sep.setStyleSheet("background: #2a2a2a;")
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {self._bc};")
         sep_wrap.addWidget(sep)
         self.rows_layout.addLayout(sep_wrap)
 
@@ -843,32 +844,31 @@ class TrackInfoDialog(QDialog):
         outer.setSpacing(12)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        def load_white_icon(img_name, size=14):
+        def load_tinted_icon(img_name, size=14, color=None):
+            tint = color or self.accent_color
             img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'img', img_name)
             px = QPixmap(img_path).scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                                           Qt.TransformationMode.SmoothTransformation)
-            white = QPixmap(px.size())
-            white.fill(QColor('transparent'))
-            p = QPainter(white)
+            out = QPixmap(px.size())
+            out.fill(QColor('transparent'))
+            p = QPainter(out)
             p.drawPixmap(0, 0, px)
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(white.rect(), QColor('#ffffff'))
+            p.fillRect(out.rect(), QColor(tint))
             p.end()
-            return QIcon(white)
+            return QIcon(out)
 
         def icon_btn(img_name, tip, callback):
             b = QPushButton()
-            b.setIcon(load_white_icon(img_name))
-            b.setIconSize(QSize(14, 14))
+            b.setIcon(load_tinted_icon(img_name))
+            b.setIconSize(QSize(16, 16))
             b.setToolTip(tip)
             b.setFixedSize(24, 24)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet("""
-                QPushButton {
-                    background: #222; border: 1px solid #333; border-radius: 3px;
-                }
-                QPushButton:hover { background: #2e2e2e; }
-            """)
+            b.setStyleSheet(
+                "QPushButton { background: transparent; border: none; }"
+                f"QPushButton:hover {{ color: white; }}"
+            )
             b.clicked.connect(callback)
             return b
 
@@ -892,10 +892,10 @@ class TrackInfoDialog(QDialog):
 
         def _copy_path():
             QGuiApplication.clipboard().setText(self._current_path)
-            self._copy_btn.setIcon(load_white_icon("yes.png"))
+            self._copy_btn.setIcon(load_tinted_icon("yes.png"))
             self._copy_btn.setToolTip("Copied!")
             QTimer.singleShot(1500, lambda: (
-                self._copy_btn.setIcon(load_white_icon("copy-path.png")),
+                self._copy_btn.setIcon(load_tinted_icon("copy-path.png")),
                 self._copy_btn.setToolTip("Copy path"),
             ))
 

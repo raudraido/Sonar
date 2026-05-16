@@ -1,6 +1,6 @@
 import re
 import os
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
 import time
 import json
 import math
@@ -2300,16 +2300,17 @@ class TracksBrowser(QWidget):
     
     def show_column_menu(self):
         _theme = getattr(self.window(), 'theme', None)
-        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
-        _bc = getattr(_theme, 'border_color',       '#444444')
-        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px = getattr(_theme, 'font_size_primary',  14)
+        _bg  = getattr(_theme, 'main_panel_bg',      '26,26,26')
+        _bc  = getattr(_theme, 'border_color',       '#444444')
+        _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px  = getattr(_theme, 'font_size_primary',  14)
+        _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: rgba(255,255,255,0.08); color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
         )
         
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
@@ -3572,12 +3573,13 @@ class TracksBrowser(QWidget):
         _fg  = getattr(_theme, 'font_color_primary',   '#dddddd')
         _fg2 = getattr(_theme, 'font_color_secondary', '#777777')
         _px  = getattr(_theme, 'font_size_primary',    14)
+        _acc = getattr(_theme, 'accent',                '#ffffff')
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px;"
             f" border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: rgba(255,255,255,0.08); }}"
+            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )

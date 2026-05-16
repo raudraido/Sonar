@@ -1,6 +1,6 @@
 import time
 import os
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
 import sys
 import random
 import re
@@ -1464,11 +1464,12 @@ class AlbumDetailView(QWidget):
         _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
         _fg2 = getattr(_theme, 'font_color_secondary','#555555')
         _px  = getattr(_theme, 'font_size_primary',   14)
+        _acc = getattr(_theme, 'accent',               '#ffffff')
         MENU_CSS = (
             f"QMenu {{ background-color: rgb({bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )

@@ -24,8 +24,8 @@ class Theme:
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_primary:   int = 14        # track titles, main content (px)
     font_size_secondary: int = 12        # artist names, subtitles (px)
-    font_color_primary:   str = "#20015e" # track titles, main content
-    font_color_secondary: str = "#4e2d8e" # artist names, subtitles
+    font_color_primary:   str = "#388BF1" # track titles, main content
+    font_color_secondary: str = "#4a4a4a" # artist names, subtitles
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px

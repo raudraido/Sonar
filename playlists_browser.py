@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QThread, QTimer,
                           QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl, QPoint)
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
@@ -732,11 +732,12 @@ class PlaylistsBrowser(QWidget):
         from PyQt6.QtGui import QCursor
         
         _theme = getattr(self.window(), 'theme', None)
-        _bc = getattr(_theme, 'border_color',       '#444444')
-        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px = getattr(_theme, 'font_size_primary',  14)
+        _bc  = getattr(_theme, 'border_color',       '#444444')
+        _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px  = getattr(_theme, 'font_size_primary',  14)
+        _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; color: {_fg}; }}")
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}")
 
         add_action = menu.addAction("Add New Playlist")
         
@@ -753,11 +754,12 @@ class PlaylistsBrowser(QWidget):
         from PyQt6.QtGui import QCursor
         
         _theme = getattr(self.window(), 'theme', None)
-        _bc = getattr(_theme, 'border_color',       '#444444')
-        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px = getattr(_theme, 'font_size_primary',  14)
+        _bc  = getattr(_theme, 'border_color',       '#444444')
+        _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
+        _px  = getattr(_theme, 'font_size_primary',  14)
+        _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: #333; color: {_fg}; }}")
+        menu.setStyleSheet(f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 4px; padding: 4px; }} QMenu::item {{ padding: 6px 20px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}")
 
         rename_action = menu.addAction("Rename Playlist")
         delete_action = menu.addAction("Delete Playlist")

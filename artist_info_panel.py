@@ -10,7 +10,7 @@ import urllib.parse
 
 from PyQt6.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QSizePolicy, QFrame, QScrollBar,
+    QPushButton, QSizePolicy, QScrollBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QSize
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal
@@ -110,10 +110,10 @@ class _ImageWorker(QThread):
 
 # ── helper widgets ────────────────────────────────────────────────────────────
 
-def _sep():
-    line = QFrame()
-    line.setFrameShape(QFrame.Shape.HLine)
-    line.setStyleSheet("color: rgba(255,255,255,0.08);")
+def _sep(color="rgba(255,255,255,0.08)"):
+    line = QWidget()
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"background-color: {color};")
     return line
 
 
@@ -144,8 +144,10 @@ def _round_pixmap(pix: QPixmap, radius: int = 10) -> QPixmap:
 class ArtistInfoPanel(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._settings     = QSettings()
-        self._accent       = "#ffffff"
+        self._settings          = QSettings()
+        self._accent            = "#ffffff"
+        self._border_color      = "rgba(255,255,255,0.08)"
+        self._font_color_primary = "#eeeeee"
         self._current_id   = None
         self._current_name = None
         self._show_all_tours = False
@@ -205,6 +207,10 @@ class ArtistInfoPanel(QScrollArea):
     def set_accent_color(self, color: str):
         self._accent = color
         self._apply_scrollbar_style()
+
+    def apply_theme(self, theme):
+        self._font_color_primary = getattr(theme, 'font_color_primary', '#eeeeee')
+        self._border_color       = getattr(theme, 'border_color',       'rgba(255,255,255,0.08)')
 
     def load_track(self, client, artist_id: str, artist_name: str):
         if artist_id == self._current_id and artist_name == self._current_name:
@@ -331,7 +337,7 @@ class ArtistInfoPanel(QScrollArea):
         # ── artist name ───────────────────────────────────────────────────────
         name_lbl = QLabel(self._current_name or "Unknown Artist")
         name_lbl.setStyleSheet(
-            "color: #eee; font-size: 18px; font-weight: bold; background: transparent;"
+            f"color: {self._font_color_primary}; font-size: 18px; font-weight: bold; background: transparent;"
         )
         name_lbl.setWordWrap(True)
         self._layout.addWidget(name_lbl)
@@ -360,7 +366,7 @@ class ArtistInfoPanel(QScrollArea):
             self._layout.addSpacing(4)
 
         self._layout.addSpacing(12)
-        self._layout.addWidget(_sep())
+        self._layout.addWidget(_sep(self._border_color))
         self._layout.addSpacing(12)
 
         # placeholder for tour section (added by _rebuild_tour_section)

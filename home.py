@@ -319,7 +319,9 @@ class HomeAlbumRowWidget(QWidget):
             self.btn_refresh.setToolTip(refresh_tooltip)
             self.btn_refresh.setFixedSize(28, 22)
             self.btn_refresh.setStyleSheet(
-                "QPushButton { background-color: #333; border: none; border-radius: 4px; }")
+                "QPushButton { background: transparent; border: none; border-radius: 10px; }"
+                "QPushButton:hover { background: rgba(255,255,255,26); }"
+            )
             title_layout.addWidget(self.btn_refresh)
 
         self._btn_left  = _ArrowButton("left",  self._accent)
@@ -1065,7 +1067,7 @@ class HomeView(QWidget):
     def _on_recent_refreshed(self, new_albums):
         btn = self.recent_row.btn_refresh
         btn.setEnabled(True)
-        btn.setIcon(self._tinted_icon("#aaa"))
+        btn.setIcon(self._tinted_icon(self.current_accent))
         if new_albums:
             self.recent_row.populate(new_albums)
             self._queue_covers(new_albums)
@@ -1085,7 +1087,7 @@ class HomeView(QWidget):
     def _on_random_refreshed(self, new_mix):
         btn = self.random_row.btn_refresh
         btn.setEnabled(True)
-        btn.setIcon(self._tinted_icon("#aaa"))
+        btn.setIcon(self._tinted_icon(self.current_accent))
         if new_mix:
             self.random_row.populate(new_mix)
             self._queue_covers(new_mix)
@@ -1139,7 +1141,7 @@ class HomeView(QWidget):
             for row in (self.recent_row, self.random_row):
                 btn = row.btn_refresh
                 if btn and not btn.underMouse():
-                    btn.setIcon(self._tinted_icon("#aaa"))
+                    btn.setIcon(self._tinted_icon(color))
 
     def _tinted_icon(self, color_str):
         base = QPixmap(resource_path("img/refresh.png"))

@@ -57,6 +57,12 @@ def install_scroll_reveal(viewport, scrollbar):
     return f
 
 
+def menu_hover(accent: str, alpha: int = 40) -> str:
+    """Accent colour at low opacity — used for QMenu::item:selected backgrounds."""
+    c = QColor(accent)
+    return f"rgba({c.red()},{c.green()},{c.blue()},{alpha})"
+
+
 def scrollbar_css(color: str, hide_horizontal: bool = False) -> str:
     v = (
         f"QScrollBar:vertical {{ border: none; background: transparent; width: 6px; margin: 0; }}"
