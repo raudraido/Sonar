@@ -670,7 +670,7 @@ class SonarPlayer(
         self._main_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         right_panel = QVBoxLayout(self._main_panel)
         _bw = self.theme.border_width
-        right_panel.setContentsMargins(_bw, 0, _bw, _bw)
+        right_panel.setContentsMargins(0, 0, 0, 0)
         right_panel.setSpacing(0)
 
         self.main_header = QWidget()

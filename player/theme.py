@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Theme:
-    name: str = "Default"
+    name: str = "Default" # User-friendly name for this theme; not used in code but can be displayed in UI.
 
     # ── Accent colour ────────────────────────────────────────────────────────
     accent: str = "#fafafa"
@@ -24,12 +24,14 @@ class Theme:
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_primary:   int = 14        # track titles, main content (px)
     font_size_secondary: int = 12        # artist names, subtitles (px)
-    font_color_primary:   str = "#dddddd" # track titles, main content
-    font_color_secondary: str = "#999999" # artist names, subtitles
+    font_color_primary:   str = "#20015e" # track titles, main content
+    font_color_secondary: str = "#4e2d8e" # artist names, subtitles
 
     # ── Border ───────────────────────────────────────────────────────────────
     border_width: int = 1                # accent border thickness in px
-    border_color: str = "#0e0e0e"        # derived from accent; updated at runtime
+    border_color: str = "#0e0e0e"        # effective color; computed at runtime from accent or manual
+    auto_border_from_accent: bool = True # derive border_color from accent automatically
+    manual_border_color: str = "#2a2a2a" # used when auto_border_from_accent is False
 
     # Fields that are code constants — never saved to or loaded from QSettings.
     _NO_PERSIST = frozenset({"border_width", "border_color",

@@ -408,17 +408,23 @@ class VisualsMixin:
                 self.btn_back.set_color(mc)
                 self.btn_fwd.set_color(mc)
 
-        self._footer_panel.setStyleSheet(f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border: none; }}")
-
         bw = self.theme.border_width
-        self.theme.border_color = QColor(mc).darker(250).name()
+        if self.theme.auto_border_from_accent:
+            self.theme.border_color = QColor(mc).darker(250).name()
+        else:
+            c = QColor(self.theme.manual_border_color)
+            self.theme.border_color = f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
         bc = self.theme.border_color
+
+        self._footer_panel.setStyleSheet(
+            f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border-top: {bw}px solid {bc}; }}"
+        )
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
                 f'  background: rgb({self.theme.queue_panel_bg});'
                 f'  border: none;'
-                f'  border-bottom: {bw}px solid {bc};'
+                f'  border-left: {bw}px solid {bc};'
                 f'  border-radius: 0px;'
                 f'}}'
             )
@@ -428,7 +434,8 @@ class VisualsMixin:
             )
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgb({self.theme.left_panel_bg}); border: none; border-bottom: {bw}px solid {bc}; border-radius: 0px; }}'
+                f'#LeftPanel {{ background: rgb({self.theme.left_panel_bg}); border: none; '
+                f'border-right: {bw}px solid {bc}; border-radius: 0px; }}'
             )
         bg = self.theme.main_panel_bg
         for _i in range(self.tabs.count()):
@@ -437,6 +444,7 @@ class VisualsMixin:
                 _w.set_bg_color(bg)
         if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'set_bg_color'):
             self._now_playing_panel.set_bg_color(bg)
+        if hasattr(self, '_left_panel') and hasattr(self._left_panel, 'header'):
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
             )
@@ -444,15 +452,15 @@ class VisualsMixin:
             self._queue_panel._panel_header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
             )
+            from PyQt6.QtWidgets import QWidget as _QW
+            _bb = self._queue_panel.findChild(_QW, 'QueueBottomBar')
+            if _bb:
+                _bb.setStyleSheet(
+                    f'#QueueBottomBar {{ background: transparent; border-top: {bw}px solid {bc}; }}'
+                )
         if hasattr(self, '_main_panel'):
             self._main_panel.setStyleSheet(
-                f'#MainPanel {{'
-                f'  background: transparent;'
-                f'  border-left: {bw}px solid {bc};'
-                f'  border-right: {bw}px solid {bc};'
-                f'  border-bottom: {bw}px solid {bc};'
-                f'  border-top: none;'
-                f'}}'
+                f'#MainPanel {{ background: transparent; border: none; }}'
             )
 
               

@@ -835,6 +835,32 @@ class SettingsWindow(QWidget):
             self._bg_btns[field] = btn
 
         layout.addWidget(_bg_grid)
+
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setStyleSheet("color: #2a2a2a;")
+        layout.addWidget(sep3)
+
+        border_section_label = QLabel("Border Color")
+        border_section_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(border_section_label)
+
+        self.auto_border_check = QCheckBox("Auto-derive from accent color")
+        self.auto_border_check.setChecked(self.parent.theme.auto_border_from_accent)
+        self.auto_border_check.stateChanged.connect(self._toggle_auto_border)
+        layout.addWidget(self.auto_border_check)
+
+        _border_auto = self.parent.theme.auto_border_from_accent
+        _border_hex = self.parent.theme.manual_border_color
+        self.border_color_btn = QPushButton("auto" if _border_auto else _border_hex)
+        self.border_color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.border_color_btn.setEnabled(not _border_auto)
+        self.border_color_btn.setStyleSheet(
+            _bg_btn_style(_border_hex, disabled=_border_auto)
+        )
+        self.border_color_btn.clicked.connect(self._pick_border_color)
+        layout.addWidget(self.border_color_btn)
+
         layout.addStretch()
 
         # ── Right column: hotkeys + logout ────────────────────────────────
@@ -1015,6 +1041,34 @@ class SettingsWindow(QWidget):
             hex_color = QColor(r, g, b).name()
             btn.setText("auto" if auto else hex_color)
             btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=auto))
+
+    def _toggle_auto_border(self):
+        auto = self.auto_border_check.isChecked()
+        self.parent.theme.auto_border_from_accent = auto
+        hex_color = self.parent.theme.manual_border_color
+        if auto:
+            self.border_color_btn.setEnabled(False)
+            self.border_color_btn.setText("auto")
+            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=True))
+        else:
+            self.border_color_btn.setEnabled(True)
+            self.border_color_btn.setText(hex_color)
+            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_color))
+        self.parent._last_theme_key = None
+        self.parent.refresh_ui_styles()
+
+    def _pick_border_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.parent.theme.manual_border_color), self, "Pick Border Color",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel
+        )
+        if color.isValid():
+            hex_argb = color.name(QColor.NameFormat.HexArgb)
+            self.parent.theme.manual_border_color = hex_argb
+            self.border_color_btn.setText(hex_argb)
+            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_argb))
+            self.parent._last_theme_key = None
+            self.parent.refresh_ui_styles()
      
     def update_vis_settings(self):
         self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
