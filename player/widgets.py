@@ -12,7 +12,7 @@ from version import __version__
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
     QSlider, QPushButton, QColorDialog, QCheckBox, QApplication,
-    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox
+    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog
 )
 from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
@@ -636,9 +636,9 @@ class KeyCaptureButton(QPushButton):
         super().focusOutEvent(event)
 
 
-class SettingsWindow(QWidget):
+class SettingsWindow(QDialog):
     def __init__(self, parent):
-        super().__init__(None)
+        super().__init__(parent)
         self.parent = parent
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)

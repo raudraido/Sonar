@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent, QThread, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QPainterPath
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
 
       
 
@@ -145,11 +145,14 @@ class SearchResultRow(QWidget):
         title = item_data.get('title') or "Unknown"
         subtitle = item_data.get('subtitle') or ""
         
+        fc1 = getattr(getattr(self.main_window, 'theme', None), 'font_color_primary', '#dddddd')
+        fc2 = getattr(getattr(self.main_window, 'theme', None), 'font_color_secondary', '#999999')
+
         self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 14px; background: transparent; border: none;")
-        
+        self.lbl_title.setStyleSheet(f"color: {fc1}; font-weight: bold; font-size: 14px; background: transparent; border: none;")
+
         self.lbl_subtitle = QLabel(subtitle)
-        self.lbl_subtitle.setStyleSheet("color: #aaa; font-size: 12px; background: transparent; border: none;")
+        self.lbl_subtitle.setStyleSheet(f"color: {fc2}; font-size: 12px; background: transparent; border: none;")
         
         info_layout.addWidget(self.lbl_title)
         info_layout.addWidget(self.lbl_subtitle)
@@ -237,6 +240,8 @@ class SearchResultRow(QWidget):
 
         self._list_widget = None
         self._list_item = None
+        self._is_active = False
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
 
     def set_play_icon(self):
         pix = QPixmap(36, 36)
@@ -284,8 +289,22 @@ class SearchResultRow(QWidget):
         super().enterEvent(event)
 
     def set_active_state(self, is_active):
+        self._is_active = is_active
         if is_active: self.action_container.show()
         else: self.action_container.hide()
+        self.update()
+
+    def paintEvent(self, event):
+        if self._is_active:
+            theme = getattr(self.main_window, 'theme', None)
+            color = QColor(resolve_menu_hover(theme))
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(self.rect(), 6, 6)
+            painter.end()
+        super().paintEvent(event)
 
     def adjust_color(self, hex_color, factor):
         c = QColor(hex_color)
@@ -382,10 +401,6 @@ class SpotlightSearch(QWidget):
         
         self.input = QLineEdit()
         self.input.setPlaceholderText("Search for songs, artists, or albums...")
-        self.input.setStyleSheet("""
-            QLineEdit { background: transparent; color: white; font-size: 24px; border: none; padding-bottom: 5px; outline: none; }
-            QLineEdit:focus { border: none; outline: none; }
-        """)
         self.input.textChanged.connect(self.on_text_changed)
         self.input.installEventFilter(self)
         input_layout.addWidget(self.input)
@@ -447,10 +462,15 @@ class SpotlightSearch(QWidget):
 
     def apply_list_stylesheet(self):
         theme = getattr(self.parent_window, 'theme', None)
-        mc = getattr(theme, 'accent', '#ffffff')
-        bg = getattr(theme, 'main_panel_bg', '14,14,14')
-        bc = getattr(theme, 'border_color', '#2a2a2a')
+        mc  = getattr(theme, 'accent', '#ffffff')
+        bg  = getattr(theme, 'main_panel_bg', '14,14,14')
+        bc  = getattr(theme, 'border_color', '#2a2a2a')
+        fc1 = getattr(theme, 'font_color_primary', '#dddddd')
         self.container.setStyleSheet(f"#SpotlightContainer {{ background-color: rgb({bg}); border-radius: 8px; border: 1px solid {bc}; }}")
+        self.input.setStyleSheet(f"""
+            QLineEdit {{ background: transparent; color: {fc1}; font-size: 24px; border: none; padding-bottom: 5px; outline: none; }}
+            QLineEdit:focus {{ border: none; outline: none; }}
+        """)
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.list_widget.viewport(), self.list_widget.verticalScrollBar())
             self.list_widget.verticalScrollBar().rangeChanged.connect(self._update_list_right_margin)
@@ -469,7 +489,7 @@ class SpotlightSearch(QWidget):
         self.list_widget.setStyleSheet(
             "QListWidget { background: transparent; border: none; outline: none; margin-top: 5px; }"
             f"QListWidget::item {{ border-radius: 6px; margin: 2px {right_m}px 2px {self._SPACING}px; border: none; }}"
-            "QListWidget::item:selected { background-color: rgba(255, 255, 255, 0.06); border: none; }"
+            "QListWidget::item:selected { background-color: transparent; border: none; }"
             + scrollbar_css(mc, hide_horizontal=True)
         )
 
