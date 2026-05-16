@@ -846,6 +846,8 @@ class QueuePanel(QWidget):
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(MENU_CSS)
 
         # Play / queue actions
@@ -864,6 +866,8 @@ class QueuePanel(QWidget):
         track_id = str(track.get('id', ''))
         if track_id and main:
             add_menu = QMenu("Add to Playlist", menu)
+            add_menu.setWindowFlags(add_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+            add_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             add_menu.setStyleSheet(MENU_CSS)
             act_new_pl = QAction("+ New Playlist...", add_menu)
             act_new_pl.triggered.connect(lambda: self._add_to_new_playlist(main, [track_id]))
@@ -886,6 +890,8 @@ class QueuePanel(QWidget):
 
         # Go to submenu
         goto_menu = menu.addMenu("Go to")
+        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         goto_menu.setStyleSheet(MENU_CSS)
         album_id = track.get('albumId') or track.get('parent')
         album_title = track.get('album', 'Unknown')

@@ -883,8 +883,6 @@ class SmartSortHeader(QHeaderView):
 class _TrackTree(QTreeWidget):
     """QTreeWidget with inset separators and inset hover/selection highlights."""
     _sep_pen  = QPen(QColor(255, 255, 255, 13), 1)
-    _sel_color = QColor(255, 255, 255, 26)
-    _hov_color = QColor(255, 255, 255, 13)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -922,14 +920,53 @@ class _TrackTree(QTreeWidget):
         sb = self.verticalScrollBar()
         right_inset = max(8 - (sb.width() if sb.isVisible() else 0), 0)
         rect = option.rect.adjusted(8, 0, -right_inset, 0)
-        is_sel = bool(option.state & QStyle.StateFlag.State_Selected)
-        is_hov = (not is_sel) and index.row() == self._hov_row
-        if is_sel or is_hov:
+        is_sel = self.selectionModel().isRowSelected(index.row(), index.parent())
+        is_hov = index.row() == self._hov_row
+        item = self.itemFromIndex(index)
+        data = item.data(0, Qt.ItemDataRole.UserRole) if item else None
+        track_id = (data.get('data', {}).get('id') if isinstance(data, dict) else None)
+        playing_id = getattr(self, 'current_playing_id', None)
+        is_playing = bool(track_id and playing_id and str(track_id) == str(playing_id))
+        if is_sel or is_hov or is_playing:
+            _theme = getattr(self.window(), 'theme', None)
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(self._sel_color if is_sel else self._hov_color)
-            painter.drawRoundedRect(rect, 6, 6)
+            painter.setBrush(QColor(resolve_menu_hover(_theme)))
+            if is_sel:
+                sm = self.selectionModel()
+                par = index.parent()
+                prev_sel = sm.isRowSelected(index.row() - 1, par)
+                next_sel = sm.isRowSelected(index.row() + 1, par)
+                r = 6.0
+                f = QRectF(rect)
+                x, y, w, h = f.x(), f.y(), f.width(), f.height()
+                path = QPainterPath()
+                path.moveTo(x + (r if not prev_sel else 0), y)
+                path.lineTo(x + w - (r if not prev_sel else 0), y)
+                if not prev_sel:
+                    path.arcTo(x + w - 2*r, y, 2*r, 2*r, 90, -90)
+                else:
+                    path.lineTo(x + w, y)
+                path.lineTo(x + w, y + h - (r if not next_sel else 0))
+                if not next_sel:
+                    path.arcTo(x + w - 2*r, y + h - 2*r, 2*r, 2*r, 0, -90)
+                else:
+                    path.lineTo(x + w, y + h)
+                path.lineTo(x + (r if not next_sel else 0), y + h)
+                if not next_sel:
+                    path.arcTo(x, y + h - 2*r, 2*r, 2*r, 270, -90)
+                else:
+                    path.lineTo(x, y + h)
+                path.lineTo(x, y + (r if not prev_sel else 0))
+                if not prev_sel:
+                    path.arcTo(x, y, 2*r, 2*r, 180, -90)
+                else:
+                    path.lineTo(x, y)
+                path.closeSubpath()
+                painter.drawPath(path)
+            else:
+                painter.drawRoundedRect(QRectF(rect), 6, 6)
             painter.restore()
         super().drawRow(painter, option, index)
 
@@ -1087,17 +1124,10 @@ class LinkDelegate(QStyledItemDelegate):
 
         
         is_hovering = getattr(self, 'hovered_index', None) == index
-        is_selected = (opts.state & QStyle.StateFlag.State_Selected)
-        is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-
         painter.save()
 
-        if is_selected or is_row_hover:
-            painter.setPen(self.master_color)
-            if is_hovering:
-                f = painter.font(); f.setUnderline(True); painter.setFont(f)
-        elif is_hovering:
-            painter.setPen(QColor("#ffffff"))
+        if is_hovering:
+            painter.setPen(QColor(self._primary_color()))
             f = painter.font(); f.setUnderline(True); painter.setFont(f)
         else:
             painter.setPen(QColor(self._primary_color()))
@@ -1207,13 +1237,8 @@ class PlainWrapDelegate(QStyledItemDelegate):
         text = index.data(Qt.ItemDataRole.DisplayRole)
         if not text: return
 
-        is_selected = bool(opts.state & QStyle.StateFlag.State_Selected)
-        is_row_hover = bool(opts.state & QStyle.StateFlag.State_MouseOver)
         painter.save()
-        if is_selected or is_row_hover:
-            painter.setPen(self.master_color)
-        else:
-            painter.setPen(QColor(self._primary_color()))
+        painter.setPen(QColor(self._primary_color()))
 
         draw_rect = opts.rect.adjusted(5, 0, -5, 0)
         from PyQt6.QtGui import QTextLayout
@@ -1286,13 +1311,7 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         rect = opts.rect
         text = index.data(Qt.ItemDataRole.DisplayRole)
         
-        is_selected = (opts.state & QStyle.StateFlag.State_Selected)
-        is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-        
-        if is_selected or is_row_hover:
-            base_color = self.master_color
-        else:
-            base_color = QColor(self._primary_color())
+        base_color = QColor(self._primary_color())
 
         parsed_parts = self.parse_text(text)
         x_offset = rect.left() + 5 
@@ -1452,9 +1471,7 @@ class MultiGenreDelegate(QStyledItemDelegate):
         if not text:
             return
 
-        is_selected = (opts.state & QStyle.StateFlag.State_Selected)
-        is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-        base_color = self.master_color if (is_selected or is_row_hover) else QColor(self._primary_color())
+        base_color = QColor(self._primary_color())
 
         hovered_idx, hovered_genre = self.current_hover
         painter.save()
@@ -1614,13 +1631,7 @@ class CombinedTrackDelegate(QStyledItemDelegate):
         track_data = user_data.get('data', {}) if isinstance(user_data, dict) else {}
         artist_str = track_data.get('artist', 'Unknown')
 
-        is_selected = (opts.state & QStyle.StateFlag.State_Selected)
-        is_row_hover = (opts.state & QStyle.StateFlag.State_MouseOver)
-        
-        if is_selected or is_row_hover:
-            main_text_color = self.master_color.name()
-        else:
-            main_text_color = self._primary_color()
+        main_text_color = self._primary_color()
 
         painter.save()
 
@@ -1748,10 +1759,7 @@ class CombinedTrackDelegate(QStyledItemDelegate):
         parts = self.sep_pattern.split(artist_str) if artist_str else []
         current_x = text_x
         
-        if is_selected or is_row_hover:
-            base_artist_pen = QColor(main_text_color)
-        else:
-            base_artist_pen = QColor(self._secondary_color())
+        base_artist_pen = QColor(self._secondary_color())
 
         hovered_idx, hovered_token = self.current_hover
 
@@ -4018,8 +4026,8 @@ class TracksBrowser(QWidget):
 
         QTreeWidget {{ background: transparent; border: none; font-size: {pri_size}px; outline: none; }}
         QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: {pri_color}; }}
-        QTreeWidget::item:selected {{ background: transparent; color: {color_hex}; }}
-        QTreeWidget::item:hover {{ background: transparent; color: {color_hex}; }}
+        QTreeWidget::item:selected {{ background: transparent; }}
+        QTreeWidget::item:hover {{ background: transparent; }}
         
         QHeaderView::section {{ background: transparent; border: none; }}
         QHeaderView::section:hover {{ background: transparent; }}

@@ -436,7 +436,7 @@ class FooterClickableLabel(QLabel):
 
     def _apply_hover(self):
         self.setStyleSheet(
-            f"font-size: {self._sec_px}px; color: #fff; background: transparent; text-decoration: underline;")
+            f"font-size: {self._sec_px}px; color: {self._sec_color}; background: transparent; text-decoration: underline;")
 
     def _text_w(self):
         return QFontMetrics(self.font()).horizontalAdvance(self.text())
