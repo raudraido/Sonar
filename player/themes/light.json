@@ -1,0 +1,19 @@
+{
+  "name": "Light",
+  "accent": "#388BF1",
+  "dynamic_accent": false,
+  "auto_bg_from_accent": false,
+  "left_panel_bg": "228,234,248",
+  "queue_panel_bg": "228,234,248",
+  "footer_panel_bg": "228,234,248",
+  "main_panel_bg": "236,240,252",
+  "header_panel_bg": "228,234,248",
+  "font_size_primary": 14,
+  "font_size_secondary": 12,
+  "font_color_primary": "#388BF1",
+  "font_color_secondary": "#4a4a4a",
+  "auto_menu_hover": false,
+  "menu_hover_color": "#b8cce8",
+  "auto_border_from_accent": false,
+  "manual_border_color": "#b8cce8"
+}

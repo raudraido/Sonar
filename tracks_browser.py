@@ -1,6 +1,6 @@
 import re
 import os
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
 import time
 import json
 import math
@@ -2306,11 +2306,10 @@ class TracksBrowser(QWidget):
         _px  = getattr(_theme, 'font_size_primary',  14)
         _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
         )
         
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
@@ -3574,12 +3573,11 @@ class TracksBrowser(QWidget):
         _fg2 = getattr(_theme, 'font_color_secondary', '#777777')
         _px  = getattr(_theme, 'font_size_primary',    14)
         _acc = getattr(_theme, 'accent',                '#ffffff')
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px;"
             f" border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )

@@ -387,16 +387,15 @@ class NowPlayingFooterWidget(QWidget):
             return f"{s} BPM"
 
         _theme = getattr(self.window(), 'theme', None)
-        from player.mixins.visuals import menu_hover
+        from player.mixins.visuals import resolve_menu_hover
         _bc  = getattr(_theme, 'border_color',       '#444444')
         _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
         _px  = getattr(_theme, 'font_size_primary',  14)
-        _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
         menu.setStyleSheet(
             f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; }}"
             f"QMenu::item {{ padding: 6px 25px; }}"
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
         )
         for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
                              ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
@@ -749,6 +748,32 @@ class SettingsWindow(QWidget):
         sep.setStyleSheet("color: #2a2a2a;")
         layout.addWidget(sep)
 
+        from player.theme import load_presets
+        PRESETS = load_presets()
+        preset_label = QLabel("Preset")
+        preset_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(preset_label)
+
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(8)
+        for preset_name in PRESETS:
+            pb = QPushButton(preset_name)
+            pb.setCursor(Qt.CursorShape.PointingHandCursor)
+            pb.setStyleSheet(
+                "QPushButton { background: #2a2a2a; color: #bbb; border: 1px solid #444; "
+                "border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
+                "QPushButton:hover { background: #3a3a3a; color: #fff; }"
+            )
+            pb.clicked.connect(lambda _=False, n=preset_name: self._apply_preset(n))
+            preset_row.addWidget(pb)
+        preset_row.addStretch()
+        layout.addLayout(preset_row)
+
+        sep_preset = QFrame()
+        sep_preset.setFrameShape(QFrame.Shape.HLine)
+        sep_preset.setStyleSheet("color: #2a2a2a;")
+        layout.addWidget(sep_preset)
+
         layout.addWidget(QLabel("Theme:"))
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
         self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
@@ -862,6 +887,29 @@ class SettingsWindow(QWidget):
         )
         self.border_color_btn.clicked.connect(self._pick_border_color)
         layout.addWidget(self.border_color_btn)
+
+        sep4 = QFrame()
+        sep4.setFrameShape(QFrame.Shape.HLine)
+        sep4.setStyleSheet("color: #2a2a2a;")
+        layout.addWidget(sep4)
+
+        menu_hover_label = QLabel("Menu Hover Color")
+        menu_hover_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(menu_hover_label)
+
+        self.auto_menu_hover_check = QCheckBox("Auto (lighter of accent)")
+        self.auto_menu_hover_check.setChecked(self.parent.theme.auto_menu_hover)
+        self.auto_menu_hover_check.stateChanged.connect(self._toggle_auto_menu_hover)
+        layout.addWidget(self.auto_menu_hover_check)
+
+        _mh_auto = self.parent.theme.auto_menu_hover
+        _mh_hex  = self.parent.theme.menu_hover_color
+        self.menu_hover_btn = QPushButton("auto" if _mh_auto else _mh_hex)
+        self.menu_hover_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menu_hover_btn.setEnabled(not _mh_auto)
+        self.menu_hover_btn.setStyleSheet(_bg_btn_style(_mh_hex, disabled=_mh_auto))
+        self.menu_hover_btn.clicked.connect(self._pick_menu_hover_color)
+        layout.addWidget(self.menu_hover_btn)
 
         layout.addStretch()
 
@@ -1044,6 +1092,53 @@ class SettingsWindow(QWidget):
             btn.setText("auto" if auto else hex_color)
             btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=auto))
 
+    def _apply_preset(self, name: str):
+        from player.theme import load_presets
+        PRESETS = load_presets()
+        import dataclasses
+        preset = PRESETS.get(name)
+        if not preset:
+            return
+        t = self.parent.theme
+        skip = {'border_color'}  # runtime-only
+        for f in dataclasses.fields(preset):
+            if f.name not in skip:
+                setattr(t, f.name, getattr(preset, f.name))
+
+        # Sync every settings widget to the new values
+        self.dynamic_check.setChecked(t.dynamic_accent)
+        self.color_btn.setStyleSheet(
+            f"background: {t.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;"
+        )
+        self.auto_bg_check.setChecked(t.auto_bg_from_accent)
+        self._sync_bg_btns()
+        self.auto_border_check.setChecked(t.auto_border_from_accent)
+        _bh = t.manual_border_color
+        _ba = t.auto_border_from_accent
+        self.border_color_btn.setText("auto" if _ba else _bh)
+        self.border_color_btn.setEnabled(not _ba)
+        self.border_color_btn.setStyleSheet(self._bg_btn_style(_bh, disabled=_ba))
+        self.auto_menu_hover_check.setChecked(t.auto_menu_hover)
+        _mh = t.menu_hover_color
+        _ma = t.auto_menu_hover
+        self.menu_hover_btn.setText("auto" if _ma else _mh)
+        self.menu_hover_btn.setEnabled(not _ma)
+        self.menu_hover_btn.setStyleSheet(self._bg_btn_style(_mh, disabled=_ma))
+        self._apply_slider_color()
+
+        # Apply to the live UI
+        self.parent._last_theme_key = None
+        if t.auto_bg_from_accent:
+            self.parent._auto_tint_bg_colors()
+        self.parent.refresh_ui_styles()
+        self._apply_menu_hover_palette()
+        if hasattr(self.parent, 'visualizer'):
+            self.parent.visualizer.bar_color = QColor(t.accent)
+        if hasattr(self.parent, '_queue_panel'):
+            self.parent._queue_panel.set_accent_color(t.accent)
+            self.parent._queue_panel.apply_theme(t)
+        self.parent.now_playing_widget.apply_theme(t)
+
     def _toggle_auto_border(self):
         auto = self.auto_border_check.isChecked()
         self.parent.theme.auto_border_from_accent = auto
@@ -1072,6 +1167,41 @@ class SettingsWindow(QWidget):
             self.parent._last_theme_key = None
             self.parent.refresh_ui_styles()
      
+    def _toggle_auto_menu_hover(self):
+        auto = self.auto_menu_hover_check.isChecked()
+        self.parent.theme.auto_menu_hover = auto
+        hex_color = self.parent.theme.menu_hover_color
+        if auto:
+            self.menu_hover_btn.setEnabled(False)
+            self.menu_hover_btn.setText("auto")
+            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=True))
+        else:
+            self.menu_hover_btn.setEnabled(True)
+            self.menu_hover_btn.setText(hex_color)
+            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(hex_color))
+        self._apply_menu_hover_palette()
+
+    def _pick_menu_hover_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.parent.theme.menu_hover_color), self, "Pick Menu Hover Color"
+        )
+        if color.isValid():
+            self.parent.theme.menu_hover_color = color.name()
+            self.menu_hover_btn.setText(color.name())
+            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(color.name()))
+            self._apply_menu_hover_palette()
+
+    def _apply_menu_hover_palette(self):
+        from player.mixins.visuals import resolve_menu_hover
+        from PyQt6.QtGui import QPalette, QColor as _QC
+        from PyQt6.QtWidgets import QApplication
+        hover_c = _QC(resolve_menu_hover(self.parent.theme))
+        text_c  = _QC('#111111') if hover_c.lightness() > 140 else _QC('#eeeeee')
+        pal = QApplication.instance().palette()
+        pal.setColor(QPalette.ColorRole.Highlight,       hover_c)
+        pal.setColor(QPalette.ColorRole.HighlightedText, text_c)
+        QApplication.instance().setPalette(pal)
+
     def update_vis_settings(self):
         self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
         self.vis_gain_label.setText(f"Bar Height: {self.vis_gain_slider.value()}")

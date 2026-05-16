@@ -7,9 +7,9 @@ import sys
 import time
 from version import __version__
 
-from PyQt6.QtWidgets import QApplication, QAbstractItemView, QLabel, QListWidget
+from PyQt6.QtWidgets import QAbstractItemView, QLabel, QListWidget
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette
 
 from player import resource_path
 from player.workers import BlurWorker, BPMWorker, CoverLoaderWorker
@@ -57,10 +57,33 @@ def install_scroll_reveal(viewport, scrollbar):
     return f
 
 
-def menu_hover(accent: str, alpha: int = 40) -> str:
-    """Accent colour at low opacity — used for QMenu::item:selected backgrounds."""
+def resolve_menu_hover(theme) -> str:
+    """Return the effective menu selection highlight colour from the theme."""
+    if getattr(theme, 'auto_menu_hover', True):
+        return QColor(getattr(theme, 'accent', '#ffffff')).lighter(200).name()
+    return getattr(theme, 'menu_hover_color', '#555555')
+
+
+def menu_hover(accent: str) -> str:
+    """CSS fallback for QMenu::item:selected (palette is authoritative)."""
     c = QColor(accent)
-    return f"rgba({c.red()},{c.green()},{c.blue()},{alpha})"
+    return f"rgba({c.red()},{c.green()},{c.blue()},60)"
+
+
+def apply_menu_palette(menu, hover_color: str) -> None:
+    """Set QPalette Highlight/HighlightedText on a QMenu.
+
+    With WA_TranslucentBackground, Qt6 ignores QSS item:selected background and
+    uses the palette instead — this is the only reliable way to set hover colour.
+    """
+    from PyQt6.QtGui import QPalette
+    hover_c = QColor(hover_color)
+    text_c = QColor('#111111') if hover_c.lightness() > 140 else QColor('#eeeeee')
+    pal = menu.palette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Normal):
+        pal.setColor(group, QPalette.ColorRole.Highlight,       hover_c)
+        pal.setColor(group, QPalette.ColorRole.HighlightedText, text_c)
+    menu.setPalette(pal)
 
 
 def scrollbar_css(color: str, hide_horizontal: bool = False) -> str:

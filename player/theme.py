@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Theme:
-    name: str = "Default" # User-friendly name for this theme; not used in code but can be displayed in UI.
+    name: str = "Default"
 
     # ── Accent colour ────────────────────────────────────────────────────────
     accent: str = "#fafafa"
@@ -22,21 +22,23 @@ class Theme:
     header_panel_bg: str = "14,14,14"
 
     # ── Typography ───────────────────────────────────────────────────────────
-    font_size_primary:   int = 14        # track titles, main content (px)
-    font_size_secondary: int = 12        # artist names, subtitles (px)
-    font_color_primary:   str = "#388BF1" # track titles, main content
-    font_color_secondary: str = "#4a4a4a" # artist names, subtitles
+    font_size_primary:   int = 14
+    font_size_secondary: int = 12
+    font_color_primary:   str = "#dddddd"
+    font_color_secondary: str = "#999999"
+
+    # ── Menu hover ───────────────────────────────────────────────────────────
+    auto_menu_hover:  bool = True
+    menu_hover_color: str  = "#555555"
 
     # ── Border ───────────────────────────────────────────────────────────────
-    border_width: int = 1                # accent border thickness in px
-    border_color: str = "#0e0e0e"        # effective color; computed at runtime from accent or manual
-    auto_border_from_accent: bool = True # derive border_color from accent automatically
-    manual_border_color: str = "#2a2a2a" # used when auto_border_from_accent is False
+    border_width: int = 1
+    border_color: str = "#0e0e0e"        # runtime-computed; never persisted
+    auto_border_from_accent: bool = True
+    manual_border_color: str = "#2a2a2a"
 
-    # Fields that are code constants — never saved to or loaded from QSettings.
-    _NO_PERSIST = frozenset({"border_width", "border_color",
-                             "font_size_primary", "font_size_secondary",
-                             "font_color_primary", "font_color_secondary"})
+    # Only truly runtime/computed fields are excluded from serialisation.
+    _NO_PERSIST = frozenset({"border_width", "border_color"})
 
     # ── Serialisation ────────────────────────────────────────────────────────
     def to_json(self) -> str:
@@ -56,8 +58,23 @@ class Theme:
 
     @staticmethod
     def from_legacy(_visual_settings: dict, master_color: str, dynamic_color: bool) -> "Theme":
-        """Migrate old visual_settings dict + loose colour fields to a Theme."""
         t = Theme()
         t.accent         = master_color or t.accent
         t.dynamic_accent = dynamic_color
         return t
+
+
+def load_presets() -> dict[str, "Theme"]:
+    """Load all *.json files from player/themes/ as named Theme presets."""
+    import os, glob
+    themes_dir = os.path.join(os.path.dirname(__file__), "themes")
+    presets: dict[str, Theme] = {}
+    for path in sorted(glob.glob(os.path.join(themes_dir, "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = f.read()
+            t = Theme.from_json(raw)
+            presets[t.name] = t
+        except Exception:
+            pass
+    return presets

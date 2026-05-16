@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QRectF, QPoint, QSettings, QEvent, QTimer
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap
 import re
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
@@ -842,12 +842,11 @@ class QueuePanel(QWidget):
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(MENU_CSS)
 
         # Play / queue actions

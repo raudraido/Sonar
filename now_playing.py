@@ -11,7 +11,7 @@ NowPlayingPanel – Wrapper that adds a header bar with:
 """
 
 import json
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
 
 from PyQt6.QtWidgets import (
     QTreeWidget, QWidget, QVBoxLayout, QHBoxLayout,
@@ -624,7 +624,7 @@ class NowPlayingPanel(QWidget):
         menu.setStyleSheet(
             f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; }} "
             f"QMenu::item {{ padding: 6px 25px; }} "
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
         )
         for i, name in enumerate(HEADERS):
             if i == COL_TRACK:   # TRACK column is always visible
@@ -708,12 +708,11 @@ class NowPlayingPanel(QWidget):
         _px  = getattr(_theme, 'font_size_primary',   14)
         _acc = getattr(_theme, 'accent',               '#ffffff')
         menu = QMenu()
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
             f"QMenu::item {{ padding: 7px 28px 7px 14px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {menu_hover(_acc)}; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
