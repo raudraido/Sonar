@@ -855,6 +855,13 @@ class _TrackHeader(QHeaderView):
         t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
     def _secondary_color(self):
         t = self._theme(); return getattr(t, 'font_color_secondary', '#555555') if t else '#555555'
+    def _border_qcolor(self):
+        t = self._theme()
+        if t is None:
+            return QColor('#2a2a2a')
+        if getattr(t, 'auto_border_from_accent', True):
+            return QColor(getattr(t, 'accent', '#cccccc')).darker(250)
+        return QColor(getattr(t, 'manual_border_color', '#2a2a2a'))
 
     def _flex_boundary_x(self):
         return self.sectionViewportPosition(self._FLEX_COL) + self.sectionSize(self._FLEX_COL)
@@ -914,7 +921,7 @@ class _TrackHeader(QHeaderView):
 
         if 0 < logical_index < self.count() - 1:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            pen = QPen(self._accent.darker(250), 1)
+            pen = QPen(self._border_qcolor(), 2)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawLine(rect.right(), rect.top() - 5, rect.right(), rect.bottom() - 8)
@@ -954,6 +961,13 @@ class _TrackListDelegate(QStyledItemDelegate):
         _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
         return getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
 
+    def _theme(self):
+        _p = self.parent()
+        return getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+
+    def _hover_qcolor(self) -> QColor:
+        return QColor(resolve_menu_hover(self._theme()))
+
     def set_movie(self, movie):
         self._movie = movie
 
@@ -979,9 +993,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         # Draw background once per row (col 0 only) spanning full width
         if index.column() == 0:
             if option.state & QStyle.StateFlag.State_MouseOver:
-                color = QColor(255, 255, 255, 15)
-            elif option.state & QStyle.StateFlag.State_Selected:
-                color = QColor(255, 255, 255, 20)
+                color = self._hover_qcolor()
             else:
                 color = None
             if color:
@@ -1474,6 +1486,8 @@ class AlbumDetailView(QWidget):
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(MENU_CSS)
 
         header = QAction(track.get('title', 'Unknown'), menu)
@@ -1494,6 +1508,8 @@ class AlbumDetailView(QWidget):
         track_id = str(track.get('id', ''))
         if track_id and main:
             add_menu = QMenu("Add to Playlist", menu)
+            add_menu.setWindowFlags(add_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+            add_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             add_menu.setStyleSheet(MENU_CSS)
             act_new_pl = QAction("+ New Playlist...", add_menu)
             act_new_pl.triggered.connect(lambda: self._add_to_new_playlist(main, [track_id]))
@@ -1519,6 +1535,8 @@ class AlbumDetailView(QWidget):
             track.get('artist', '')) if p.strip()]
         if artists:
             goto_menu = menu.addMenu("Go to")
+            goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+            goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             goto_menu.setStyleSheet(MENU_CSS)
             for art in artists:
                 goto_menu.addAction(f"Artist: {art}").triggered.connect(

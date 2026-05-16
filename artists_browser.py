@@ -1,7 +1,7 @@
 import os
 import json
 import random
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
 import math
 import re
 from collections import OrderedDict
@@ -390,11 +390,28 @@ class PopularTrackDelegate(QStyledItemDelegate):
         painter.save()
         is_selected = option.state & QStyle.StateFlag.State_Selected
         is_hovered = option.state & QStyle.StateFlag.State_MouseOver
-        
+
+        if index.column() == 1 and is_hovered:
+            view = option.widget
+            vp_w = view.viewport().width() if view else option.rect.width()
+            # The SongListWidget has no scrollbar; check parent QScrollArea instead
+            sb_w = 0
+            p = view.parentWidget() if view else None
+            while p:
+                if isinstance(p, QScrollArea):
+                    sb = p.verticalScrollBar()
+                    if sb and sb.isVisible():
+                        sb_w = sb.width()
+                    break
+                p = p.parentWidget()
+            right_inset = max(1, 8 - sb_w)
+            row_rect = QRectF(8, option.rect.y(), vp_w - 8 - right_inset, option.rect.height())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(resolve_menu_hover(self._theme())))
+            painter.drawRoundedRect(row_rect, 6, 6)
+
         if index.column() == 1:
-            # 1. Tell Qt to draw the CSS background first!
-            option.widget.style().drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget)
-            
             track = index.data(Qt.ItemDataRole.UserRole)
             if not track:
                 painter.restore()
@@ -468,8 +485,6 @@ class AlbumLinkDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         painter.save()
-        option.widget.style().drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget)
-        
         is_selected = option.state & QStyle.StateFlag.State_Selected
         is_row_hovered = option.state & QStyle.StateFlag.State_MouseOver
         is_cell_hovered = (index.row() == self.hovered_row)
@@ -568,6 +583,7 @@ class SongListWidget(QTreeWidget):
         theme = getattr(self.window(), 'theme', None) if self.window() else None
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
+        hover_color = resolve_menu_hover(theme)
 
         self.setStyleSheet(f"""
             QTreeWidget {{
@@ -582,12 +598,12 @@ class SongListWidget(QTreeWidget):
                 border-bottom: 1px solid rgba(255,255,255,0.02);
             }}
             QTreeWidget::item:hover {{
-                background: rgba(255, 255, 255, 0.06);
+                background: transparent;
                 color: {accent_color};
             }}
             QTreeWidget::item:selected {{
-                background: rgba(255, 255, 255, 0.08);
-                color: {accent_color};
+                background: transparent;
+                color: {pri_color};
             }}
         """)
         self.viewport().update()

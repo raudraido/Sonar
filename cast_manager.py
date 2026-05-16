@@ -22,6 +22,7 @@ import urllib.error
 import ssl
 
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QPoint
+from player.mixins.visuals import resolve_menu_hover
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QSizePolicy, QSlider,
 )
@@ -851,6 +852,11 @@ class _DeviceRow(QWidget):
         self._slider.valueChanged.connect(lambda v: self.volume_changed.emit(self._dev, v))
         lay.addWidget(self._slider)
 
+        self._normal_bg    = 'background:transparent;'
+        self._hover_bg     = 'background:transparent;'
+        self._check_color  = '#ffffff'
+        self._border_color = '#444444'
+
         # checkmark / empty box (only for toggleable cast devices)
         self._ck = None
         if show_toggle:
@@ -860,10 +866,6 @@ class _DeviceRow(QWidget):
             self._ck.setCursor(Qt.CursorShape.PointingHandCursor)
             self._update_check(is_active)
             lay.addWidget(self._ck)
-
-        c = QColor(accent_color)
-        self._normal_bg = 'background:transparent;'
-        self._hover_bg  = f'background:rgba({c.red()},{c.green()},{c.blue()},0.12);'
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(self._normal_bg)
 
@@ -873,13 +875,13 @@ class _DeviceRow(QWidget):
         if active:
             self._ck.setText('✓')
             self._ck.setStyleSheet(
-                'color:#eee; font-size:15px; font-weight:bold; background:transparent;'
+                f'color:{self._check_color}; font-size:15px; font-weight:bold; background:transparent;'
             )
         else:
             self._ck.setText('')
             self._ck.setStyleSheet(
-                'background:rgba(255,255,255,0.10);'
-                ' border:1px solid rgba(255,255,255,0.20); border-radius:3px;'
+                f'background:rgba(255,255,255,0.10);'
+                f' border:1px solid {self._border_color}; border-radius:3px;'
             )
 
     def set_active(self, active: bool, volume: int = 50):
@@ -889,6 +891,31 @@ class _DeviceRow(QWidget):
             self._slider.setValue(volume)
             self._slider.blockSignals(False)
         self._update_check(active)
+
+    def apply_theme(self, theme):
+        pri = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
+        mc  = getattr(theme, 'accent', '#ffffff') if theme else '#ffffff'
+        self._name_lbl.setStyleSheet(f'color:{pri}; font-size:13px; background:transparent;')
+        self._hover_bg = f'background:{resolve_menu_hover(theme)};'
+        self._check_color = mc
+        if getattr(theme, 'auto_border_from_accent', True):
+            self._border_color = QColor(mc).darker(250).name()
+        else:
+            self._border_color = getattr(theme, 'manual_border_color', '#444444')
+        self._update_check(self._ck is not None and bool(self._ck.text()))
+        self._slider.setStyleSheet(f"""
+            QSlider {{ background:transparent; }}
+            QSlider::groove:horizontal {{
+                height:3px; background:rgba(255,255,255,0.18); border-radius:2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background:{mc}; border-radius:2px;
+            }}
+            QSlider::handle:horizontal {{
+                width:14px; height:14px; margin:-6px 0;
+                border-radius:7px; background:{mc};
+            }}
+        """)
 
     def enterEvent(self, e):
         self.setStyleSheet(self._hover_bg); super().enterEvent(e)
@@ -953,6 +980,17 @@ class _CastPopup(QFrame):
                 active_ids, still_scanning, accent_color):
         self._active_ids = set(active_ids)
         self._accent     = accent_color
+
+        mw = self.parent().window() if self.parent() else None
+        theme = getattr(mw, 'theme', None)
+        pri = getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd'
+        sec = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
+        self._hdr_title.setStyleSheet(
+            f'color:{pri}; font-size:13px; font-weight:bold; background:transparent;'
+        )
+        self._hdr_sub.setStyleSheet(f'color:{sec}; font-size:11px; background:transparent;')
+        for row in self._rows.values():
+            row.apply_theme(theme)
 
         self._update_header(track, cover_pixmap)
 
@@ -1069,11 +1107,16 @@ class _CastPopup(QFrame):
         s.setStyleSheet('background:rgba(255,255,255,0.07);')
         return s
 
+    def _theme(self):
+        mw = self.parent().window() if self.parent() else None
+        return getattr(mw, 'theme', None)
+
     def _add_device_row(self, dev: DeviceInfo):
         if dev.id in self._rows:
             return
         row = _DeviceRow(dev, is_active=(dev.id in self._active_ids),
                          volume=50, show_toggle=True, accent_color=self._accent)
+        row.apply_theme(self._theme())
         row.toggled.connect(self.toggled)
         row.volume_changed.connect(self.volume_changed)
         self._rows[dev.id] = row
@@ -1117,17 +1160,20 @@ class _CastPopup(QFrame):
         mw = self.parent().window() if self.parent() else None
         theme = getattr(mw, 'theme', None)
         bg_str = getattr(theme, 'main_panel_bg', '14,14,14')
-        border = getattr(theme, 'border_color', '#2a2a2a')
         try:
             r, g, b = (int(x) for x in bg_str.split(','))
         except Exception:
             r, g, b = 14, 14, 14
+        if getattr(theme, 'auto_border_from_accent', True):
+            border_qcolor = QColor(getattr(theme, 'accent', '#cccccc')).darker(250)
+        else:
+            border_qcolor = QColor(getattr(theme, 'manual_border_color', '#2a2a2a'))
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12.0, 12.0)
         painter.fillPath(path, QColor(r, g, b))
-        painter.setPen(QPen(QColor(border), 1.0))
+        painter.setPen(QPen(border_qcolor, 1.0))
         painter.drawPath(path)
         painter.end()
 
@@ -1276,7 +1322,7 @@ class CastManager:
             devices=list(self._devices),
             active_ids=self._active_ids,
             still_scanning=(self._pending_scans > 0 or stale),
-            accent_color=getattr(self._win, 'master_color', '#ffffff'),
+            accent_color=getattr(getattr(self._win, 'theme', None), 'accent', '#ffffff'),
         )
         self._popup.show_near(self._win.cast_btn)
 

@@ -300,11 +300,13 @@ class VisualsMixin:
 
         self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", "#111111"))
 
-        
+        cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
+        self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
+
         theme_key = mc
-        
+
         if getattr(self, '_last_theme_key', None) == theme_key:
-            return 
+            return
             
         self._last_theme_key = theme_key
 
@@ -331,8 +333,6 @@ class VisualsMixin:
 
         for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.import_btn, "img/import.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png"), (self.btn_stop, "img/stop.png")]:
             btn.setIcon(get_cached_icon(icon_name, mc))
-        cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
-        self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
 
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, 'set_accent_color'):
@@ -361,11 +361,12 @@ class VisualsMixin:
             QTabBar::tab:hover {{ color: #888; background: rgb(34,34,34); }}
         """
 
-        toggle_style = "QPushButton { background: transparent; border: none; border-radius: 20px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }"
+        _hov = resolve_menu_hover(self.theme)
+        toggle_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
         self.btn_shuffle.setStyleSheet(toggle_style); self.btn_repeat.setStyleSheet(toggle_style)
-        
-        side_btn_style = "QPushButton { background: transparent; border: none; border-radius: 20px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }"
-        for btn in [self.settings_btn, self.import_btn, self.btn_prev, self.btn_next, self.btn_stop]: btn.setStyleSheet(side_btn_style)
+
+        side_btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
+        for btn in [self.settings_btn, self.import_btn, self.btn_prev, self.btn_next, self.btn_stop, self.cast_btn]: btn.setStyleSheet(side_btn_style)
 
         # 2. Define the Buttons CSS
         modern_dark_style = f"""

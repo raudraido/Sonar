@@ -225,10 +225,9 @@ class _QueueDelegate(QStyledItemDelegate):
         r = option.rect
 
         from PyQt6.QtWidgets import QStyle
-        if option.state & QStyle.StateFlag.State_Selected:
-            halo_color = QColor(255, 255, 255, 18)
-        elif option.state & QStyle.StateFlag.State_MouseOver:
-            halo_color = QColor(255, 255, 255, 8)
+        if option.state & QStyle.StateFlag.State_MouseOver:
+            _theme = getattr(getattr(option.widget, 'window', lambda: None)(), 'theme', None)
+            halo_color = QColor(resolve_menu_hover(_theme))
         else:
             halo_color = None
         if halo_color:

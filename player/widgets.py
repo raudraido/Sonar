@@ -388,14 +388,20 @@ class NowPlayingFooterWidget(QWidget):
 
         _theme = getattr(self.window(), 'theme', None)
         from player.mixins.visuals import resolve_menu_hover
-        _bc  = getattr(_theme, 'border_color',       '#444444')
-        _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px  = getattr(_theme, 'font_size_primary',  14)
+        _bg  = getattr(_theme, 'main_panel_bg',      '14,14,14')
+        _bc  = getattr(_theme, 'border_color',        '#444444')
+        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
+        _px  = getattr(_theme, 'font_size_primary',   14)
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
-            f"QMenu {{ background-color: #222; color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; }}"
-            f"QMenu::item {{ padding: 6px 25px; }}"
+            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
+            "  border-radius: 12px; padding: 4px; }"
+            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
             f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
+            f"QMenu::item:disabled {{ color: {_fg2}; }}"
         )
         for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
                              ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
@@ -637,6 +643,9 @@ class SettingsWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(900)
+        self._seps = []          # QFrame separators
+        self._bg_field_lbls = [] # background panel name labels
+        self._hotkey_desc_lbls = []  # hotkey description labels
         self.setStyleSheet("color: #ddd; font-family: sans-serif;")
         self._drag_pos = None
 
@@ -685,10 +694,11 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(16, 16, 12, 16)
 
         # ── Right column ──────────────────────────────────────────────────
-        _sep_line = QFrame()
-        _sep_line.setFrameShape(QFrame.Shape.VLine)
-        _sep_line.setStyleSheet(f"color: {bc};")
-        outer.addWidget(_sep_line)
+        self._sep_line_v = QFrame()
+        self._sep_line_v.setFrameShape(QFrame.Shape.VLine)
+        self._sep_line_v.setStyleSheet(f"color: {bc};")
+        self._seps.append(self._sep_line_v)
+        outer.addWidget(self._sep_line_v)
 
         self._scroll_right = QScrollArea()
         self._scroll_right.setWidgetResizable(True)
@@ -735,12 +745,12 @@ class SettingsWindow(QWidget):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
-        name_lbl = QLabel("Icosahedron")
-        name_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {fc1}; background: transparent;")
-        ver_lbl = QLabel(f"v{__version__}")
-        ver_lbl.setStyleSheet(f"font-size: 11px; color: {fc2}; background: transparent;")
-        title_col.addWidget(name_lbl)
-        title_col.addWidget(ver_lbl)
+        self._name_lbl = QLabel("Icosahedron")
+        self._name_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {fc1}; background: transparent;")
+        self._ver_lbl = QLabel(f"v{__version__}")
+        self._ver_lbl.setStyleSheet(f"font-size: 11px; color: {fc2}; background: transparent;")
+        title_col.addWidget(self._name_lbl)
+        title_col.addWidget(self._ver_lbl)
         header.addLayout(title_col)
         header.addStretch()
         layout.addLayout(header)
@@ -748,13 +758,14 @@ class SettingsWindow(QWidget):
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep)
         layout.addWidget(sep)
 
         from player.theme import load_presets
         PRESETS = load_presets()
-        preset_label = QLabel("Preset")
-        preset_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(preset_label)
+        self._preset_label = QLabel("Preset")
+        self._preset_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._preset_label)
 
         preset_row = QHBoxLayout()
         preset_row.setSpacing(8)
@@ -774,11 +785,12 @@ class SettingsWindow(QWidget):
         sep_preset = QFrame()
         sep_preset.setFrameShape(QFrame.Shape.HLine)
         sep_preset.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep_preset)
         layout.addWidget(sep_preset)
 
-        _theme_lbl = QLabel("Theme:")
-        _theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
-        layout.addWidget(_theme_lbl)
+        self._theme_lbl = QLabel("Theme:")
+        self._theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
+        layout.addWidget(self._theme_lbl)
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
         self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
         self.dynamic_check.stateChanged.connect(self.toggle_dynamic_color)
@@ -795,11 +807,12 @@ class SettingsWindow(QWidget):
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep2)
         layout.addWidget(sep2)
 
-        bg_label = QLabel("Background Colors")
-        bg_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(bg_label)
+        self._bg_label = QLabel("Background Colors")
+        self._bg_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._bg_label)
 
         self.auto_bg_check = QCheckBox("Auto-tint from accent color")
         self.auto_bg_check.setChecked(self.parent.theme.auto_bg_from_accent)
@@ -852,6 +865,7 @@ class SettingsWindow(QWidget):
         for row, (field, label_text) in enumerate(_BG_FIELDS):
             lbl = QLabel(label_text)
             lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
+            self._bg_field_lbls.append(lbl)
 
             r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
             hex_color = QColor(r, g, b).name()
@@ -870,11 +884,12 @@ class SettingsWindow(QWidget):
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
         sep3.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep3)
         layout.addWidget(sep3)
 
-        border_section_label = QLabel("Border Color")
-        border_section_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(border_section_label)
+        self._border_section_label = QLabel("Border Color")
+        self._border_section_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._border_section_label)
 
         self.auto_border_check = QCheckBox("Auto-derive from accent color")
         self.auto_border_check.setChecked(self.parent.theme.auto_border_from_accent)
@@ -895,11 +910,12 @@ class SettingsWindow(QWidget):
         sep4 = QFrame()
         sep4.setFrameShape(QFrame.Shape.HLine)
         sep4.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep4)
         layout.addWidget(sep4)
 
-        menu_hover_label = QLabel("Menu Hover Color")
-        menu_hover_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(menu_hover_label)
+        self._menu_hover_label = QLabel("Menu Hover Color")
+        self._menu_hover_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._menu_hover_label)
 
         self.auto_menu_hover_check = QCheckBox("Auto (lighter of accent)")
         self.auto_menu_hover_check.setChecked(self.parent.theme.auto_menu_hover)
@@ -921,9 +937,9 @@ class SettingsWindow(QWidget):
         if hasattr(self.parent, 'hotkey_manager'):
             from hotkeys import DEFAULT_HOTKEYS
 
-            hotkeys_label = QLabel("HOTKEYS")
-            hotkeys_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-            rlayout.addWidget(hotkeys_label)
+            self._hotkeys_label = QLabel("HOTKEYS")
+            self._hotkeys_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+            rlayout.addWidget(self._hotkeys_label)
 
             _hk_widget = QWidget()
             _hk_widget.setStyleSheet("background: transparent;")
@@ -938,6 +954,7 @@ class SettingsWindow(QWidget):
             for row, (hid, desc, _default) in enumerate(DEFAULT_HOTKEYS):
                 lbl = QLabel(desc)
                 lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
+                self._hotkey_desc_lbls.append(lbl)
 
                 btn = KeyCaptureButton(self.parent.hotkey_manager.get(hid))
                 btn.key_captured.connect(lambda key, h=hid: self._on_key_captured(h, key))
@@ -1085,6 +1102,39 @@ class SettingsWindow(QWidget):
             self.parent._auto_tint_bg_colors()
             self.parent.refresh_ui_styles()
 
+    def refresh_theme(self):
+        """Repaint the settings window itself to match the current theme."""
+        t   = self.parent.theme
+        fc1 = t.font_color_primary
+        fc2 = t.font_color_secondary
+        bc  = t.border_color
+        bg  = t.main_panel_bg
+
+        self.bg.setStyleSheet(
+            f"QFrame#settingsBg {{ background-color: rgb({bg}); border: 1px solid {bc}; border-radius: 10px; }}"
+        )
+        for sep in self._seps:
+            sep.setStyleSheet(f"color: {bc};")
+        _sec = f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;"
+        self._preset_label.setStyleSheet(_sec)
+        self._bg_label.setStyleSheet(_sec)
+        self._border_section_label.setStyleSheet(_sec)
+        self._menu_hover_label.setStyleSheet(_sec)
+        if hasattr(self, '_hotkeys_label'):
+            self._hotkeys_label.setStyleSheet(_sec)
+        self._name_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {fc1}; background: transparent;")
+        self._ver_lbl.setStyleSheet(f"font-size: 11px; color: {fc2}; background: transparent;")
+        self._theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
+        for lbl in self._bg_field_lbls:
+            lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
+        for lbl in self._hotkey_desc_lbls:
+            lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
+        self.color_btn.setStyleSheet(
+            f"background: {t.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;"
+        )
+        self._update_settings_logo_tint(t.accent)
+        self._apply_slider_color()
+
     def _sync_bg_btns(self):
         """Refresh button labels/colors after auto-tint has updated the theme fields."""
         if not hasattr(self, '_bg_btns'):
@@ -1142,6 +1192,7 @@ class SettingsWindow(QWidget):
             self.parent._queue_panel.set_accent_color(t.accent)
             self.parent._queue_panel.apply_theme(t)
         self.parent.now_playing_widget.apply_theme(t)
+        self.refresh_theme()
 
     def _toggle_auto_border(self):
         auto = self.auto_border_check.isChecked()

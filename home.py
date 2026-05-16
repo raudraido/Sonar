@@ -10,7 +10,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
 from PyQt6.QtWidgets import QStyledItemDelegate
 
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
 from tracks_browser import MiddleClickScroller
 
 
@@ -197,7 +197,8 @@ class _ArrowButton(QAbstractButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self.underMouse():
-            p.setBrush(QColor(255, 255, 255, 26))
+            _theme = getattr(self.window(), 'theme', None)
+            p.setBrush(QColor(resolve_menu_hover(_theme)))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawRoundedRect(self.rect(), 12, 12)
         color = self._color if self._active else QColor("#333")

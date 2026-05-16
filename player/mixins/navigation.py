@@ -595,6 +595,7 @@ class NavigationMixin:
         import re
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QAction, QCursor
+        from player.mixins.visuals import resolve_menu_hover
 
         _t   = getattr(self, 'theme', None)
         _bg  = getattr(_t, 'main_panel_bg',       '14,14,14')
@@ -606,11 +607,12 @@ class NavigationMixin:
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
             "  border-radius: 12px; padding: 4px; }"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: #1e1e1e; color: {_fg}; }}"
+            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_t)}; color: {_fg}; }}"
             f"QMenu::item:disabled {{ color: {_fg2}; }}"
             f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
         )
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(MENU_CSS)
 
@@ -631,6 +633,8 @@ class NavigationMixin:
         menu.addSeparator()
 
         goto_menu = menu.addMenu("Go to")
+        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         goto_menu.setStyleSheet(MENU_CSS)
         album_data = {
             'id': album_id,
@@ -664,6 +668,8 @@ class NavigationMixin:
             def _fmt(v):
                 return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
             bpm_menu = menu.addMenu("Adjust BPM")
+            bpm_menu.setWindowFlags(bpm_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+            bpm_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             bpm_menu.setStyleSheet(menu.styleSheet())
             for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
                                  ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:

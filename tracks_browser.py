@@ -737,6 +737,13 @@ class SmartSortHeader(QHeaderView):
         t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
     def _secondary_color(self):
         t = self._theme(); return getattr(t, 'font_color_secondary', '#555555') if t else '#555555'
+    def _border_qcolor(self):
+        t = self._theme()
+        if t is None:
+            return QColor('#2a2a2a')
+        if getattr(t, 'auto_border_from_accent', True):
+            return QColor(getattr(t, 'accent', '#cccccc')).darker(250)
+        return QColor(getattr(t, 'manual_border_color', '#2a2a2a'))
 
     _CLICK_THRESHOLD = 4  # pixels — more than this = drag, not click
 
@@ -848,7 +855,7 @@ class SmartSortHeader(QHeaderView):
         # Column separator
         if logicalIndex != 0 and self.visualIndex(logicalIndex) < self.count() - 1:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            pen = QPen(self._accent.darker(250), 1)
+            pen = QPen(self._border_qcolor(), 2)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawLine(rect.right(), rect.top() + 8, rect.right(), rect.bottom() - 8)
