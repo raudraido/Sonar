@@ -642,8 +642,10 @@ class SettingsWindow(QWidget):
 
         # Themed frame — same approach as TrackInfoDialog
         theme = getattr(parent, 'theme', None)
-        bg = getattr(theme, 'main_panel_bg', '24,24,24') if theme else '24,24,24'
-        bc = getattr(theme, 'border_color', '#2a2a2a') if theme else '#2a2a2a'
+        bg  = getattr(theme, 'main_panel_bg',       '24,24,24') if theme else '24,24,24'
+        bc  = getattr(theme, 'border_color',         '#2a2a2a') if theme else '#2a2a2a'
+        fc1 = getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd'
+        fc2 = getattr(theme, 'font_color_secondary', '#777777') if theme else '#777777'
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -685,7 +687,7 @@ class SettingsWindow(QWidget):
         # ── Right column ──────────────────────────────────────────────────
         _sep_line = QFrame()
         _sep_line.setFrameShape(QFrame.Shape.VLine)
-        _sep_line.setStyleSheet("color: #2a2a2a;")
+        _sep_line.setStyleSheet(f"color: {bc};")
         outer.addWidget(_sep_line)
 
         self._scroll_right = QScrollArea()
@@ -734,9 +736,9 @@ class SettingsWindow(QWidget):
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         name_lbl = QLabel("Icosahedron")
-        name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #fff; background: transparent;")
+        name_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {fc1}; background: transparent;")
         ver_lbl = QLabel(f"v{__version__}")
-        ver_lbl.setStyleSheet("font-size: 11px; color: #555; background: transparent;")
+        ver_lbl.setStyleSheet(f"font-size: 11px; color: {fc2}; background: transparent;")
         title_col.addWidget(name_lbl)
         title_col.addWidget(ver_lbl)
         header.addLayout(title_col)
@@ -745,13 +747,13 @@ class SettingsWindow(QWidget):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #2a2a2a;")
+        sep.setStyleSheet(f"color: {bc};")
         layout.addWidget(sep)
 
         from player.theme import load_presets
         PRESETS = load_presets()
         preset_label = QLabel("Preset")
-        preset_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        preset_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(preset_label)
 
         preset_row = QHBoxLayout()
@@ -771,10 +773,12 @@ class SettingsWindow(QWidget):
 
         sep_preset = QFrame()
         sep_preset.setFrameShape(QFrame.Shape.HLine)
-        sep_preset.setStyleSheet("color: #2a2a2a;")
+        sep_preset.setStyleSheet(f"color: {bc};")
         layout.addWidget(sep_preset)
 
-        layout.addWidget(QLabel("Theme:"))
+        _theme_lbl = QLabel("Theme:")
+        _theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
+        layout.addWidget(_theme_lbl)
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
         self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
         self.dynamic_check.stateChanged.connect(self.toggle_dynamic_color)
@@ -790,11 +794,11 @@ class SettingsWindow(QWidget):
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #2a2a2a;")
+        sep2.setStyleSheet(f"color: {bc};")
         layout.addWidget(sep2)
 
         bg_label = QLabel("Background Colors")
-        bg_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        bg_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(bg_label)
 
         self.auto_bg_check = QCheckBox("Auto-tint from accent color")
@@ -847,7 +851,7 @@ class SettingsWindow(QWidget):
         auto = self.parent.theme.auto_bg_from_accent
         for row, (field, label_text) in enumerate(_BG_FIELDS):
             lbl = QLabel(label_text)
-            lbl.setStyleSheet("color: #bbb; font-size: 12px; background: transparent;")
+            lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
 
             r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
             hex_color = QColor(r, g, b).name()
@@ -865,11 +869,11 @@ class SettingsWindow(QWidget):
 
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet("color: #2a2a2a;")
+        sep3.setStyleSheet(f"color: {bc};")
         layout.addWidget(sep3)
 
         border_section_label = QLabel("Border Color")
-        border_section_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        border_section_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(border_section_label)
 
         self.auto_border_check = QCheckBox("Auto-derive from accent color")
@@ -890,11 +894,11 @@ class SettingsWindow(QWidget):
 
         sep4 = QFrame()
         sep4.setFrameShape(QFrame.Shape.HLine)
-        sep4.setStyleSheet("color: #2a2a2a;")
+        sep4.setStyleSheet(f"color: {bc};")
         layout.addWidget(sep4)
 
         menu_hover_label = QLabel("Menu Hover Color")
-        menu_hover_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        menu_hover_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(menu_hover_label)
 
         self.auto_menu_hover_check = QCheckBox("Auto (lighter of accent)")
@@ -918,7 +922,7 @@ class SettingsWindow(QWidget):
             from hotkeys import DEFAULT_HOTKEYS
 
             hotkeys_label = QLabel("HOTKEYS")
-            hotkeys_label.setStyleSheet("color: #666; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+            hotkeys_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
             rlayout.addWidget(hotkeys_label)
 
             _hk_widget = QWidget()
@@ -933,7 +937,7 @@ class SettingsWindow(QWidget):
 
             for row, (hid, desc, _default) in enumerate(DEFAULT_HOTKEYS):
                 lbl = QLabel(desc)
-                lbl.setStyleSheet("color: #bbb; font-size: 12px; background: transparent;")
+                lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
 
                 btn = KeyCaptureButton(self.parent.hotkey_manager.get(hid))
                 btn.key_captured.connect(lambda key, h=hid: self._on_key_captured(h, key))
