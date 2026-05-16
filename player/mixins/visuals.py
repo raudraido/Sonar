@@ -303,7 +303,7 @@ class VisualsMixin:
         cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
         self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
 
-        theme_key = mc
+        theme_key = (mc, resolve_menu_hover(self.theme))
 
         if getattr(self, '_last_theme_key', None) == theme_key:
             return
@@ -342,26 +342,26 @@ class VisualsMixin:
             self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
             self._tab_hook_set = True
 
+        _hov = resolve_menu_hover(self.theme)
+        _fc1 = getattr(self.theme, 'font_color_primary', '#dddddd')
+
         # THE MAGICAL CSS TRICK (Inside refresh_ui_styles)
         tabs_css = f"""
             QTabBar {{ border: none; background: transparent; }}
             QTabBar::tab {{
-                background: rgb(17,17,17);
-                color: #555;
+                background: transparent;
+                color: {_fc1};
                 padding: 10px 20px;
                 border: none;
                 font-family: 'sans-serif', sans-serif;
                 font-weight: bold;
                 font-size: 13px;
-                border-top-left-radius: 5px;
-                border-top-right-radius: 5px;
+                border-radius: 5px;
                 margin-right: 4px;
             }}
-            QTabBar::tab:selected {{ color: {mc}; background: rgb(24,24,24); border-bottom: 2px solid {mc}; }}
-            QTabBar::tab:hover {{ color: #888; background: rgb(34,34,34); }}
+            QTabBar::tab:selected {{ color: {mc}; background: transparent; }}
+            QTabBar::tab:hover {{ color: {_fc1}; background: {_hov}; border-radius: 5px; }}
         """
-
-        _hov = resolve_menu_hover(self.theme)
         toggle_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
         self.btn_shuffle.setStyleSheet(toggle_style); self.btn_repeat.setStyleSheet(toggle_style)
 

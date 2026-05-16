@@ -2839,6 +2839,7 @@ class ArtistGridBrowser(QWidget):
         _fg = getattr(_theme, 'font_color_primary', '#dddddd')
         _px = getattr(_theme, 'font_size_primary',  14)
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(f"""
             QMenu {{

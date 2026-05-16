@@ -253,14 +253,10 @@ class SmartSearchContainer(QWidget):
         input_layout.addStretch()
         input_layout.addWidget(self.custom_clear_btn)
         
-        self.search_input.setStyleSheet("""
-            QLineEdit { 
-                background-color: #080808; color: #ddd; 
-                border: 1px solid #333; border-radius: 4px; 
-                padding-left: 10px; padding-right: 25px; font-size: 13px; 
-            } 
-            QLineEdit:focus { border: 1px solid #555; }
-        """)
+        self.search_input.setStyleSheet(
+            "QLineEdit { background-color: #080808; color: #ddd; border: 1px solid #333;"
+            " border-radius: 4px; padding-left: 10px; padding-right: 25px; font-size: 13px; }"
+        )
         
         self.search_input.textChanged.connect(self._on_text_changed)
         self.search_input.focus_lost.connect(self.check_collapse)
@@ -323,7 +319,28 @@ class SmartSearchContainer(QWidget):
             self.toggle_search()
 
     def set_accent_color(self, color):
-        
+        from player.mixins.visuals import resolve_menu_hover
+        _theme = getattr(self.window(), 'theme', None)
+        _hov = resolve_menu_hover(_theme)
+        _bg  = getattr(_theme, 'main_panel_bg',        '14,14,14')
+        _bc  = getattr(_theme, 'border_color',         '#2a2a2a')
+        _fg1 = getattr(_theme, 'font_color_primary',   '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary', '#999999')
+        _btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 4px; }} QPushButton:hover {{ background: {_hov}; }}"
+        self.search_btn.setStyleSheet(_btn_style)
+        self.burger_btn.setStyleSheet(_btn_style)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: rgb({_bg}); color: {_fg1};
+                border: 1px solid {_bc}; border-radius: 4px;
+                padding-left: 10px; padding-right: 25px; font-size: 13px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {_bc}; }}
+        """)
+        _pal = self.search_input.palette()
+        _pal.setColor(_pal.ColorRole.PlaceholderText, QColor(_fg2))
+        self.search_input.setPalette(_pal)
+
         try:
             pixmap = QPixmap(resource_path("img/search.png"))
             if not pixmap.isNull():
@@ -334,7 +351,14 @@ class SmartSearchContainer(QWidget):
                 self.search_btn.setIcon(QIcon(pixmap))
         except Exception as e: print(f"Error tinting search icon: {e}")
 
-    def get_text(self): 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, '_theme_applied', False):
+            _theme = getattr(self.window(), 'theme', None)
+            self.set_accent_color(getattr(_theme, 'accent', '#ffffff'))
+            self._theme_applied = True
+
+    def get_text(self):
         return self.search_input.text()
     
     def set_text(self, text): 
@@ -400,10 +424,12 @@ class PaginationFooter(QWidget):
         self.main_layout.addStretch() # Pushes buttons to the left just like before!
 
     def set_accent_color(self, color):
+        from player.mixins.visuals import resolve_menu_hover
         self.current_accent = color
         _theme = getattr(self.window(), 'theme', None)
         self._font_color = getattr(_theme, 'font_color_primary', '#dddddd')
         self._font_size  = getattr(_theme, 'font_size_primary',  14)
+        self._hov_color  = resolve_menu_hover(_theme)
         self.setStyleSheet("""
             PaginationFooter {
                 background-color: transparent;
@@ -425,11 +451,12 @@ class PaginationFooter(QWidget):
 
         btn.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
         
+        hov = getattr(self, '_hov_color', '#333333')
         if active:
             style = f"""
                 QPushButton {{
-                    background-color: {self.current_accent};
-                    color: {self._font_color};
+                    background-color: transparent;
+                    color: {self.current_accent};
                     border: none;
                     border-radius: 4px;
                     font-weight: bold;
@@ -438,9 +465,9 @@ class PaginationFooter(QWidget):
             """
         else:
             style = f"""
-                QPushButton {{ background-color: #1a1a1a; color: {self._font_color}; font-size: {self._font_size}px; border: none; border-radius: 4px; }}
-                QPushButton:hover {{ background-color: #333; }}
-                QPushButton:disabled {{ color: #555; background-color: #111; }}
+                QPushButton {{ background-color: transparent; color: {self._font_color}; font-size: {self._font_size}px; border: none; border-radius: 4px; }}
+                QPushButton:hover {{ background-color: {hov}; }}
+                QPushButton:disabled {{ color: #555; background-color: transparent; }}
             """
         btn.setStyleSheet(style)
         

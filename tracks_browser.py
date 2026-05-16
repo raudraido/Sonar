@@ -372,6 +372,19 @@ class _CheckableListWidget(QListWidget):
         super().mousePressEvent(event)
 
 
+def _checkmark_svg_path(color: str) -> str:
+    import tempfile
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'>"
+        f"<polyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='{color}' stroke-width='2'"
+        f" fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+    )
+    path = os.path.join(tempfile.gettempdir(), f"sonar_check_{color.lstrip('#')}.svg")
+    with open(path, 'w') as f:
+        f.write(svg)
+    return path.replace('\\', '/')
+
+
 class ColumnFilterPopup(QFrame):
     """Excel-style column filter popup: sort rows + search box + multi-select checklist."""
     filters_applied = pyqtSignal(int, set)  # col, selected values
@@ -382,33 +395,54 @@ class ColumnFilterPopup(QFrame):
     MAX_ID_FILTER_VALUES = 10
 
     def __init__(self, col, values, active_values, up_icon, down_icon, accent_color="#cccccc", parent=None):
-        super().__init__(parent, Qt.WindowType.Popup)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.col = col
         self.active_values = set(active_values) if active_values else set()
         self.all_values = sorted(values, key=lambda v: str(v).lower())
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        _theme = getattr(parent.window() if parent else None, 'theme', None)
+        _bg  = getattr(_theme, 'main_panel_bg',       '13,13,13')
+        _bc  = getattr(_theme, 'border_color',        '#2a2a2a')
+        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
+        _fg2 = getattr(_theme, 'font_color_secondary','#999999')
+        from player.mixins.visuals import resolve_menu_hover
+        _hov = resolve_menu_hover(_theme)
+        self._paint_bg = QColor(*[int(x) for x in _bg.split(',')])
+        if _theme and not getattr(_theme, 'auto_border_from_accent', True):
+            self._paint_bc = QColor(getattr(_theme, 'manual_border_color', '#2a2a2a'))
+        else:
+            self._paint_bc = QColor(_bc)
         self.setStyleSheet(f"""
             ColumnFilterPopup {{
-                background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 6px;
+                background: rgb({_bg}); border: 1px solid {_bc}; border-radius: 6px;
             }}
             QLineEdit {{
-                background: #080808; color: #ddd; border: 1px solid #333;
+                background: rgb({_bg}); color: {_fg}; border: 1px solid {_bc};
                 border-radius: 4px; padding: 4px 8px; font-size: 13px;
             }}
-            QLineEdit:focus {{ border: 1px solid #555; }}
+            QLineEdit:focus {{ border: 1px solid {_bc}; }}
             QListWidget {{
-                background: transparent; border: none; color: #ddd; font-size: 13px;
+                background: transparent; border: none; color: {_fg}; font-size: 13px;
             }}
             QListWidget::item {{ padding: 3px 6px; border-radius: 3px; }}
-            QListWidget::item:hover {{ background: rgba(255,255,255,0.07); }}
-            QListWidget::item:selected {{ background: rgba(255,255,255,0.07); color: #ddd; }}
+            QListWidget::item:hover {{ background: {_hov}; }}
+            QListWidget::item:selected {{ background: {_hov}; color: {_fg}; }}
+            QListWidget::indicator {{
+                width: 14px; height: 14px; border-radius: 3px;
+                border: 1px solid {_bc}; background: rgb({_bg});
+            }}
+            QListWidget::indicator:checked {{
+                background: rgb({_bg});
+                image: url("{_checkmark_svg_path(accent_color)}");
+            }}
             QPushButton {{
-                background: #111; color: #ddd; border: 1px solid #2a2a2a;
+                background: transparent; color: {_fg}; border: 1px solid {_bc};
                 border-radius: 4px; padding: 4px 12px; font-size: 12px;
             }}
-            QPushButton:hover {{ background: rgba(255,255,255,0.1); }}
+            QPushButton:hover {{ background: {_hov}; }}
             QFrame#sort_row {{ background: transparent; }}
-            QFrame#sort_row:hover {{ background: rgba(255,255,255,0.07); border-radius: 3px; }}
+            QFrame#sort_row:hover {{ background: {_hov}; border-radius: 3px; }}
             {scrollbar_css(accent_color)}
         """)
         self.setFixedWidth(240)
@@ -453,7 +487,7 @@ class ColumnFilterPopup(QFrame):
                     px = dim
             lbl_icon.setPixmap(px)
             lbl_icon.setFixedSize(icon_size, icon_size)
-            color = (tint_color if tint_color else "#ddd") if enabled else "#555"
+            color = (tint_color if tint_color else _fg) if enabled else "#555"
             lbl_text = QLabel(label)
             lbl_text.setStyleSheet(f"color: {color}; font-size: 13px; background: transparent;")
             hl.addWidget(lbl_icon)
@@ -469,13 +503,17 @@ class ColumnFilterPopup(QFrame):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #444;")
+        sep.setStyleSheet(f"color: {_bc};")
         layout.addWidget(sep)
 
         layout.setSpacing(6)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search…")
+        from PyQt6.QtGui import QPalette as _Pal
+        _pal = self.search_box.palette()
+        _pal.setColor(_Pal.ColorRole.PlaceholderText, QColor(_fg2))
+        self.search_box.setPalette(_pal)
         self.search_box.textChanged.connect(self._filter_list)
         self.search_box.returnPressed.connect(self._apply)
         layout.addWidget(self.search_box)
@@ -504,6 +542,7 @@ class ColumnFilterPopup(QFrame):
 
         self._populate(active_values)
         self.adjustSize()
+        self.setMinimumHeight(0)
 
     SELECT_ALL_TEXT = "(Select All)"
 
@@ -688,6 +727,16 @@ class ColumnFilterPopup(QFrame):
     def _clear_filter(self):
         self.filters_applied.emit(self.col, set())
         self.close()
+
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter as _P, QColor as _C
+        from PyQt6.QtCore import QRectF
+        p = _P(self)
+        p.setRenderHint(_P.RenderHint.Antialiasing)
+        p.setPen(self._paint_bc)
+        p.setBrush(self._paint_bg)
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.end()
 
 
 class SmartSortHeader(QHeaderView):
@@ -2321,12 +2370,14 @@ class TracksBrowser(QWidget):
         _px  = getattr(_theme, 'font_size_primary',  14)
         _acc = getattr(_theme, 'accent',              '#ffffff')
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         menu.setStyleSheet(
             f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
             f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
         )
-        
+
         headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
 
         for i, name in enumerate(headers):
@@ -3581,6 +3632,8 @@ class TracksBrowser(QWidget):
         track_ids = [str(t.get('id')) for t in selected_tracks if t.get('id')]
         
         menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         _theme = getattr(self.window(), 'theme', None)
         _bc  = getattr(_theme, 'border_color',        '#444444')
         _bg  = getattr(_theme, 'main_panel_bg',       '20,20,20')
@@ -3620,6 +3673,8 @@ class TracksBrowser(QWidget):
         # 🟢 NEW: ADD TO PLAYLIST SUBMENU
         if track_ids:
             add_menu = QMenu("Add to Playlist", menu)
+            add_menu.setWindowFlags(add_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+            add_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             add_menu.setStyleSheet(menu.styleSheet())
             
             new_pl_action = QAction("+ New Playlist...", add_menu)
@@ -3683,6 +3738,9 @@ class TracksBrowser(QWidget):
                 )
 
         goto_menu = menu.addMenu("Go to")
+        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        goto_menu.setStyleSheet(menu.styleSheet())
         if is_multi: goto_menu.setEnabled(False)
         else:
             album_data = {'id': first_track.get('albumId') or first_track.get('parent'), 'title': first_track.get('album', 'Unknown'), 'artist': first_track.get('artist'), 'coverArt': first_track.get('coverArt')}
@@ -3706,6 +3764,8 @@ class TracksBrowser(QWidget):
                     return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
 
                 bpm_menu = QMenu("Adjust BPM", menu)
+                bpm_menu.setWindowFlags(bpm_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+                bpm_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
                 bpm_menu.setStyleSheet(menu.styleSheet())
                 multipliers = [
                     ("Half",   0.5),
@@ -3963,6 +4023,8 @@ class TracksBrowser(QWidget):
                 if h or in_album: self.burger_btn.hide()
 
             if hasattr(self, 'refresh_btn'):
+                _hov = resolve_menu_hover(getattr(self.window(), 'theme', None))
+                self.refresh_btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; border-radius: 4px; }} QPushButton:hover {{ background: {_hov}; }}")
                 try:
                     pixmap = QPixmap(resource_path("img/refresh.png")).scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                     if not pixmap.isNull():

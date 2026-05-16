@@ -1256,6 +1256,14 @@ class SettingsWindow(QDialog):
         pal.setColor(QPalette.ColorRole.Highlight,       hover_c)
         pal.setColor(QPalette.ColorRole.HighlightedText, text_c)
         QApplication.instance().setPalette(pal)
+        self.parent._last_theme_key = None
+        self.parent.refresh_ui_styles()
+        for i in range(self.parent.tabs.count()):
+            tab = self.parent.tabs.widget(i)
+            if hasattr(tab, 'footer'):
+                tab.footer.set_accent_color(tab.footer.current_accent)
+            if hasattr(tab, 'search_container'):
+                tab.search_container.set_accent_color(getattr(tab, 'current_accent', '#ffffff'))
 
     def update_vis_settings(self):
         self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
