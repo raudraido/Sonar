@@ -160,7 +160,7 @@ class NowPlayingFooterWidget(QWidget):
         self.art_label.setFixedHeight(84)
         self.art_label.setMinimumWidth(84)
         self.art_label.setMaximumWidth(84)
-        self.art_label.setStyleSheet("background-color: #222; border-radius: 4px; border: 1px solid #333;")
+        self.art_label.setStyleSheet("background: transparent; border: none;")
         self.art_label.setScaledContents(True)
         self.art_label.setCursor(Qt.CursorShape.ArrowCursor)
         self.art_label.hide()
@@ -297,7 +297,7 @@ class NowPlayingFooterWidget(QWidget):
 
     def set_cover(self, pixmap):
         if pixmap and not pixmap.isNull():
-            self.art_label.setPixmap(_round_pixmap(pixmap))
+            self.art_label.setPixmap(pixmap)
             self.art_label.show()
         else:
             self.art_label.clear()
@@ -1412,10 +1412,14 @@ class SquareArtContainer(QWidget):
         y = 0  # top-aligned — no empty space above the art
         
         rect = QRect(x, y, side, side)
-        
+
+        bg_path = QPainterPath()
+        bg_path.addRoundedRect(QRectF(rect), 5, 5)
+        painter.setClipPath(bg_path)
         painter.setBrush(QColor("#121212"))
-        painter.setPen(QPen(QColor("#222222"), 1))
-        painter.drawRoundedRect(rect, 5, 5)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPath(bg_path)
+        painter.setClipping(False)
         
         progress = getattr(self.main_window, 'crossfade_progress', 1.0)
         if not hasattr(self, 'scaled_cache'): self.scaled_cache = {}

@@ -275,7 +275,9 @@ class _QueueDelegate(QStyledItemDelegate):
         if is_current:
             painter.setPen(QColor(panel._accent_color))
         else:
-            painter.setPen(QColor(160, 160, 160, 70 if is_past else 120))
+            c = QColor(panel._secondary_color)
+            c.setAlpha(70 if is_past else 180)
+            painter.setPen(c)
         dur_rect = QRect(r.right() - DUR_W - 8, r.top(), DUR_W, r.height())
         painter.drawText(dur_rect,
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, dur)

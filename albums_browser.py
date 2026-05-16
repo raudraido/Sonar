@@ -1044,14 +1044,14 @@ class _TrackListDelegate(QStyledItemDelegate):
                 if ax + pw > right_edge:
                     if available > 0:
                         elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
-                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor(self._primary_color())))
+                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor(self._secondary_color())))
                         painter.drawText(ax, ay + fm.ascent() // 2, elided)
                     break
                 hovered = (not is_sep and self._hover_artist == (row, part.strip()))
                 if is_sep:
                     painter.setPen(QColor(120, 120, 120))
                 else:
-                    painter.setPen(self.accent if row == self.playing_row else QColor(self._primary_color()))
+                    painter.setPen(self.accent if row == self.playing_row else QColor(self._secondary_color()))
                 painter.drawText(ax, ay + fm.ascent() // 2, part)
                 if hovered:
                     painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
@@ -1064,6 +1064,7 @@ class _TrackListDelegate(QStyledItemDelegate):
             text = index.data() or ''
             f = QFont()
             f.setPixelSize(self._primary_px())
+            f.setBold(True)
             fm = QFontMetrics(f)
             painter.save()
             painter.setFont(f)
@@ -1376,8 +1377,9 @@ class AlbumDetailView(QWidget):
             item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             _theme = getattr(self.window(), 'theme', None)
             _pri_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
+            _sec_color = QColor(getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa')
             for col in range(6):
-                item.setForeground(col, _pri_color)
+                item.setForeground(col, _pri_color if col == 1 else _sec_color)
             self.track_tree.addTopLevelItem(item)
         self.track_tree.setUpdatesEnabled(True)
         row_h = self.track_tree.sizeHintForRow(0) if tracks else 38
@@ -1712,11 +1714,17 @@ class AlbumDetailView(QWidget):
         accent_color = QColor(accent)
         _theme = getattr(self.window(), 'theme', None)
         default_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
+        sec_color = QColor(getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa')
         for i in range(self.track_tree.topLevelItemCount()):
             item = self.track_tree.topLevelItem(i)
-            color = accent_color if i == playing_row else default_color
+            row_is_playing = (i == playing_row)
             for col in range(self.track_tree.columnCount()):
-                item.setForeground(col, color)
+                if row_is_playing:
+                    item.setForeground(col, accent_color)
+                elif col == 1:
+                    item.setForeground(col, default_color)
+                else:
+                    item.setForeground(col, sec_color)
         self._track_delegate.set_playing(playing_row, accent, is_playing)
         if playing_row >= 0 and is_playing:
             self._playing_movie.start()

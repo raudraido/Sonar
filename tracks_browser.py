@@ -455,7 +455,7 @@ class ColumnFilterPopup(QFrame):
         clear_filter_icon = QIcon(resource_path("img/filter_off-2.png"))
         has_filter = bool(active_values)
 
-        def _make_action_row(icon, label, callback, enabled=True, tint=True, tint_color=None):
+        def _make_action_row(icon, label, callback, enabled=True, tint=True, tint_color=None, text_color=None):
             row = QFrame()
             row.setObjectName("sort_row")
             if enabled:
@@ -487,7 +487,7 @@ class ColumnFilterPopup(QFrame):
                     px = dim
             lbl_icon.setPixmap(px)
             lbl_icon.setFixedSize(icon_size, icon_size)
-            color = (tint_color if tint_color else _fg) if enabled else "#555"
+            color = (text_color or _fg) if enabled else "#555"
             lbl_text = QLabel(label)
             lbl_text.setStyleSheet(f"color: {color}; font-size: 13px; background: transparent;")
             hl.addWidget(lbl_icon)
@@ -497,9 +497,9 @@ class ColumnFilterPopup(QFrame):
                 row.mousePressEvent = lambda e: callback()
             return row
 
-        layout.addWidget(_make_action_row(up_icon,        "Sort ascending",  lambda: self._sort("ASC")))
-        layout.addWidget(_make_action_row(down_icon,      "Sort descending", lambda: self._sort("DESC")))
-        layout.addWidget(_make_action_row(clear_filter_icon, "Clear filter",   self._clear_filter, enabled=has_filter, tint=has_filter, tint_color="#ff4444" if has_filter else None))
+        layout.addWidget(_make_action_row(up_icon,   "Sort ascending",  lambda: self._sort("ASC"),  tint_color=accent_color))
+        layout.addWidget(_make_action_row(down_icon, "Sort descending", lambda: self._sort("DESC"), tint_color=accent_color))
+        layout.addWidget(_make_action_row(clear_filter_icon, "Clear filter",   self._clear_filter, enabled=has_filter, tint=has_filter, tint_color="#ff4444" if has_filter else None, text_color="#ff4444" if has_filter else None))
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -913,7 +913,7 @@ class SmartSortHeader(QHeaderView):
         if show_icon_now:
             icon = self.down_icon if self.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder else self.up_icon
             px = icon.pixmap(sz, sz)
-            tint = QColor("#aaaaaa")
+            tint = self._accent
 
             tinted = QPixmap(px.size())
             tinted.fill(Qt.GlobalColor.transparent)

@@ -13,8 +13,26 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QScrollBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QSize
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath
+
+
+class _TourRow(QWidget):
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+        self._panel = panel
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.underMouse():
+            theme = getattr(self._panel.window(), 'theme', None)
+            p.setBrush(QColor(resolve_menu_hover(theme)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(self.rect(), 6, 6)
+        p.end()
 
 # ── in-process caches (cleared on restart) ───────────────────────────────────
 _artist_info_cache: dict = {}   # artist_id  → dict from get_artist_info2
@@ -147,7 +165,8 @@ class ArtistInfoPanel(QScrollArea):
         self._settings          = QSettings()
         self._accent            = "#ffffff"
         self._border_color      = "rgba(255,255,255,0.08)"
-        self._font_color_primary = "#eeeeee"
+        self._font_color_primary   = "#eeeeee"
+        self._font_color_secondary = "#888888"
         self._current_id   = None
         self._current_name = None
         self._show_all_tours = False
@@ -209,8 +228,11 @@ class ArtistInfoPanel(QScrollArea):
         self._apply_scrollbar_style()
 
     def apply_theme(self, theme):
-        self._font_color_primary = getattr(theme, 'font_color_primary', '#eeeeee')
-        self._border_color       = getattr(theme, 'border_color',       'rgba(255,255,255,0.08)')
+        self._font_color_primary   = getattr(theme, 'font_color_primary',   '#eeeeee')
+        self._font_color_secondary = getattr(theme, 'font_color_secondary', '#888888')
+        self._border_color         = getattr(theme, 'border_color',         'rgba(255,255,255,0.08)')
+        if self._all_events:
+            self._rebuild_tour_section()
 
     def load_track(self, client, artist_id: str, artist_name: str):
         if artist_id == self._current_id and artist_name == self._current_name:
@@ -505,12 +527,7 @@ class ArtistInfoPanel(QScrollArea):
         self._layout.addStretch()
 
     def _build_event_row(self, ev: dict) -> QWidget:
-        row = QWidget()
-        row.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.setStyleSheet(
-            "QWidget { background: rgba(255,255,255,0.04); border-radius: 4px; }"
-            "QWidget:hover { background: rgba(255,255,255,0.08); }"
-        )
+        row = _TourRow(self)
         hbox = QHBoxLayout(row)
         hbox.setContentsMargins(8, 6, 8, 6)
         hbox.setSpacing(10)
@@ -538,7 +555,7 @@ class ArtistInfoPanel(QScrollArea):
         month_lbl.setStyleSheet(f"color: {self._accent}; font-size: 9px; font-weight: bold; background: transparent;")
         day_lbl = QLabel(day)
         day_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        day_lbl.setStyleSheet("color: #ddd; font-size: 15px; font-weight: bold; background: transparent;")
+        day_lbl.setStyleSheet(f"color: {self._font_color_primary}; font-size: 15px; font-weight: bold; background: transparent;")
         dv.addWidget(month_lbl)
         dv.addWidget(day_lbl)
         hbox.addWidget(date_w)
@@ -558,13 +575,13 @@ class ArtistInfoPanel(QScrollArea):
         place   = ", ".join(p for p in [city, region, country] if p)
 
         v_lbl = QLabel(venue_name or place)
-        v_lbl.setStyleSheet("color: #ddd; font-size: 11px; font-weight: bold; background: transparent;")
+        v_lbl.setStyleSheet(f"color: {self._font_color_secondary}; font-size: 11px; font-weight: bold; background: transparent;")
         v_lbl.setWordWrap(True)
         mv.addWidget(v_lbl)
 
         if place and venue_name:
             p_lbl = QLabel(place)
-            p_lbl.setStyleSheet("color: #666; font-size: 10px; background: transparent;")
+            p_lbl.setStyleSheet(f"color: {self._font_color_secondary}; font-size: 10px; background: transparent;")
             mv.addWidget(p_lbl)
 
         hbox.addWidget(meta_w, 1)

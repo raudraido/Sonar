@@ -215,6 +215,53 @@ class _ArrowButton(QAbstractButton):
         p.end()
 
 
+class _RefreshButton(QAbstractButton):
+    def __init__(self, color, parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self._icon_pix = QPixmap()
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def set_color(self, color):
+        self._color = QColor(color)
+        self._icon_pix = QPixmap()  # cleared; rebuilt lazily in paintEvent
+        self.update()
+
+    def _build_icon(self, size):
+        base = QPixmap(resource_path("img/refresh.png"))
+        if base.isNull():
+            return QPixmap()
+        scaled = base.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        pix = QPixmap(scaled.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.drawPixmap(0, 0, scaled)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(pix.rect(), self._color)
+        p.end()
+        return pix
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.underMouse():
+            _theme = getattr(self.window(), 'theme', None)
+            p.setBrush(QColor(resolve_menu_hover(_theme)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(self.rect(), 12, 12)
+        icon_size = 14
+        if self._icon_pix.isNull():
+            self._icon_pix = self._build_icon(icon_size)
+        if not self._icon_pix.isNull():
+            x = (self.width()  - self._icon_pix.width())  // 2
+            y = (self.height() - self._icon_pix.height()) // 2
+            p.drawPixmap(x, y, self._icon_pix)
+        p.end()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Drag-grip handle (appears on title row hover)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,15 +361,9 @@ class HomeAlbumRowWidget(QWidget):
 
         self.btn_refresh = None
         if with_refresh:
-            self.btn_refresh = QPushButton()
+            self.btn_refresh = _RefreshButton(self._accent)
             self.btn_refresh.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
             self.btn_refresh.setToolTip(refresh_tooltip)
-            self.btn_refresh.setFixedSize(28, 22)
-            self.btn_refresh.setStyleSheet(
-                "QPushButton { background: transparent; border: none; border-radius: 10px; }"
-                "QPushButton:hover { background: rgba(255,255,255,26); }"
-            )
             title_layout.addWidget(self.btn_refresh)
 
         self._btn_left  = _ArrowButton("left",  self._accent)
@@ -813,7 +854,6 @@ class HomeView(QWidget):
         self.recent_row.artist_clicked.connect(self.artist_clicked.emit)
         self.recent_row.load_more_requested.connect(self._load_more_recent)
         self.recent_row.btn_refresh.clicked.connect(self.refresh_recent)
-        self.recent_row.btn_refresh.installEventFilter(self)
         self.content_layout.addWidget(self.recent_row)
 
         # Random Mix row
@@ -823,7 +863,6 @@ class HomeView(QWidget):
         self.random_row.artist_clicked.connect(self.artist_clicked.emit)
         self.random_row.load_more_requested.connect(self._load_more_random)
         self.random_row.btn_refresh.clicked.connect(self.refresh_random_mix)
-        self.random_row.btn_refresh.installEventFilter(self)
         self.content_layout.addWidget(self.random_row)
 
         # Most Played row
@@ -1058,7 +1097,6 @@ class HomeView(QWidget):
     def refresh_recent(self):
         btn = self.recent_row.btn_refresh
         btn.setEnabled(False)
-        btn.setIcon(self._tinted_icon("#555"))
         if getattr(self, 'recent_reloader', None) and self.recent_reloader.isRunning():
             self._safe_discard_worker(self.recent_reloader)
         self.recent_reloader = HomePageWorker(self.client, "newest", 0)
@@ -1066,9 +1104,7 @@ class HomeView(QWidget):
         self.recent_reloader.start()
 
     def _on_recent_refreshed(self, new_albums):
-        btn = self.recent_row.btn_refresh
-        btn.setEnabled(True)
-        btn.setIcon(self._tinted_icon(self.current_accent))
+        self.recent_row.btn_refresh.setEnabled(True)
         if new_albums:
             self.recent_row.populate(new_albums)
             self._queue_covers(new_albums)
@@ -1078,7 +1114,6 @@ class HomeView(QWidget):
     def refresh_random_mix(self):
         btn = self.random_row.btn_refresh
         btn.setEnabled(False)
-        btn.setIcon(self._tinted_icon("#555"))
         if getattr(self, 'random_reloader', None) and self.random_reloader.isRunning():
             self._safe_discard_worker(self.random_reloader)
         self.random_reloader = RandomMixReloaderWorker(self.client)
@@ -1086,9 +1121,7 @@ class HomeView(QWidget):
         self.random_reloader.start()
 
     def _on_random_refreshed(self, new_mix):
-        btn = self.random_row.btn_refresh
-        btn.setEnabled(True)
-        btn.setIcon(self._tinted_icon(self.current_accent))
+        self.random_row.btn_refresh.setEnabled(True)
         if new_mix:
             self.random_row.populate(new_mix)
             self._queue_covers(new_mix)
@@ -1140,22 +1173,8 @@ class HomeView(QWidget):
             self.random_row.set_accent_color(color)
             self.most_played_row.set_accent_color(color)
             for row in (self.recent_row, self.random_row):
-                btn = row.btn_refresh
-                if btn and not btn.underMouse():
-                    btn.setIcon(self._tinted_icon(color))
-
-    def _tinted_icon(self, color_str):
-        base = QPixmap(resource_path("img/refresh.png"))
-        if base.isNull():
-            return QIcon()
-        pix = QPixmap(base.size())
-        pix.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pix)
-        p.drawPixmap(0, 0, base)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(pix.rect(), QColor(color_str))
-        p.end()
-        return QIcon(pix)
+                if row.btn_refresh:
+                    row.btn_refresh.set_color(color)
 
     def eventFilter(self, source, event):
         # ── Drag tracking ────────────────────────────────────────────────
@@ -1167,13 +1186,4 @@ class HomeView(QWidget):
                 self._on_drag_end()
             return False
 
-        # ── Refresh button hover ─────────────────────────────────────────
-        if hasattr(self, 'recent_row'):
-            for row in (self.recent_row, self.random_row):
-                btn = row.btn_refresh
-                if btn and source is btn:
-                    if event.type() == QEvent.Type.Enter and btn.isEnabled():
-                        btn.setIcon(self._tinted_icon(self.current_accent))
-                    elif event.type() == QEvent.Type.Leave and btn.isEnabled():
-                        btn.setIcon(self._tinted_icon("#aaa"))
         return super().eventFilter(source, event)
