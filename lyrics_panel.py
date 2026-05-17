@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QDialog, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QFrame, QAbstractItemView, QApplication, QGraphicsOpacityEffect,
 )
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QLinearGradient, QPainter
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSettings, QSize, QPropertyAnimation, QEasingCurve
 
 from player.mixins.visuals import resolve_menu_hover
@@ -618,6 +618,39 @@ class _LyricsFetcher(QThread):
         self.done.emit(raw or '', source, sid)
 
 
+# ── Bottom fade bar ───────────────────────────────────────────────────────────
+
+class _FadeBar(QWidget):
+    _FADE_H = 64
+
+    def __init__(self, scroll_area: QScrollArea):
+        super().__init__(scroll_area)   # child of the scroll area frame — never scrolls
+        self._bg = QColor(20, 20, 20)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.raise_()
+
+    def set_bg(self, color: QColor):
+        self._bg = color
+        self.update()
+
+    def reposition(self, left_inset: int = 1):
+        p = self.parent()
+        if p:
+            self.setGeometry(left_inset, p.height() - self._FADE_H,
+                             p.width() - left_inset, self._FADE_H)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        grad = QLinearGradient(0, 0, 0, self.height())
+        c0 = QColor(self._bg); c0.setAlpha(0)
+        c1 = QColor(self._bg); c1.setAlpha(255)
+        grad.setColorAt(0.0, c0)
+        grad.setColorAt(1.0, c1)
+        p.fillRect(self.rect(), grad)
+        p.end()
+
+
 # ── Main panel ────────────────────────────────────────────────────────────────
 
 class LyricsPanel(QWidget):
@@ -652,6 +685,8 @@ class LyricsPanel(QWidget):
         self._layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self._scroll.setWidget(self._container)
         root.addWidget(self._scroll, 1)
+
+        self._fade_bar = _FadeBar(self._scroll)
 
         # ── Toolbar bar (always visible at bottom) ────────────────────────────
         self._toolbar = _LyricsToolbar(self)
@@ -706,10 +741,20 @@ class LyricsPanel(QWidget):
         self._toolbar_anim.start()
         super().leaveEvent(event)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fade_bar.reposition()
+
     def apply_theme(self, theme=None):
         for line in self._lines:
             line._refresh_style()
         self._toolbar.apply_theme(theme)
+        raw = getattr(theme, 'queue_panel_bg', '20,20,20') if theme else '20,20,20'
+        try:
+            r, g, b = (int(x) for x in str(raw).split(','))
+        except Exception:
+            r, g, b = 20, 20, 20
+        self._fade_bar.set_bg(QColor(r, g, b))
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -875,7 +920,7 @@ class LyricsPanel(QWidget):
 
     def _scroll_to_active(self, idx: int):
         line   = self._lines[idx]
-        target = line.y() - int(self._scroll.viewport().height() * 0.30)
+        target = line.y() - int(self._scroll.viewport().height() * 0.50)
         target = max(0, min(target, self._scroll.verticalScrollBar().maximum()))
         self._scroll_anim.stop()
         self._scroll_anim.setStartValue(self._scroll.verticalScrollBar().value())
