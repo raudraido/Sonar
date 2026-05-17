@@ -9,6 +9,8 @@ Sources (enabled via QSettings key 'lyrics_sources'):
 LRC format: [mm:ss.xx] text  →  [(time_ms, text), ...]
 """
 import re
+import os
+import sys
 import urllib.request
 import urllib.parse
 import json
@@ -21,12 +23,56 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSettings, QSize, QPropertyAnimation, QEasingCurve
 
-from player.mixins.visuals import resolve_menu_hover
+from player.mixins.visuals import resolve_menu_hover, scrollbar_css
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
 SOURCES = ['LRCLib', 'NetEase', 'SimpMusic']
 SETTINGS_KEY = 'lyrics_sources'
+
+
+# ── Local lyrics cache ────────────────────────────────────────────────────────
+
+def _lyrics_dir() -> str:
+    if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base, 'app_data', 'lyrics')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _lyrics_key(track: dict) -> str:
+    tid = track.get('id', '')
+    if tid:
+        return tid
+    artist = re.sub(r'[^\w\-]', '_', track.get('artist', 'unknown'))
+    title  = re.sub(r'[^\w\-]', '_', track.get('title', track.get('name', 'unknown')))
+    return f'{artist}__{title}'
+
+
+def _load_local_lyrics(track: dict) -> str | None:
+    path = os.path.join(_lyrics_dir(), _lyrics_key(track) + '.lrc')
+    try:
+        with open(path, encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def _save_local_lyrics(track: dict, raw: str):
+    path = os.path.join(_lyrics_dir(), _lyrics_key(track) + '.lrc')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(raw)
+
+
+def _remove_local_lyrics(track: dict):
+    path = os.path.join(_lyrics_dir(), _lyrics_key(track) + '.lrc')
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 def enabled_sources() -> list[str]:
@@ -60,13 +106,23 @@ def parse_lrc(text: str) -> list[tuple[int, str]] | str:
 _UA = 'Icosahedron/1.0'
 
 
-def _get(url: str, params: dict = None, timeout: int = 6) -> bytes | None:
+def _get(url: str, params: dict = None, timeout: int = 10, headers: dict = None) -> bytes | None:
+    full = url + ('?' + urllib.parse.urlencode(params) if params else '')
     try:
-        full = url + ('?' + urllib.parse.urlencode(params) if params else '')
-        req = urllib.request.Request(full, headers={'User-Agent': _UA})
+        h = {'User-Agent': _UA}
+        if headers:
+            h.update(headers)
+        req = urllib.request.Request(full, headers=h)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
-    except Exception:
+    except urllib.error.HTTPError as e:
+        print(f'[Lyrics] HTTP {e.code} {e.reason} → {full}')
+        return None
+    except urllib.error.URLError as e:
+        print(f'[Lyrics] network error ({e.reason}) → {full}')
+        return None
+    except Exception as e:
+        print(f'[Lyrics] unexpected error ({e}) → {full}')
         return None
 
 
@@ -148,7 +204,7 @@ def netease_search(artist: str, title: str) -> list[dict]:
 def netease_fetch(song_id: str) -> str | None:
     data = _get('https://music.163.com/api/song/lyric', {
         'id': song_id, 'lv': 1, 'kv': 1, 'tv': -1,
-    })
+    }, headers={'Referer': 'https://music.163.com/'})
     if not data:
         return None
     try:
@@ -245,22 +301,34 @@ class LyricsSearchDialog(QDialog):
 
     def __init__(self, artist: str, title: str,
                  active_source: str = '', active_sid: str = '', parent=None):
-        super().__init__(parent, Qt.WindowType.Dialog)
-        self.setWindowTitle('Search Lyrics')
-        self.setMinimumSize(560, 460)
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setMinimumSize(560, 460)
         self._active_source = active_source
         self._active_sid    = active_sid
+        self._drag_pos      = None
 
-        theme = getattr(self.window(), 'theme', None) if parent else None
+        theme = getattr(parent, 'theme', None) if parent else None
         bg  = getattr(theme, 'main_panel_bg',       '24,24,24') if theme else '24,24,24'
         fc1 = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
         fc2 = getattr(theme, 'font_color_secondary','#888888') if theme else '#888888'
         bc  = getattr(theme, 'border_color',        '#333333') if theme else '#333333'
         acc = getattr(theme, 'accent',              '#ffffff') if theme else '#ffffff'
 
-        self.setStyleSheet(f"""
-            QDialog {{ background: rgb({bg}); color: {fc1}; }}
+        # ── Exactly like SettingsWindow ───────────────────────────────────────
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._bg_frame = QFrame()
+        self._bg_frame.setObjectName('lyricSearchBg')
+        self._bg_frame.setMouseTracking(True)
+        self._bg_frame.setStyleSheet(f"""
+            QFrame#lyricSearchBg {{
+                background: rgb({bg});
+                border: 1px solid {bc};
+                border-radius: 10px;
+            }}
             QLineEdit {{
                 background: rgba(255,255,255,0.06); border: 1px solid {bc};
                 border-radius: 6px; padding: 6px 10px; color: {fc1}; font-size: 13px;
@@ -280,16 +348,36 @@ class LyricsSearchDialog(QDialog):
             QPushButton#apply:hover {{ background: {QColor(acc).lighter(115).name()}; }}
             QPushButton:disabled {{ color: {fc2}; }}
             QLabel {{ color: {fc1}; background: transparent; }}
-        """)
+        """ + scrollbar_css(acc))
+        root_layout.addWidget(self._bg_frame)
 
         self._results: list[dict] = []
         self._preview_raw = ''
         self._search_worker: _SearchWorker | None = None
         self._preview_worker: _PreviewWorker | None = None
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
+        root = QVBoxLayout(self._bg_frame)
+        root.setContentsMargins(16, 12, 16, 16)
         root.setSpacing(10)
+
+        # ── Title row ─────────────────────────────────────────────────────────
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 4)
+        title_lbl = QLabel('Search Lyrics')
+        title_lbl.setStyleSheet(f'font-size: 13px; font-weight: bold;')
+        close_btn = QPushButton('✕')
+        close_btn.setFixedSize(26, 26)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(
+            f'QPushButton {{ background: transparent; border: none; color: {fc2}; font-size: 13px; }}'
+            f'QPushButton:hover {{ color: {fc1}; }}'
+        )
+        close_btn.clicked.connect(self.reject)
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+        title_row.addWidget(close_btn)
+        root.addLayout(title_row)
 
         # Search fields
         fields = QHBoxLayout()
@@ -425,13 +513,35 @@ class LyricsSearchDialog(QDialog):
             self.override_selected.emit({**r, 'raw': self._preview_raw})
             self.accept()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def hideEvent(self, event):
+        mw = self.parent()
+        if mw and hasattr(mw, 'hide_dim'):
+            mw.hide_dim()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
 
 
 # ── Hover toolbar ─────────────────────────────────────────────────────────────
 
 class _LyricsToolbar(QWidget):
     search_clicked  = pyqtSignal()
+    save_clicked    = pyqtSignal()
     refresh_clicked = pyqtSignal()
     offset_changed  = pyqtSignal(int)
 
@@ -454,6 +564,7 @@ class _LyricsToolbar(QWidget):
             return b
 
         self._search_btn  = _btn('Search', 'Search lyrics')
+        self._save_btn    = _btn('Save', 'Save lyrics locally (loads first next time)')
         self._minus_btn   = _btn('−50ms', 'Shift lyrics earlier')
         self._offset_lbl  = QLabel('0 ms')
         self._offset_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -462,11 +573,13 @@ class _LyricsToolbar(QWidget):
         self._refresh_btn = _btn('Refresh', 'Clear override and re-fetch')
 
         self._search_btn.clicked.connect(self.search_clicked)
+        self._save_btn.clicked.connect(self.save_clicked)
         self._refresh_btn.clicked.connect(self.refresh_clicked)
         self._minus_btn.clicked.connect(lambda: self._change_offset(-50))
         self._plus_btn.clicked.connect(lambda:  self._change_offset(+50))
 
         lo.addWidget(self._search_btn)
+        lo.addWidget(self._save_btn)
         lo.addStretch()
         lo.addWidget(self._minus_btn)
         lo.addWidget(self._offset_lbl)
@@ -492,6 +605,14 @@ class _LyricsToolbar(QWidget):
             QPushButton:hover {{ background: {hov}; color: {fc1}; border: none; }}
             QLabel {{ color: {fc1}; font-size: 11px; border: none; background: transparent; }}
         """)
+
+    def set_save_mode(self, is_local: bool):
+        if is_local:
+            self._save_btn.setText('Remove Local')
+            self._save_btn.setToolTip('Delete locally saved lyrics and re-fetch')
+        else:
+            self._save_btn.setText('Save')
+            self._save_btn.setToolTip('Save lyrics locally (loads first next time)')
 
     def set_offset(self, ms: int):
         self._offset_ms = ms
@@ -563,13 +684,30 @@ class _LyricsFetcher(QThread):
         title  = track.get('title', track.get('name', ''))
         album  = track.get('album', '')
         try:
-            duration = float(track.get('duration') or 0)
+            if track.get('duration_ms'):
+                duration = float(track['duration_ms']) / 1000
+            else:
+                raw = track.get('duration') or 0
+                if isinstance(raw, str) and ':' in raw:
+                    m, s = raw.split(':')
+                    duration = int(m) * 60 + int(s)
+                else:
+                    duration = float(raw or 0)
         except (ValueError, TypeError):
             duration = 0.0
 
         raw    = None
         source = ''
         sid    = ''
+
+        # 0. Local saved lyrics
+        local = _load_local_lyrics(track)
+        if local:
+            print(f'[Lyrics] local cache hit for "{title}"')
+            self.done.emit(local, 'Local', '')
+            return
+
+        print(f'[Lyrics] fetching: artist="{artist}" title="{title}" album="{album}" duration={duration:.1f}s')
 
         # 1. Server (Subsonic getLyrics)
         if self._client:
@@ -579,41 +717,61 @@ class _LyricsFetcher(QThread):
                     raw    = result['value']
                     source = 'Server'
                     sid    = ''
-                    print(f'[Lyrics] server: "{title}"')
+                    print(f'[Lyrics] ✓ Server hit')
+                else:
+                    print(f'[Lyrics] Server: no lyrics returned')
             except Exception as e:
-                print(f'[Lyrics] server error: {e}')
+                print(f'[Lyrics] Server error: {e}')
 
         # 2. Enabled remote sources
         if not raw:
             sources = enabled_sources()
-            print(f'[Lyrics] trying {sources} for "{artist} - {title}"')
+            print(f'[Lyrics] trying remote sources: {sources}')
 
             if 'LRCLib' in sources:
                 raw = lrclib_direct(artist, title, album, duration)
                 if raw:
                     source = 'LRCLib'
-                    print('[Lyrics] LRCLib direct hit')
+                    print('[Lyrics] ✓ LRCLib direct hit')
+                else:
+                    print('[Lyrics] LRCLib direct: miss — trying LRCLib search fallback')
+                    results = lrclib_search(artist, title)
+                    print(f'[Lyrics] LRCLib search: {len(results)} result(s)')
+                    if results:
+                        sid = results[0]['id']
+                        raw = lrclib_fetch(sid)
+                        if raw:
+                            source = 'LRCLib'
+                            print(f'[Lyrics] ✓ LRCLib search hit (id={sid})')
+                        else:
+                            print(f'[Lyrics] LRCLib fetch failed for id={sid}')
 
             if 'NetEase' in sources and not raw:
                 results = netease_search(artist, title)
+                print(f'[Lyrics] NetEase search: {len(results)} result(s)')
                 if results:
                     sid = results[0]['id']
                     raw = netease_fetch(sid)
                     if raw:
                         source = 'NetEase'
-                        print('[Lyrics] NetEase hit')
+                        print(f'[Lyrics] ✓ NetEase hit (id={sid})')
+                    else:
+                        print(f'[Lyrics] NetEase fetch failed for id={sid}')
 
             if 'SimpMusic' in sources and not raw:
                 results = simpmusic_search(artist, title)
+                print(f'[Lyrics] SimpMusic search: {len(results)} result(s)')
                 if results:
                     sid = results[0]['id']
                     raw = simpmusic_fetch(sid)
                     if raw:
                         source = 'SimpMusic'
-                        print('[Lyrics] SimpMusic hit')
+                        print(f'[Lyrics] ✓ SimpMusic hit (id={sid})')
+                    else:
+                        print(f'[Lyrics] SimpMusic fetch failed for id={sid}')
 
         if not raw:
-            print(f'[Lyrics] not found for "{title}"')
+            print(f'[Lyrics] ✗ not found for "{artist} - {title}"')
 
         self.done.emit(raw or '', source, sid)
 
@@ -691,6 +849,7 @@ class LyricsPanel(QWidget):
         # ── Toolbar bar (always visible at bottom) ────────────────────────────
         self._toolbar = _LyricsToolbar(self)
         self._toolbar.search_clicked.connect(self._open_search)
+        self._toolbar.save_clicked.connect(self._save_lyrics)
         self._toolbar.refresh_clicked.connect(self._clear_override_and_reload)
         self._toolbar.offset_changed.connect(self._on_offset_changed)
 
@@ -712,6 +871,7 @@ class LyricsPanel(QWidget):
         self._current_track: dict = {}
         self._client          = None
         self._fetcher: _LyricsFetcher | None = None
+        self._current_raw:    str = ''
         self._override_raw:   str = ''
         self._active_source:  str = ''
         self._active_sid:     str = ''
@@ -766,11 +926,13 @@ class LyricsPanel(QWidget):
         if tid and tid == self._current_track.get('id'):
             return
         self._current_track = track
+        self._current_raw   = ''
         self._override_raw  = ''
         self._active_source = ''
         self._active_sid    = ''
         self._offset_ms     = 0
         self._toolbar.set_offset(0)
+        self._toolbar.set_save_mode(False)
         self._start_fetch(track)
 
     def update_position(self, pos_ms: int):
@@ -798,7 +960,21 @@ class LyricsPanel(QWidget):
 
     def _clear_override_and_reload(self):
         self._override_raw = ''
+        self._current_raw  = ''
         self._start_fetch(self._current_track)
+
+    def _save_lyrics(self):
+        if not self._current_track:
+            return
+        if self._active_source == 'Local':
+            _remove_local_lyrics(self._current_track)
+            self._toolbar.set_save_mode(False)
+            print(f'[Lyrics] removed local lyrics for "{self._current_track.get("title", "")}"')
+        elif self._current_raw:
+            _save_local_lyrics(self._current_track, self._current_raw)
+            self._toolbar.set_save_mode(True)
+            self._active_source = 'Local'
+            print(f'[Lyrics] saved locally for "{self._current_track.get("title", "")}"')
 
     # ── slots ─────────────────────────────────────────────────────────────────
 
@@ -808,6 +984,8 @@ class LyricsPanel(QWidget):
             return
         self._active_source = source
         self._active_sid    = sid
+        self._current_raw   = raw
+        self._toolbar.set_save_mode(source == 'Local')
         self._render(raw, source)
 
     def _render(self, raw: str, source: str = ''):
@@ -830,8 +1008,13 @@ class LyricsPanel(QWidget):
             active_sid=self._active_sid,
             parent=self.window(),
         )
+        mw = self.window()
         dlg.override_selected.connect(self._apply_override)
-        dlg.exec()
+        if hasattr(mw, 'show_dim'):
+            mw.show_dim()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _apply_override(self, data: dict):
         raw = data.get('raw', '')
@@ -840,6 +1023,8 @@ class LyricsPanel(QWidget):
             self._active_source = src
             self._active_sid    = data.get('id', '')
             self._override_raw  = raw
+            self._current_raw   = raw
+            self._toolbar.set_save_mode(False)
             self._clear()
             self._render(raw, src)
 

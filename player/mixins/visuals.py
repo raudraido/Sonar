@@ -196,7 +196,7 @@ class VisualsMixin:
             setattr(self.theme, field, dim)
         self._last_theme_key = None
         if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
-            self.swin._sync_bg_btns()
+            self.swin.refresh_theme()
 
     def apply_cover_art(self, data):
         self.update_background_threaded(None, raw_data_override=data)
@@ -511,7 +511,7 @@ class VisualsMixin:
             self._now_playing_panel.set_accent_color(mc)
 
         if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
-            self.swin._apply_slider_color()
+            self.swin.refresh_theme()
 
         pass  # Tooltip styling handled by _TooltipFilter in window.py
 

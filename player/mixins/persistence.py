@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt, QSettings, QProcess, QThread, pyqtSignal, QTimer
 
 from player.workers import PlaylistLoaderWorker
-from player.widgets import SettingsWindow
+from player.widgets import SettingsWindow, _DimOverlay
 
 class PersistenceMixin:
     def save_playlist(self):
@@ -328,7 +328,20 @@ class PersistenceMixin:
             gc.collect()
         print(f"[RAM Monitor] Active Memory: {mem_mb:.1f} MB")
     
-    def open_settings(self): 
+    def _dim_overlay(self) -> _DimOverlay:
+        if not hasattr(self, '_dim_ov') or self._dim_ov is None:
+            self._dim_ov = _DimOverlay(self)
+        return self._dim_ov
+
+    def show_dim(self):
+        self._dim_overlay()._refit()
+        self._dim_overlay().fade_in()
+
+    def hide_dim(self):
+        self._dim_overlay().fade_out()
+
+    def open_settings(self):
+        self.show_dim()
         self.swin = SettingsWindow(self)
         self.swin.show()
     

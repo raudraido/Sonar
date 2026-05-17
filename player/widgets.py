@@ -11,10 +11,10 @@ from version import __version__
 
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
-    QSlider, QPushButton, QColorDialog, QCheckBox, QApplication,
+    QSlider, QPushButton, QCheckBox, QApplication,
     QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog
 )
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation, QTimer
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 from PyQt6.QtGui import (
     QFont, QFontMetrics, QColor, QMouseEvent, QPainter, QPen,
@@ -636,6 +636,55 @@ class KeyCaptureButton(QPushButton):
         super().focusOutEvent(event)
 
 
+class _DimOverlay(QWidget):
+    """Full-window semi-transparent tint overlay, same animation as spotlight search."""
+    _TARGET_ALPHA = 200
+    _STEPS        = 10
+    _INTERVAL_MS  = 16
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._alpha = 0.0
+        self._step  = 0.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.hide()
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._INTERVAL_MS)
+        self._timer.timeout.connect(self._tick)
+
+    def _tick(self):
+        self._alpha += self._step
+        if self._step > 0 and self._alpha >= self._TARGET_ALPHA:
+            self._alpha = self._TARGET_ALPHA
+            self._timer.stop()
+        elif self._step < 0 and self._alpha <= 0:
+            self._alpha = 0
+            self._timer.stop()
+            self.hide()
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(0, 0, 0, int(self._alpha)))
+        p.end()
+
+    def fade_in(self):
+        self._refit()
+        self.raise_()
+        self.show()
+        self._step = self._TARGET_ALPHA / self._STEPS
+        self._timer.start()
+
+    def fade_out(self):
+        self._step = -(self._TARGET_ALPHA / self._STEPS)
+        self._timer.start()
+
+    def _refit(self):
+        if self.parent():
+            self.setGeometry(self.parent().rect())
+
+
 class SettingsWindow(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -643,9 +692,8 @@ class SettingsWindow(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(900)
-        self._seps = []          # QFrame separators
-        self._bg_field_lbls = [] # background panel name labels
-        self._hotkey_desc_lbls = []  # hotkey description labels
+        self._seps = []
+        self._hotkey_desc_lbls = []
         self.setStyleSheet("color: #ddd; font-family: sans-serif;")
         self._drag_pos = None
 
@@ -734,13 +782,6 @@ class SettingsWindow(QDialog):
         self._settings_logo_base.setPixmap(_pix_base)
         self._settings_logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        self._settings_logo_tint = QLabel(_logo_ctr)
-        self._settings_logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
-        self._settings_logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._settings_logo_tint.raise_()
-        self._settings_logo_size = _logo_size
-        self._update_settings_logo_tint(self.parent.theme.accent)
-
         header.addWidget(_logo_ctr)
 
         title_col = QVBoxLayout()
@@ -787,159 +828,6 @@ class SettingsWindow(QDialog):
         sep_preset.setStyleSheet(f"color: {bc};")
         self._seps.append(sep_preset)
         layout.addWidget(sep_preset)
-
-        self._theme_lbl = QLabel("Theme:")
-        self._theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
-        layout.addWidget(self._theme_lbl)
-        self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
-        self.dynamic_check.setStyleSheet(f"color: {fc1}; background: transparent;")
-        self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
-        self.dynamic_check.stateChanged.connect(self.toggle_dynamic_color)
-        layout.addWidget(self.dynamic_check)
-
-        self.color_btn = QPushButton("Pick Static Color")
-        self.color_btn.clicked.connect(self.pick_global_color)
-        self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
-        layout.addWidget(self.color_btn)
-
-        self._sliders = ()
-        self._apply_slider_color()
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {bc};")
-        self._seps.append(sep2)
-        layout.addWidget(sep2)
-
-        self._bg_label = QLabel("Background Colors")
-        self._bg_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(self._bg_label)
-
-        self.auto_bg_check = QCheckBox("Auto-tint from accent color")
-        self.auto_bg_check.setStyleSheet(f"color: {fc1}; background: transparent;")
-        self.auto_bg_check.setChecked(self.parent.theme.auto_bg_from_accent)
-        self.auto_bg_check.stateChanged.connect(self._toggle_auto_bg)
-        layout.addWidget(self.auto_bg_check)
-
-        _BG_FIELDS = [
-            ("left_panel_bg",   "Left Panel"),
-            ("queue_panel_bg",  "Queue Panel"),
-            ("footer_panel_bg", "Footer Panel"),
-            ("main_panel_bg",   "Main Panel"),
-            ("header_panel_bg", "Header Panel"),
-        ]
-
-        _bg_grid = QWidget()
-        _bg_grid.setStyleSheet("background: transparent;")
-        _bg_gl = QGridLayout(_bg_grid)
-        _bg_gl.setContentsMargins(0, 0, 0, 0)
-        _bg_gl.setHorizontalSpacing(10)
-        _bg_gl.setVerticalSpacing(6)
-        _bg_gl.setColumnStretch(1, 1)
-
-        self._bg_btns = {}
-        self._BG_FIELDS = _BG_FIELDS
-
-        def _bg_btn_style(hex_color, disabled=False):
-            if disabled:
-                return ("background: #1e1e1e; border-radius: 6px; border: 1px solid #2a2a2a;"
-                        " min-height: 28px; font-size: 11px; color: #444;")
-            return (f"background: {hex_color}; border-radius: 6px; border: 1px solid #333;"
-                    f" min-height: 28px; font-size: 11px; color: {'#000' if QColor(hex_color).lightness() > 128 else '#fff'};")
-
-        self._bg_btn_style = _bg_btn_style
-
-        def _make_bg_picker(f, btn):
-            def _pick():
-                if self.parent.theme.auto_bg_from_accent:
-                    return
-                r, g, b = (int(x) for x in getattr(self.parent.theme, f).split(','))
-                color = QColorDialog.getColor(QColor(r, g, b), self, "Pick Background Color")
-                if color.isValid():
-                    setattr(self.parent.theme, f, f"{color.red()},{color.green()},{color.blue()}")
-                    btn.setText(color.name())
-                    btn.setStyleSheet(_bg_btn_style(color.name()))
-                    self.parent._last_theme_key = None
-                    self.parent.refresh_ui_styles()
-            return _pick
-
-        auto = self.parent.theme.auto_bg_from_accent
-        for row, (field, label_text) in enumerate(_BG_FIELDS):
-            lbl = QLabel(label_text)
-            lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
-            self._bg_field_lbls.append(lbl)
-
-            r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
-            hex_color = QColor(r, g, b).name()
-            btn = QPushButton("auto" if auto else hex_color)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setEnabled(not auto)
-            btn.setStyleSheet(_bg_btn_style(hex_color, disabled=auto))
-            btn.clicked.connect(_make_bg_picker(field, btn))
-
-            _bg_gl.addWidget(lbl, row, 0)
-            _bg_gl.addWidget(btn, row, 1)
-            self._bg_btns[field] = btn
-
-        layout.addWidget(_bg_grid)
-
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet(f"color: {bc};")
-        self._seps.append(sep3)
-        layout.addWidget(sep3)
-
-        self._border_section_label = QLabel("Border Color")
-        self._border_section_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(self._border_section_label)
-
-        self.auto_border_check = QCheckBox("Auto-derive from accent color")
-        self.auto_border_check.setStyleSheet(f"color: {fc1}; background: transparent;")
-        self.auto_border_check.setChecked(self.parent.theme.auto_border_from_accent)
-        self.auto_border_check.stateChanged.connect(self._toggle_auto_border)
-        layout.addWidget(self.auto_border_check)
-
-        _border_auto = self.parent.theme.auto_border_from_accent
-        _border_hex = self.parent.theme.manual_border_color
-        self.border_color_btn = QPushButton("auto" if _border_auto else _border_hex)
-        self.border_color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.border_color_btn.setEnabled(not _border_auto)
-        self.border_color_btn.setStyleSheet(
-            _bg_btn_style(_border_hex, disabled=_border_auto)
-        )
-        self.border_color_btn.clicked.connect(self._pick_border_color)
-        layout.addWidget(self.border_color_btn)
-
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.Shape.HLine)
-        sep4.setStyleSheet(f"color: {bc};")
-        self._seps.append(sep4)
-        layout.addWidget(sep4)
-
-        self._menu_hover_label = QLabel("Menu Hover Color")
-        self._menu_hover_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(self._menu_hover_label)
-
-        self.auto_menu_hover_check = QCheckBox("Auto (lighter of accent)")
-        self.auto_menu_hover_check.setStyleSheet(f"color: {fc1}; background: transparent;")
-        self.auto_menu_hover_check.setChecked(self.parent.theme.auto_menu_hover)
-        self.auto_menu_hover_check.stateChanged.connect(self._toggle_auto_menu_hover)
-        layout.addWidget(self.auto_menu_hover_check)
-
-        _mh_auto = self.parent.theme.auto_menu_hover
-        _mh_hex  = self.parent.theme.menu_hover_color
-        self.menu_hover_btn = QPushButton("auto" if _mh_auto else _mh_hex)
-        self.menu_hover_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.menu_hover_btn.setEnabled(not _mh_auto)
-        self.menu_hover_btn.setStyleSheet(_bg_btn_style(_mh_hex, disabled=_mh_auto))
-        self.menu_hover_btn.clicked.connect(self._pick_menu_hover_color)
-        layout.addWidget(self.menu_hover_btn)
-
-        sep5 = QFrame()
-        sep5.setFrameShape(QFrame.Shape.HLine)
-        sep5.setStyleSheet(f"color: {bc};")
-        self._seps.append(sep5)
-        layout.addWidget(sep5)
 
         self._lyrics_label = QLabel("Lyrics Sources")
         self._lyrics_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
@@ -1032,19 +920,6 @@ class SettingsWindow(QDialog):
         self.logout_btn.clicked.connect(self.perform_logout)
         rlayout.addWidget(self.logout_btn)
 
-    def _apply_slider_color(self):
-        mc = getattr(self.parent, 'master_color', '#ffffff')
-        self._update_settings_logo_tint(mc)
-        _sb_ss = (
-            "QScrollArea { background: transparent; border: none; }"
-            f"QScrollBar:vertical {{ border: none; background: #1a1a1a; width: 6px; margin: 0; }}"
-            f"QScrollBar::handle:vertical {{ background: {mc}; min-height: 20px; border-radius: 3px; }}"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        )
-        self._scroll.setStyleSheet(_sb_ss)
-        if hasattr(self, '_scroll_right'):
-            self._scroll_right.setStyleSheet(_sb_ss)
-
     def showEvent(self, event):
         super().showEvent(event)
         p = self.parent
@@ -1060,6 +935,8 @@ class SettingsWindow(QDialog):
 
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
+        if hasattr(self.parent, 'hide_dim'):
+            self.parent.hide_dim()
         super().hideEvent(event)
 
     def eventFilter(self, _, event):
@@ -1071,27 +948,6 @@ class SettingsWindow(QDialog):
             if not QRect(tl, br).contains(pos):
                 self.hide()
         return False
-
-    def _update_settings_logo_tint(self, color: str):
-        if not hasattr(self, '_settings_logo_tint'):
-            return
-        from player import resource_path
-        from PyQt6.QtGui import QPainter as _P
-        sz = self._settings_logo_size
-        raw = QPixmap(resource_path("img/shahedron1.png"))
-        if raw.isNull():
-            return
-        raw = raw.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
-        out = QPixmap(raw.size())
-        out.fill(Qt.GlobalColor.transparent)
-        p = _P(out)
-        p.setRenderHint(_P.RenderHint.Antialiasing)
-        p.drawPixmap(0, 0, raw)
-        p.setCompositionMode(_P.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(out.rect(), QColor(color))
-        p.end()
-        self._settings_logo_tint.setPixmap(out)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1107,34 +963,16 @@ class SettingsWindow(QDialog):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
-    def toggle_dynamic_color(self):
-        self.parent.theme.dynamic_accent = self.dynamic_check.isChecked()
-
-    def _toggle_auto_bg(self):
-        auto = self.auto_bg_check.isChecked()
-        self.parent.theme.auto_bg_from_accent = auto
-        for field, btn in self._bg_btns.items():
-            if auto:
-                btn.setEnabled(False)
-                btn.setText("auto")
-                btn.setStyleSheet(self._bg_btn_style("#000000", disabled=True))
-            else:
-                r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
-                hex_color = QColor(r, g, b).name()
-                btn.setEnabled(True)
-                btn.setText(hex_color)
-                btn.setStyleSheet(self._bg_btn_style(hex_color))
-        if auto:
-            self.parent._auto_tint_bg_colors()
-            self.parent.refresh_ui_styles()
+    def closeEvent(self, event):
+        super().closeEvent(event)
 
     def refresh_theme(self):
-        """Repaint the settings window itself to match the current theme."""
-        t   = self.parent.theme
+        t  = self.parent.theme
         fc1 = t.font_color_primary
         fc2 = t.font_color_secondary
         bc  = t.border_color
         bg  = t.main_panel_bg
+        mc  = getattr(self.parent, 'master_color', '#ffffff')
 
         self.bg.setStyleSheet(
             f"QFrame#settingsBg {{ background-color: rgb({bg}); border: 1px solid {bc}; border-radius: 10px; }}"
@@ -1143,70 +981,33 @@ class SettingsWindow(QDialog):
             sep.setStyleSheet(f"color: {bc};")
         _sec = f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;"
         self._preset_label.setStyleSheet(_sec)
-        self._bg_label.setStyleSheet(_sec)
-        self._border_section_label.setStyleSheet(_sec)
-        self._menu_hover_label.setStyleSheet(_sec)
+        self._lyrics_label.setStyleSheet(_sec)
         if hasattr(self, '_hotkeys_label'):
             self._hotkeys_label.setStyleSheet(_sec)
         self._name_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {fc1}; background: transparent;")
         self._ver_lbl.setStyleSheet(f"font-size: 11px; color: {fc2}; background: transparent;")
-        self._theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
-        for lbl in self._bg_field_lbls:
-            lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
         for lbl in self._hotkey_desc_lbls:
             lbl.setStyleSheet(f"color: {fc1}; font-size: 12px; background: transparent;")
-        self.color_btn.setStyleSheet(
-            f"background: {t.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;"
+        _sb_ss = (
+            "QScrollArea { background: transparent; border: none; }"
+            f"QScrollBar:vertical {{ border: none; background: #1a1a1a; width: 6px; margin: 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {mc}; min-height: 20px; border-radius: 3px; }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         )
-        self._update_settings_logo_tint(t.accent)
-        self._apply_slider_color()
-
-    def _sync_bg_btns(self):
-        """Refresh button labels/colors after auto-tint has updated the theme fields."""
-        if not hasattr(self, '_bg_btns'):
-            return
-        auto = self.parent.theme.auto_bg_from_accent
-        for field, btn in self._bg_btns.items():
-            r, g, b = (int(x) for x in getattr(self.parent.theme, field).split(','))
-            hex_color = QColor(r, g, b).name()
-            btn.setText("auto" if auto else hex_color)
-            btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=auto))
+        self._scroll.setStyleSheet(_sb_ss)
+        if hasattr(self, '_scroll_right'):
+            self._scroll_right.setStyleSheet(_sb_ss)
 
     def _apply_preset(self, name: str):
         from player.theme import load_presets
-        PRESETS = load_presets()
         import dataclasses
-        preset = PRESETS.get(name)
+        preset = load_presets().get(name)
         if not preset:
             return
         t = self.parent.theme
-        skip = {'border_color'}  # runtime-only
         for f in dataclasses.fields(preset):
-            if f.name not in skip:
+            if f.name != 'border_color':
                 setattr(t, f.name, getattr(preset, f.name))
-
-        # Sync every settings widget to the new values
-        self.dynamic_check.setChecked(t.dynamic_accent)
-        self.color_btn.setStyleSheet(
-            f"background: {t.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;"
-        )
-        self.auto_bg_check.setChecked(t.auto_bg_from_accent)
-        self._sync_bg_btns()
-        self.auto_border_check.setChecked(t.auto_border_from_accent)
-        _bh = t.manual_border_color
-        _ba = t.auto_border_from_accent
-        self.border_color_btn.setText("auto" if _ba else _bh)
-        self.border_color_btn.setEnabled(not _ba)
-        self.border_color_btn.setStyleSheet(self._bg_btn_style(_bh, disabled=_ba))
-        self.auto_menu_hover_check.setChecked(t.auto_menu_hover)
-        _mh = t.menu_hover_color
-        _ma = t.auto_menu_hover
-        self.menu_hover_btn.setText("auto" if _ma else _mh)
-        self.menu_hover_btn.setEnabled(not _ma)
-        self.menu_hover_btn.setStyleSheet(self._bg_btn_style(_mh, disabled=_ma))
-        self._apply_slider_color()
-
-        # Apply to the live UI
         self.parent._last_theme_key = None
         if t.auto_bg_from_accent:
             self.parent._auto_tint_bg_colors()
@@ -1219,58 +1020,6 @@ class SettingsWindow(QDialog):
             self.parent._queue_panel.apply_theme(t)
         self.parent.now_playing_widget.apply_theme(t)
         self.refresh_theme()
-
-    def _toggle_auto_border(self):
-        auto = self.auto_border_check.isChecked()
-        self.parent.theme.auto_border_from_accent = auto
-        hex_color = self.parent.theme.manual_border_color
-        if auto:
-            self.border_color_btn.setEnabled(False)
-            self.border_color_btn.setText("auto")
-            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=True))
-        else:
-            self.border_color_btn.setEnabled(True)
-            self.border_color_btn.setText(hex_color)
-            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_color))
-        self.parent._last_theme_key = None
-        self.parent.refresh_ui_styles()
-
-    def _pick_border_color(self):
-        color = QColorDialog.getColor(
-            QColor(self.parent.theme.manual_border_color), self, "Pick Border Color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel
-        )
-        if color.isValid():
-            hex_argb = color.name(QColor.NameFormat.HexArgb)
-            self.parent.theme.manual_border_color = hex_argb
-            self.border_color_btn.setText(hex_argb)
-            self.border_color_btn.setStyleSheet(self._bg_btn_style(hex_argb))
-            self.parent._last_theme_key = None
-            self.parent.refresh_ui_styles()
-     
-    def _toggle_auto_menu_hover(self):
-        auto = self.auto_menu_hover_check.isChecked()
-        self.parent.theme.auto_menu_hover = auto
-        hex_color = self.parent.theme.menu_hover_color
-        if auto:
-            self.menu_hover_btn.setEnabled(False)
-            self.menu_hover_btn.setText("auto")
-            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(hex_color, disabled=True))
-        else:
-            self.menu_hover_btn.setEnabled(True)
-            self.menu_hover_btn.setText(hex_color)
-            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(hex_color))
-        self._apply_menu_hover_palette()
-
-    def _pick_menu_hover_color(self):
-        color = QColorDialog.getColor(
-            QColor(self.parent.theme.menu_hover_color), self, "Pick Menu Hover Color"
-        )
-        if color.isValid():
-            self.parent.theme.menu_hover_color = color.name()
-            self.menu_hover_btn.setText(color.name())
-            self.menu_hover_btn.setStyleSheet(self._bg_btn_style(color.name()))
-            self._apply_menu_hover_palette()
 
     def _save_lyrics_sources(self):
         from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
@@ -1295,34 +1044,6 @@ class SettingsWindow(QDialog):
                 tab.footer.set_accent_color(tab.footer.current_accent)
             if hasattr(tab, 'search_container'):
                 tab.search_container.set_accent_color(getattr(tab, 'current_accent', '#ffffff'))
-
-    def update_vis_settings(self):
-        self.vis_speed_label.setText(f"Responsiveness: {self.vis_speed_slider.value()}%")
-        self.vis_gain_label.setText(f"Bar Height: {self.vis_gain_slider.value()}")
-        if hasattr(self.parent, 'visualizer'):
-            self.parent.visualizer.speed = self.vis_speed_slider.value() / 100.0
-            self.parent.visualizer.gain = float(self.vis_gain_slider.value())
-
-
-    def pick_global_color(self):
-        self.dynamic_check.setChecked(False) 
-        self.parent.theme.dynamic_accent = False
-        color = QColorDialog.getColor(QColor(self.parent.theme.accent), self, "Choose Master Theme Color")
-        if color.isValid():
-            self.parent.theme.accent = color.name()
-            self.color_btn.setStyleSheet(f"background: {self.parent.theme.accent}; color: black; padding: 10px; border-radius: 6px; font-weight: bold;")
-            self._apply_slider_color()
-            self.parent._auto_tint_bg_colors()
-            self._sync_bg_btns()
-            self.parent.refresh_ui_styles()
-            if hasattr(self.parent, 'visualizer'):
-                self.parent.visualizer.bar_color = QColor(self.parent.theme.accent)
-            if hasattr(self.parent, '_queue_panel'):
-                self.parent._queue_panel.set_accent_color(self.parent.theme.accent)
-            if hasattr(self.parent, 'seek_bar'):
-                self.parent.seek_bar._user_picked = True
-                self.parent.seek_bar.update()
-    
 
     def _on_key_captured(self, hid, key):
         self.parent.hotkey_manager.rebind(hid, key)
