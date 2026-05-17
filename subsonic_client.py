@@ -1370,6 +1370,23 @@ class SubsonicClient:
             print(f"[Client] Error fetching native song {song_id}: {e}")
         return None
 
+    def get_lyrics(self, artist: str, title: str) -> dict | None:
+        """Fetches lyrics via Subsonic getLyrics endpoint. Returns {'value': str} or None."""
+        params = self._get_auth_params()
+        params['artist'] = artist
+        params['title'] = title
+        try:
+            r = self.session.get(f"{self.base_url}/rest/getLyrics", params=params, timeout=10)
+            data = r.json()
+            sr = data.get('subsonic-response', {})
+            if sr.get('status') == 'ok':
+                lyrics = sr.get('lyrics', {})
+                if lyrics.get('value'):
+                    return lyrics
+        except Exception as e:
+            print(f"[Client] getLyrics error: {e}")
+        return None
+
     def get_server_scan_status(self):
         """Returns the server's last scan revision/timestamp as an integer."""
         params = self._get_auth_params()

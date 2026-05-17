@@ -766,6 +766,10 @@ class VisualsMixin:
                 self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
                 self.bpm_worker.start()
 
+            # Lyrics — load for the new track
+            if hasattr(self, '_queue_panel'):
+                self._queue_panel.queue_lyrics_load(track)
+
     def _make_heart_icon(self, active, color_str):
         path = resource_path("img/heart_filled.png" if active else "img/heart.png")
         base = QPixmap(path)

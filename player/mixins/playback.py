@@ -609,9 +609,12 @@ class PlaybackMixin:
         
         if hasattr(self.seek_bar, 'update_position'):
             self.seek_bar.update_position(position)
-            
-        if hasattr(self, 'current_time_label'): 
+
+        if hasattr(self, 'current_time_label'):
             self.current_time_label.setText(self.format_time(position))
+
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.update_lyrics_position(int(position))
 
     def run_smooth_interpolator(self):
         is_djing = getattr(self.seek_bar, 'is_dragging', False) or getattr(self.seek_bar, 'is_spinning_freely', False)

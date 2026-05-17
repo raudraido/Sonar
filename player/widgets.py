@@ -792,6 +792,7 @@ class SettingsWindow(QDialog):
         self._theme_lbl.setStyleSheet(f"color: {fc1}; background: transparent;")
         layout.addWidget(self._theme_lbl)
         self.dynamic_check = QCheckBox("Auto-Match Color from Album Art")
+        self.dynamic_check.setStyleSheet(f"color: {fc1}; background: transparent;")
         self.dynamic_check.setChecked(self.parent.theme.dynamic_accent)
         self.dynamic_check.stateChanged.connect(self.toggle_dynamic_color)
         layout.addWidget(self.dynamic_check)
@@ -815,6 +816,7 @@ class SettingsWindow(QDialog):
         layout.addWidget(self._bg_label)
 
         self.auto_bg_check = QCheckBox("Auto-tint from accent color")
+        self.auto_bg_check.setStyleSheet(f"color: {fc1}; background: transparent;")
         self.auto_bg_check.setChecked(self.parent.theme.auto_bg_from_accent)
         self.auto_bg_check.stateChanged.connect(self._toggle_auto_bg)
         layout.addWidget(self.auto_bg_check)
@@ -892,6 +894,7 @@ class SettingsWindow(QDialog):
         layout.addWidget(self._border_section_label)
 
         self.auto_border_check = QCheckBox("Auto-derive from accent color")
+        self.auto_border_check.setStyleSheet(f"color: {fc1}; background: transparent;")
         self.auto_border_check.setChecked(self.parent.theme.auto_border_from_accent)
         self.auto_border_check.stateChanged.connect(self._toggle_auto_border)
         layout.addWidget(self.auto_border_check)
@@ -918,6 +921,7 @@ class SettingsWindow(QDialog):
         layout.addWidget(self._menu_hover_label)
 
         self.auto_menu_hover_check = QCheckBox("Auto (lighter of accent)")
+        self.auto_menu_hover_check.setStyleSheet(f"color: {fc1}; background: transparent;")
         self.auto_menu_hover_check.setChecked(self.parent.theme.auto_menu_hover)
         self.auto_menu_hover_check.stateChanged.connect(self._toggle_auto_menu_hover)
         layout.addWidget(self.auto_menu_hover_check)
@@ -930,6 +934,28 @@ class SettingsWindow(QDialog):
         self.menu_hover_btn.setStyleSheet(_bg_btn_style(_mh_hex, disabled=_mh_auto))
         self.menu_hover_btn.clicked.connect(self._pick_menu_hover_color)
         layout.addWidget(self.menu_hover_btn)
+
+        sep5 = QFrame()
+        sep5.setFrameShape(QFrame.Shape.HLine)
+        sep5.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep5)
+        layout.addWidget(sep5)
+
+        self._lyrics_label = QLabel("Lyrics Sources")
+        self._lyrics_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._lyrics_label)
+
+        from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
+        _s = QSettings('Icosahedron', 'Icosahedron')
+        _enabled = list(_s.value(_LYRIC_KEY, _LYRIC_SOURCES) or _LYRIC_SOURCES)
+        self._lyrics_source_checks = {}
+        for src in _LYRIC_SOURCES:
+            cb = QCheckBox(src)
+            cb.setStyleSheet(f"color: {fc1}; background: transparent;")
+            cb.setChecked(src in _enabled)
+            cb.stateChanged.connect(self._save_lyrics_sources)
+            layout.addWidget(cb)
+            self._lyrics_source_checks[src] = cb
 
         layout.addStretch()
 
@@ -1245,6 +1271,11 @@ class SettingsWindow(QDialog):
             self.menu_hover_btn.setText(color.name())
             self.menu_hover_btn.setStyleSheet(self._bg_btn_style(color.name()))
             self._apply_menu_hover_palette()
+
+    def _save_lyrics_sources(self):
+        from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
+        enabled = [src for src, cb in self._lyrics_source_checks.items() if cb.isChecked()]
+        QSettings('Icosahedron', 'Icosahedron').setValue(_LYRIC_KEY, enabled)
 
     def _apply_menu_hover_palette(self):
         from player.mixins.visuals import resolve_menu_hover

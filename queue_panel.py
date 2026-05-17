@@ -379,6 +379,11 @@ class QueuePanel(QWidget):
         self._info_load_timer.setSingleShot(True)
         self._info_load_timer.setInterval(350)
         self._info_load_timer.timeout.connect(self._do_load_artist_info)
+        self._pending_lyrics   = None  # track dict deferred while hidden or lyrics tab inactive
+        self._lyrics_load_timer = QTimer(self)
+        self._lyrics_load_timer.setSingleShot(True)
+        self._lyrics_load_timer.setInterval(400)
+        self._lyrics_load_timer.timeout.connect(self._do_load_lyrics)
         self._heart_filled_pix = self._make_heart_pix("img/heart_filled.png", "#E91E63")
         self._heart_empty_pix  = self._make_heart_pix("img/heart.png", "#555555")
 
@@ -461,13 +466,17 @@ class QueuePanel(QWidget):
 
         col.addWidget(header)
 
-        # ── Content stack (list / artist info) ───────────────────────────────
+        # ── Content stack (list / lyrics / artist info) ───────────────────────
         from artist_info_panel import ArtistInfoPanel
+        from lyrics_panel import LyricsPanel
         self._artist_info_panel = ArtistInfoPanel()
         self._artist_info_panel.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
         )
         self._artist_info_panel.hide()
+        self._lyrics_panel = LyricsPanel()
+        self._lyrics_panel.hide()
+        self._lyrics_panel.seek_requested.connect(self._on_lyrics_seek)
         self._navidrome_client = None   # set from outside via set_client()
 
         # Track list
@@ -513,6 +522,7 @@ class QueuePanel(QWidget):
         self._update_list_style()
 
         col.addWidget(self._list)
+        col.addWidget(self._lyrics_panel)
         col.addWidget(self._artist_info_panel)
 
         # ── Bottom tab bar ────────────────────────────────────────────────────
@@ -541,6 +551,7 @@ class QueuePanel(QWidget):
             ] if checked else None)
 
         self.btn_queue.toggled.connect(lambda on: self._show_tab('queue') if on else None)
+        self.btn_lyrics.toggled.connect(lambda on: self._show_tab('lyrics') if on else None)
         self.btn_info.toggled.connect(lambda on: self._show_tab('info') if on else None)
 
         bb_layout.addWidget(self.btn_queue)
@@ -581,6 +592,7 @@ class QueuePanel(QWidget):
 
     def set_client(self, client):
         self._navidrome_client = client
+        self._lyrics_panel.set_client(client)
 
     def load_track(self, artist_id: str, artist_name: str):
         # Wipe stale content immediately if the artist has changed
@@ -601,9 +613,33 @@ class QueuePanel(QWidget):
 
     def _show_tab(self, tab: str):
         self._list.setVisible(tab == 'queue')
+        self._lyrics_panel.setVisible(tab == 'lyrics')
         self._artist_info_panel.setVisible(tab == 'info')
         if tab == 'info' and self._pending_load is not None:
             self._info_load_timer.start()
+        if tab == 'lyrics' and self._pending_lyrics is not None:
+            self._lyrics_load_timer.start()
+
+    def _on_lyrics_seek(self, seconds: float):
+        w = self.window()
+        if hasattr(w, 'audio_engine'):
+            w.audio_engine.seek(int(seconds * 1000))
+
+    def queue_lyrics_load(self, track: dict):
+        """Called on every track change. Defers actual fetch until lyrics tab is open."""
+        self._lyrics_load_timer.stop()
+        self._pending_lyrics = track
+        if self.isVisible() and self.btn_lyrics.isChecked():
+            self._lyrics_load_timer.start()
+
+    def _do_load_lyrics(self):
+        if self._pending_lyrics is None:
+            return
+        track, self._pending_lyrics = self._pending_lyrics, None
+        self._lyrics_panel.load_track(track)
+
+    def update_lyrics_position(self, pos_ms: int):
+        self._lyrics_panel.update_position(pos_ms)
 
     def set_accent_color(self, color: str):
         self._accent_color = color
@@ -628,6 +664,7 @@ class QueuePanel(QWidget):
             f'color: {self._primary_color}; font-weight: bold; font-size: 16px; background: transparent; border: none;'
         )
         self._artist_info_panel.apply_theme(theme)
+        self._lyrics_panel.apply_theme(theme)
         self._list.viewport().update()
 
     def toggle_favorite_at(self, idx: int):
@@ -674,6 +711,8 @@ class QueuePanel(QWidget):
             self.refresh(*args)
         if self.btn_info.isChecked() and self._pending_load is not None:
             self._info_load_timer.start()
+        if self.btn_lyrics.isChecked() and self._pending_lyrics is not None:
+            self._lyrics_load_timer.start()
 
     def refresh(self, playlist_data: list, current_index: int, is_playing: bool = False):
         if not self.isVisible():
