@@ -74,6 +74,14 @@ def collect_assets():
                 added.append(f"--add-data={os.path.join('fonts', f)}{_SEP}fonts")
                 print(f"  Font: {f}")
 
+    themes_dir = os.path.join('player', 'themes')
+    if os.path.exists(themes_dir):
+        for f in os.listdir(themes_dir):
+            if f.lower().endswith('.json'):
+                src = os.path.join(themes_dir, f)
+                added.append(f'--add-data={src}{_SEP}{themes_dir}')
+                print(f"  Theme: {f}")
+
     print("\n--- Collecting QML Files ---")
     for root, dirs, files in os.walk("."):
         dirs[:] = [d for d in dirs if d not in ("dist", "build", "__pycache__", ".git")]

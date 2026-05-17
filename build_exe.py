@@ -294,6 +294,15 @@ def build():
                 added_data.append(f'--add-data={src}{_SEP}fonts')
                 print(f"  Added Font: {file}")
 
+    # Bundle theme presets
+    themes_dir = os.path.join('player', 'themes')
+    if os.path.exists(themes_dir):
+        for file in os.listdir(themes_dir):
+            if file.lower().endswith('.json'):
+                src = os.path.join(themes_dir, file)
+                added_data.append(f'--add-data={src}{_SEP}{themes_dir}')
+                print(f"  Added Theme: {file}")
+
     # 3. Gather QML files
     print("\n--- Collecting QML Files ---")
     qml_found = False
