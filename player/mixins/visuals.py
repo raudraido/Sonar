@@ -438,6 +438,24 @@ class VisualsMixin:
                 self.btn_back.set_color(mc)
                 self.btn_fwd.set_color(mc)
 
+            if hasattr(self, 'tab_bar'):
+                from PyQt6.QtCore import QSize
+                self.tab_bar.setIconSize(QSize(16, 16))
+                icon_map = {
+                    'home_tab':           'img/home.png',
+                    '_now_playing_panel': 'img/now_playing.png',
+                    'album_browser':      'img/albums.png',
+                    'artist_browser':     'img/artists.png',
+                    'tracks_browser':     'img/tracks.png',
+                    'playlists_browser':  'img/playlists.png',
+                }
+                for attr, img in icon_map.items():
+                    widget = getattr(self, attr, None)
+                    if widget:
+                        idx = self.tabs.indexOf(widget)
+                        if idx >= 0:
+                            self.tab_bar.setTabIcon(idx, get_cached_icon(img, mc))
+
         bw = self.theme.border_width
         if self.theme.auto_border_from_accent:
             self.theme.border_color = QColor(mc).darker(250).name()

@@ -1,6 +1,6 @@
 {
   "name": "Cream",
-  "accent": "#388BF1",
+  "accent": "#ac3d00",
   "dynamic_accent": false,
   "auto_bg_from_accent": false,
   "left_panel_bg": "222,221,218",
@@ -10,7 +10,7 @@
   "header_panel_bg": "235,233,228",
   "font_size_primary": 15,
   "font_size_secondary": 13,
-  "font_color_primary": "#2838A1",
+  "font_color_primary": "#63452c",
   "font_color_secondary": "#525563",
   "auto_menu_hover": false,
   "menu_hover_color": "#d5d1c6",

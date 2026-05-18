@@ -679,7 +679,7 @@ class SonarPlayer(
         self.main_header.setFixedHeight(62)
         self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         _mh_layout = QVBoxLayout(self.main_header)
-        _mh_layout.setContentsMargins(8, 10, 0, 0)
+        _mh_layout.setContentsMargins(8, 0, 0, 0)
         _mh_layout.setSpacing(0)
 
         _mh_layout.addWidget(self.tab_bar)

@@ -546,13 +546,10 @@ class LyricsSearchDialog(QDialog):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
-    def hideEvent(self, event):
-        mw = self.parent()
-        if mw and hasattr(mw, 'hide_dim'):
-            mw.hide_dim()
-        super().hideEvent(event)
-
     def closeEvent(self, event):
+        if self._preview_worker and self._preview_worker.isRunning():
+            self._preview_worker.done.disconnect()
+            self._preview_worker.quit()
         super().closeEvent(event)
 
 
@@ -1031,9 +1028,9 @@ class LyricsPanel(QWidget):
         dlg.override_selected.connect(self._apply_override)
         if hasattr(mw, 'show_dim'):
             mw.show_dim()
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+        dlg.exec()
+        if hasattr(mw, 'hide_dim'):
+            mw.hide_dim()
 
     def _apply_override(self, data: dict):
         raw = data.get('raw', '')
