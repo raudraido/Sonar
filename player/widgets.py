@@ -643,11 +643,14 @@ class _DimOverlay(QWidget):
     _INTERVAL_MS  = 16
 
     def __init__(self, parent):
-        super().__init__(parent)
+        super().__init__(parent,
+                         Qt.WindowType.Tool |
+                         Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.NoDropShadowWindowHint)
         self._alpha = 0.0
         self._step  = 0.0
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
         self.hide()
         self._timer = QTimer(self)
         self._timer.setInterval(self._INTERVAL_MS)
@@ -681,8 +684,10 @@ class _DimOverlay(QWidget):
         self._timer.start()
 
     def _refit(self):
-        if self.parent():
-            self.setGeometry(self.parent().rect())
+        p = self.parent()
+        if p:
+            win = p if p.isWindow() else p.window()
+            self.setGeometry(win.geometry())
 
 
 class SettingsWindow(QDialog):

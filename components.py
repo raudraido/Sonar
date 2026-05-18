@@ -47,9 +47,15 @@ class ToggleSwitch(QCheckBox):
         p.end()
 
 class NewPlaylistDialog(QDialog):
-    def __init__(self, parent=None, accent_color="#1DB954"):
+    def __init__(self, parent=None, accent_color="#1DB954", bg_color="#1e1e1e", border_color="#333333", border_width=1, fg_primary="#dddddd", fg_secondary="#999999", hover_color="rgba(255,255,255,0.08)"):
         super().__init__(parent)
         self.accent_color = accent_color
+        self.bg_color = bg_color
+        self.border_color = border_color
+        self.border_width = border_width
+        self.fg_primary = fg_primary
+        self.fg_secondary = fg_secondary
+        self.hover_color = hover_color
         self.playlist_name = ""
         
         # Remove OS borders and make background transparent for rounded corners
@@ -66,12 +72,12 @@ class NewPlaylistDialog(QDialog):
 
         
         self.bg_frame = QFrame()
-        self.bg_frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e; /* Solid dark background */
-                border: 1px solid #333333; /* Subtle border */
-                border-radius: 10px;       /* Smooth rounded corners */
-            }
+        self.bg_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.bg_color};
+                border: {self.border_width}px solid {self.border_color};
+                border-radius: 10px;
+            }}
         """)
         
         # The layout INSIDE the solid frame
@@ -88,17 +94,20 @@ class NewPlaylistDialog(QDialog):
         self.name_input.setPlaceholderText("Playlist name...")
         self.name_input.setStyleSheet(f"""
             QLineEdit {{
-                background-color: #111;
-                color: white;
-                border: 1px solid #444;
+                background-color: {self.bg_color};
+                color: {self.fg_primary};
+                border: {self.border_width}px solid {self.border_color};
                 border-radius: 4px;
                 padding: 10px 12px;
                 font-size: 14px;
             }}
             QLineEdit:focus {{
-                border: 1px solid {self.accent_color};
+                border: {self.border_width}px solid {self.border_color};
             }}
         """)
+        _pal = self.name_input.palette()
+        _pal.setColor(_pal.ColorRole.PlaceholderText, QColor(self.fg_secondary))
+        self.name_input.setPalette(_pal)
         self.name_input.returnPressed.connect(self.accept_dialog)
         container_layout.addWidget(self.name_input)
 
@@ -107,7 +116,7 @@ class NewPlaylistDialog(QDialog):
         toggle_layout.setContentsMargins(0, 5, 0, 5)
 
         public_label = QLabel("Public Playlist?")
-        public_label.setStyleSheet("color: #aaa; font-size: 13px; font-weight: bold; border: none; background: transparent;")
+        public_label.setStyleSheet(f"color: {self.fg_secondary}; font-size: 13px; font-weight: bold; border: none; background: transparent;")
 
         # Instantiate our custom drawing class
         self.public_toggle = ToggleSwitch(self.accent_color)
@@ -125,39 +134,30 @@ class NewPlaylistDialog(QDialog):
         btn_layout.setSpacing(10)
         btn_layout.addStretch() # Pushes buttons to the right side
 
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_cancel.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #aaa;
-                border: none;
-                font-size: 13px;
-                font-weight: bold;
-                padding: 8px 15px;
-            }
-            QPushButton:hover {
-                color: white;
-            }
-        """)
-        self.btn_cancel.clicked.connect(self.reject)
-
-        self.btn_create = QPushButton("Create")
-        self.btn_create.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_create.setStyleSheet(f"""
+        btn_style = f"""
             QPushButton {{
-                background-color: {self.accent_color};
-                color: white;
-                border: none;
+                background-color: transparent;
+                color: {self.fg_secondary};
+                border: 1px solid {self.border_color};
                 border-radius: 4px;
                 font-size: 13px;
                 font-weight: bold;
                 padding: 8px 20px;
             }}
             QPushButton:hover {{
-                background-color: {self.accent_color}dd;
+                background-color: {self.hover_color};
             }}
-        """)
+        """
+
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel.setStyleSheet(btn_style)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_create = QPushButton("Create")
+        self.btn_create.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_create.setStyleSheet(btn_style.replace(self.fg_secondary, self.fg_primary, 1))
+        self.btn_create.clicked.connect(self.accept_dialog)
         self.btn_create.clicked.connect(self.accept_dialog)
 
         btn_layout.addWidget(self.btn_cancel)
@@ -254,8 +254,8 @@ class SmartSearchContainer(QWidget):
         input_layout.addWidget(self.custom_clear_btn)
         
         self.search_input.setStyleSheet(
-            "QLineEdit { background-color: #080808; color: #ddd; border: 1px solid #333;"
-            " border-radius: 4px; padding-left: 10px; padding-right: 25px; font-size: 13px; }"
+            "background-color: #0e0e0e; border: 1px solid #2a2a2a;"
+            " border-radius: 4px; padding-left: 10px; padding-right: 25px; font-size: 13px;"
         )
         
         self.search_input.textChanged.connect(self._on_text_changed)
@@ -318,38 +318,55 @@ class SmartSearchContainer(QWidget):
         if self.search_input.maximumWidth() > 0 and not self.search_input.text():
             self.toggle_search()
 
-    def set_accent_color(self, color):
-        from player.mixins.visuals import resolve_menu_hover
-        _theme = getattr(self.window(), 'theme', None)
-        _hov = resolve_menu_hover(_theme)
-        _bg  = getattr(_theme, 'main_panel_bg',        '14,14,14')
-        _bc  = getattr(_theme, 'border_color',         '#2a2a2a')
-        _fg1 = getattr(_theme, 'font_color_primary',   '#dddddd')
-        _fg2 = getattr(_theme, 'font_color_secondary', '#999999')
-        _btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 4px; }} QPushButton:hover {{ background: {_hov}; }}"
+    def apply_input_theme(self, bg, border_color, border_width, fg_primary, fg_secondary, hover_color, accent_color):
+        self.search_input.setStyleSheet(
+            f"background-color: rgb({bg});"
+            f"border: {border_width}px solid {border_color};"
+            f"border-radius: 4px;"
+            f"padding-left: 10px; padding-right: 25px; font-size: 13px;"
+        )
+        _pal = self.search_input.palette()
+        _pal.setColor(_pal.ColorRole.Text, QColor(fg_primary))
+        _pal.setColor(_pal.ColorRole.PlaceholderText, QColor(fg_secondary))
+        self.search_input.setPalette(_pal)
+        self.search_input.update()
+
+        _btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 4px; }} QPushButton:hover {{ background: {hover_color}; }}"
         self.search_btn.setStyleSheet(_btn_style)
         self.burger_btn.setStyleSheet(_btn_style)
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: rgb({_bg}); color: {_fg1};
-                border: 1px solid {_bc}; border-radius: 4px;
-                padding-left: 10px; padding-right: 25px; font-size: 13px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {_bc}; }}
-        """)
-        _pal = self.search_input.palette()
-        _pal.setColor(_pal.ColorRole.PlaceholderText, QColor(_fg2))
-        self.search_input.setPalette(_pal)
 
         try:
             pixmap = QPixmap(resource_path("img/search.png"))
             if not pixmap.isNull():
                 painter = QPainter(pixmap)
                 painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                painter.fillRect(pixmap.rect(), QColor(color))
+                painter.fillRect(pixmap.rect(), QColor(accent_color))
                 painter.end()
                 self.search_btn.setIcon(QIcon(pixmap))
         except Exception as e: print(f"Error tinting search icon: {e}")
+
+        try:
+            pixmap = QPixmap(resource_path("img/close.png"))
+            if not pixmap.isNull():
+                painter = QPainter(pixmap)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(pixmap.rect(), QColor(accent_color))
+                painter.end()
+                self.custom_clear_btn.setIcon(QIcon(pixmap))
+        except Exception as e: print(f"Error tinting clear icon: {e}")
+
+    def set_accent_color(self, color):
+        from player.mixins.visuals import resolve_menu_hover
+        _theme = getattr(self.window(), 'theme', None)
+        self.apply_input_theme(
+            bg           = getattr(_theme, 'main_panel_bg',        '14,14,14'),
+            border_color = getattr(_theme, 'border_color',         '#2a2a2a'),
+            border_width = getattr(_theme, 'border_width',         1),
+            fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd'),
+            fg_secondary = getattr(_theme, 'font_color_secondary', '#999999'),
+            hover_color  = resolve_menu_hover(_theme),
+            accent_color = color,
+        )
 
     def showEvent(self, event):
         super().showEvent(event)

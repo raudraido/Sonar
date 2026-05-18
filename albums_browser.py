@@ -2141,7 +2141,7 @@ class LibraryGridBrowser(QWidget):
         header_layout.setSpacing(15)
         
         self.status_label = QLabel(f"Loading albums...")
-        self.status_label.setStyleSheet("color: #aaaaaa; font-weight: bold; background: transparent; border: none;")
+        self.status_label.setStyleSheet("color: #888888; font-weight: bold; background: transparent; border: none;")
         
         
         self.sort_states = {
@@ -2729,6 +2729,13 @@ class LibraryGridBrowser(QWidget):
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
 
     def set_accent_color(self, color):
+        if hasattr(self, 'status_label'):
+            _theme = getattr(self.window(), 'theme', None)
+            _sec_color = getattr(_theme, 'font_color_secondary', '#888888') if _theme else '#888888'
+            self.status_label.setStyleSheet(
+                f"color: {_sec_color}; font-weight: bold; background: transparent; border: none;"
+            )
+
         if getattr(self, 'current_accent', None) == color:
             return
 
@@ -2751,14 +2758,6 @@ class LibraryGridBrowser(QWidget):
                 self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
                 self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
                 self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
-            
-        if hasattr(self, 'status_label'):
-            _theme = getattr(self.window(), 'theme', None)
-            _sec_color = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
-            _pri_size  = getattr(_theme, 'font_size_primary', 14) if _theme else 14
-            self.status_label.setStyleSheet(
-                f"color: {_sec_color}; font-size: {_pri_size}px; font-weight: bold; background: transparent; border: none;"
-            )
 
         # Update the detail view behind the scenes
         if hasattr(self, 'detail_view'):

@@ -10,8 +10,35 @@ from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
 from albums_browser import resource_path, GridItemDelegate, GridCoverWorker, CoverImageProvider, QMLGridWrapper
-from components import PaginationFooter, SmartSearchContainer
+from components import PaginationFooter, SmartSearchContainer, ToggleSwitch
 from tracks_browser import TracksBrowser
+
+from PyQt6.QtGui import QPainterPath
+
+class RoundedCoverLabel(QLabel):
+    def __init__(self, radius=12, parent=None):
+        super().__init__(parent)
+        self._radius = radius
+
+    def paintEvent(self, event):
+        pix = self.pixmap()
+        if not pix or pix.isNull():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, self.width(), self.height(), self._radius, self._radius)
+            painter.fillPath(path, QColor("#222"))
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.width(), self.height(), self._radius, self._radius)
+        painter.setClipPath(path)
+        scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation)
+        x = (scaled.width()  - self.width())  // 2
+        y = (scaled.height() - self.height()) // 2
+        painter.drawPixmap(-x, -y, scaled)
 
 class PlaylistModel(QAbstractListModel):
     TITLE_ROLE    = Qt.ItemDataRole.UserRole + 1
@@ -62,10 +89,13 @@ class PlaylistBridge(QObject):
     playClicked        = pyqtSignal(dict)
     itemRightClicked   = pyqtSignal(int)
     backgroundRightClicked = pyqtSignal()
-    accentColorChanged = pyqtSignal(str)
-    bgAlphaChanged     = pyqtSignal(float)
-    keyTextForwarded   = pyqtSignal(str)
-    slashPressed       = pyqtSignal()
+    accentColorChanged        = pyqtSignal(str)
+    bgAlphaChanged            = pyqtSignal(float)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
+    keyTextForwarded          = pyqtSignal(str)
+    slashPressed              = pyqtSignal()
+    dimChanged                = pyqtSignal(bool)
 
     def __init__(self, playlist_model):
         super().__init__()
@@ -158,27 +188,22 @@ class PlaylistDetailView(QWidget):
         self.content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         
         self.layout = QVBoxLayout(self.content_widget)
-        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setContentsMargins(8, 8, 0, 20)
         self.layout.setSpacing(20)
 
         # --- HEADER ---
         header_container = QWidget()
         header_layout = QHBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setContentsMargins(0, 0, 8, 0)
         header_layout.setSpacing(25)
 
-        self.cover_label = QLabel()
+        self.cover_label = RoundedCoverLabel(radius=12)
         self.cover_label.setFixedSize(220, 220)
-        self.cover_label.setStyleSheet("background-color: #222; border-radius: 8px; border: 1px solid #333;")
-        self.cover_label.setScaledContents(True)
 
         meta_container = QWidget()
         meta_layout = QVBoxLayout(meta_container)
         meta_layout.setContentsMargins(0, 10, 0, 10)
         meta_layout.setSpacing(5)
-
-        self.lbl_type = QLabel("PLAYLIST")
-        self.lbl_type.setStyleSheet("color: #ddd; font-weight: bold; font-size: 11px;")
 
         self.lbl_title = QLabel("Playlist Title")
         self.lbl_title.setStyleSheet("color: white; font-weight: 900; font-size: 36px;")
@@ -187,8 +212,25 @@ class PlaylistDetailView(QWidget):
         self.lbl_meta = QLabel("Loading...")
         self.lbl_meta.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
 
+        info_row = QWidget()
+        info_row_layout = QHBoxLayout(info_row)
+        info_row_layout.setContentsMargins(0, 0, 0, 0)
+        info_row_layout.setSpacing(10)
+
         self.lbl_artist = QLabel("Owner")
         self.lbl_artist.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
+
+        self.lbl_public = QLabel("Public")
+        self.lbl_public.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
+
+        self.toggle_public = ToggleSwitch(self.current_accent)
+        self.toggle_public.setChecked(False)
+        self.toggle_public.toggled.connect(self._on_public_toggled)
+
+        info_row_layout.addWidget(self.lbl_artist)
+        info_row_layout.addWidget(self.lbl_public)
+        info_row_layout.addWidget(self.toggle_public)
+        info_row_layout.addStretch()
         
         btn_row = QWidget()
         btn_layout = QHBoxLayout(btn_row)
@@ -221,10 +263,9 @@ class PlaylistDetailView(QWidget):
         btn_layout.addWidget(self.btn_shuffle)
         btn_layout.addStretch()
         
-        meta_layout.addWidget(self.lbl_type)
         meta_layout.addWidget(self.lbl_title)
         meta_layout.addWidget(self.lbl_meta)
-        meta_layout.addWidget(self.lbl_artist)
+        meta_layout.addWidget(info_row)
         meta_layout.addWidget(btn_row)
         meta_layout.addStretch()
         
@@ -236,6 +277,9 @@ class PlaylistDetailView(QWidget):
         # --- TRACKS BROWSER ---
         self.track_list = TracksBrowser(None)
         self.track_list.set_album_mode(True)
+        self.track_list.tree.setColumnWidth(7, 80)
+        if hasattr(self.track_list, 'refresh_btn'):
+            self.track_list.refresh_btn.hide()
         self.track_list.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
         self.layout.addWidget(self.track_list)
@@ -339,6 +383,7 @@ class PlaylistDetailView(QWidget):
         # Finish setting up the single track list
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
+        self.track_list.tree._ext_sb = self.scroll_area.verticalScrollBar()
         self.track_list.tree.installEventFilter(self)
 
         if hasattr(self.track_list, 'search_container'):
@@ -374,6 +419,22 @@ class PlaylistDetailView(QWidget):
                     print(f"Failed to save reordered playlist: {e}")
             threading.Thread(target=save_order, daemon=True).start()
     
+    def _on_public_toggled(self, checked):
+        client = getattr(self.track_list, 'client', None)
+        if not client or not self.current_playlist_id:
+            return
+        import threading
+        def _save():
+            try:
+                import requests
+                params = client._get_auth_params()
+                params['playlistId'] = self.current_playlist_id
+                params['public'] = 'true' if checked else 'false'
+                requests.get(f"{client.base_url}/rest/updatePlaylist", params=params, timeout=10)
+            except Exception as e:
+                print(f"Failed to update public state: {e}")
+        threading.Thread(target=_save, daemon=True).start()
+
     def filter_local_tracks(self, text):
         if not hasattr(self, 'current_tracks') or not self.current_tracks:
             return
@@ -465,10 +526,20 @@ class PlaylistDetailView(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        self.track_list.set_bg_color(c)
 
     def set_accent_color(self, color):
         self.current_accent = color
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
+        _theme = getattr(self.window(), 'theme', None)
+        _pri = getattr(_theme, 'font_color_primary',   '#ffffff') if _theme else '#ffffff'
+        _sec = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+        self.lbl_title.setStyleSheet(f"color: {_pri}; font-weight: 900; font-size: 36px;")
+        self.lbl_meta.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
+        self.lbl_artist.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
+        self.lbl_public.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
+        self.toggle_public.accent_color = color
+        self.toggle_public.update()
         
         play_btn_style = f"""
             QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
@@ -486,7 +557,20 @@ class PlaylistDetailView(QWidget):
             self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
         self._scroll_reveal.color = color
         self.track_list.set_accent_color(color)
-        
+
+        if hasattr(self.track_list, 'search_container'):
+            _theme = getattr(self.window(), 'theme', None)
+            from player.mixins.visuals import resolve_menu_hover
+            self.track_list.search_container.apply_input_theme(
+                bg           = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14',
+                border_color = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a',
+                border_width = getattr(_theme, 'border_width',         1)          if _theme else 1,
+                fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd',
+                fg_secondary = getattr(_theme, 'font_color_secondary', '#999999')  if _theme else '#999999',
+                hover_color  = resolve_menu_hover(_theme),
+                accent_color = color,
+            )
+
         import os
         from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
         from PyQt6.QtCore import QSize
@@ -551,7 +635,11 @@ class PlaylistDetailView(QWidget):
         mins = (dur % 3600) // 60
         time_str = f"{hrs} hr {mins} min" if hrs > 0 else f"{mins} min"
         self.lbl_meta.setText(f"{len(tracks)} songs • {time_str}")
-        self.lbl_artist.setText(playlist_data.get('owner', 'Various Artists'))
+        owner = playlist_data.get('owner', '')
+        self.lbl_artist.setText(f"Created by {owner} •" if owner else '')
+        self.toggle_public.blockSignals(True)
+        self.toggle_public.setChecked(bool(playlist_data.get('public', False)))
+        self.toggle_public.blockSignals(False)
 
         # --- COVER ---
         # open_playlist_detail already set it from cache if available.
@@ -863,13 +951,29 @@ class PlaylistsBrowser(QWidget):
         if not self.client: 
             return
         
-        # Grab the active accent color to keep the styling perfectly synced
         accent = getattr(self, 'current_accent', "#1DB954")
-        
-        # Launch our new modern dialog
-        dialog = NewPlaylistDialog(self.window(), accent_color=accent)
-        
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        _theme = getattr(self.window(), 'theme', None)
+        _bg = getattr(_theme, 'main_panel_bg', '30,30,30') if _theme else '30,30,30'
+        bg_color = f"rgb({_bg})"
+        border_color = getattr(_theme, 'border_color',         '#333333') if _theme else '#333333'
+        border_width = getattr(_theme, 'border_width',         1)         if _theme else 1
+        fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd'
+        fg_secondary = getattr(_theme, 'font_color_secondary', '#999999') if _theme else '#999999'
+        hover_color  = resolve_menu_hover(_theme)
+
+        dialog = NewPlaylistDialog(self.window(), accent_color=accent, bg_color=bg_color,
+                                   border_color=border_color, border_width=border_width,
+                                   fg_primary=fg_primary, fg_secondary=fg_secondary,
+                                   hover_color=hover_color)
+
+        main_win = self.window()
+        if hasattr(main_win, 'show_dim'):
+            main_win.show_dim()
+        result = dialog.exec()
+        if hasattr(main_win, 'hide_dim'):
+            main_win.hide_dim()
+
+        if result == QDialog.DialogCode.Accepted:
             name = dialog.get_name()
             if not name: 
                 return
@@ -1133,6 +1237,7 @@ class PlaylistsBrowser(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        self.detail_view.set_bg_color(c)
 
     def set_accent_color(self, color):
         self.current_accent = color
@@ -1144,8 +1249,29 @@ class PlaylistsBrowser(QWidget):
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
             self.grid_bridge.bgAlphaChanged.emit(1.0)
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.grid_bridge.fontColorPrimaryChanged.emit(getattr(theme, 'font_color_primary', '#eeeeee'))
+                self.grid_bridge.fontColorSecondaryChanged.emit(getattr(theme, 'font_color_secondary', '#999999'))
+        if hasattr(self, 'status_label'):
+            _theme = getattr(self.window(), 'theme', None)
+            _sec_color = getattr(_theme, 'font_color_secondary', '#888888') if _theme else '#888888'
+            self.status_label.setStyleSheet(
+                f"color: {_sec_color}; font-weight: bold; background: transparent; border: none;"
+            )
         self.detail_view.set_accent_color(color)
-        if hasattr(self, 'search_container'): self.search_container.set_accent_color(color)
+        if hasattr(self, 'search_container'):
+            from player.mixins.visuals import resolve_menu_hover
+            _theme = getattr(self.window(), 'theme', None)
+            self.search_container.apply_input_theme(
+                bg           = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14',
+                border_color = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a',
+                border_width = getattr(_theme, 'border_width',         1)          if _theme else 1,
+                fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd',
+                fg_secondary = getattr(_theme, 'font_color_secondary', '#999999')  if _theme else '#999999',
+                hover_color  = resolve_menu_hover(_theme),
+                accent_color = color,
+            )
         if hasattr(self, 'burger_btn'):
             try:
                 from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon, QPen

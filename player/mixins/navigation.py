@@ -704,7 +704,9 @@ class NavigationMixin:
             on_album_click=lambda _: self.navigate_to_album(album_data),
             detected_bpm=detected_bpm,
         )
+        self.show_dim()
         dlg.exec()
+        self.hide_dim()
 
     def on_tab_changed(self, new_index):
         

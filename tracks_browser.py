@@ -967,8 +967,13 @@ class _TrackTree(QTreeWidget):
 
     def drawRow(self, painter, option, index):
         sb = self.verticalScrollBar()
-        right_inset = max(8 - (sb.width() if sb.isVisible() else 0), 0)
-        rect = option.rect.adjusted(8, 0, -right_inset, 0)
+        if getattr(self.header(), 'album_mode', False):
+            ext_sb = getattr(self, '_ext_sb', None)
+            right_inset = max(8 - (ext_sb.width() if (ext_sb and ext_sb.isVisible()) else 0), 0)
+            rect = option.rect.adjusted(0, 0, -right_inset, 0)
+        else:
+            right_inset = max(8 - (sb.width() if sb.isVisible() else 0), 0)
+            rect = option.rect.adjusted(8, 0, -right_inset, 0)
         is_sel = self.selectionModel().isRowSelected(index.row(), index.parent())
         is_hov = index.row() == self._hov_row
         item = self.itemFromIndex(index)
@@ -3297,7 +3302,23 @@ class TracksBrowser(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self._fit_columns_to_viewport)
+        QTimer.singleShot(0, self._apply_search_theme)
         self.check_for_updates()
+
+    def _apply_search_theme(self):
+        if not hasattr(self, 'search_container'):
+            return
+        _theme = getattr(self.window(), 'theme', None)
+        from player.mixins.visuals import resolve_menu_hover
+        self.search_container.apply_input_theme(
+            bg           = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14',
+            border_color = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a',
+            border_width = getattr(_theme, 'border_width',         1)          if _theme else 1,
+            fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd',
+            fg_secondary = getattr(_theme, 'font_color_secondary', '#999999')  if _theme else '#999999',
+            hover_color  = resolve_menu_hover(_theme),
+            accent_color = getattr(self, 'current_accent', '#0066cc'),
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3848,7 +3869,11 @@ class TracksBrowser(QWidget):
             on_album_click=lambda _: self.switch_to_album_tab.emit(album_data),
             detected_bpm=detected_bpm,
         )
+        if hasattr(win, 'show_dim'):
+            win.show_dim()
         dlg.exec()
+        if hasattr(win, 'hide_dim'):
+            win.hide_dim()
         
     
     def _add_to_existing_playlist(self, playlist_id, playlist_name, track_ids):
@@ -3970,6 +3995,19 @@ class TracksBrowser(QWidget):
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
 
     def set_accent_color(self, color):
+        if hasattr(self, 'search_container'):
+            _theme = getattr(self.window(), 'theme', None)
+            from player.mixins.visuals import resolve_menu_hover
+            self.search_container.apply_input_theme(
+                bg           = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14',
+                border_color = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a',
+                border_width = getattr(_theme, 'border_width',         1)          if _theme else 1,
+                fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd',
+                fg_secondary = getattr(_theme, 'font_color_secondary', '#999999')  if _theme else '#999999',
+                hover_color  = resolve_menu_hover(_theme),
+                accent_color = color,
+            )
+
         if getattr(self, 'current_accent', None) == color:
             return
 

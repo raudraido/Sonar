@@ -304,7 +304,7 @@ class LyricsSearchDialog(QDialog):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setMinimumSize(560, 460)
+        self.setMinimumSize(860, 560)
         self._active_source = active_source
         self._active_sid    = active_sid
         self._drag_pos      = None
@@ -421,10 +421,29 @@ class LyricsSearchDialog(QDialog):
         # Buttons
         btns = QHBoxLayout()
         btns.addStretch()
+        from player.mixins.visuals import resolve_menu_hover
+        _hover = resolve_menu_hover(theme)
+        _btn_base = f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {bc};
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 8px 20px;
+            }}
+            QPushButton:hover {{
+                background-color: {_hover};
+            }}
+        """
         cancel_btn = QPushButton('Cancel')
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(_btn_base + f"QPushButton {{ color: {fc2}; }}")
         cancel_btn.clicked.connect(self.reject)
         self._apply_btn = QPushButton('Apply')
         self._apply_btn.setObjectName('apply')
+        self._apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_btn.setStyleSheet(_btn_base + f"QPushButton {{ color: {fc1}; }}")
         self._apply_btn.setEnabled(False)
         self._apply_btn.clicked.connect(self._apply)
         btns.addWidget(cancel_btn)

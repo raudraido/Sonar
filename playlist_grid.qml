@@ -21,15 +21,21 @@ Rectangle {
         anchors.top: parent.top
     }
 
-    property string accentColor: "#1db954"
+    property string accentColor:        "#1db954"
+    property string fontColorPrimary:   "#eeeeee"
+    property string fontColorSecondary: "#999999"
     property bool isScrollActive: false
+    property bool dimmed: false
 
     Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
     Connections {
         target: playlistBridge
-        function onAccentColorChanged(color) { root.accentColor = color }
-        function onBgAlphaChanged(alpha)     { root.bgAlpha = alpha }
+        function onAccentColorChanged(color)         { root.accentColor = color }
+        function onBgAlphaChanged(alpha)             { root.bgAlpha = alpha }
+        function onFontColorPrimaryChanged(color)    { root.fontColorPrimary = color }
+        function onFontColorSecondaryChanged(color)  { root.fontColorSecondary = color }
+        function onDimChanged(value)                 { root.dimmed = value }
     }
 
     
@@ -227,7 +233,7 @@ Rectangle {
                     Text {
                         width: parent.width
                         text: playlistTitle
-                        color: cardRoot.isHovered ? root.accentColor : "#eee"
+                        color: cardRoot.isHovered ? root.accentColor : root.fontColorPrimary
                         font.pixelSize: 13
                         font.bold: true
                         elide: Text.ElideRight
@@ -236,7 +242,7 @@ Rectangle {
                     Text {
                         width: parent.width
                         text: playlistSubtitle
-                        color: "#999"
+                        color: root.fontColorSecondary
                         font.pixelSize: 12
                         elide: Text.ElideRight
                     }
