@@ -53,7 +53,7 @@ class KeyboardMixin:
         active_widget = QApplication.focusWidget()
         
         # Only trigger if they aren't already typing in a standard search bar or capturing a hotkey
-        if not isinstance(active_widget, QLineEdit) and not getattr(active_widget, '_capturing', False) and hasattr(self, 'spotlight') and not self.spotlight.isVisible():
+        if not getattr(self, '_theme_builder_open', False) and not isinstance(active_widget, QLineEdit) and not getattr(active_widget, '_capturing', False) and hasattr(self, 'spotlight') and not self.spotlight.isVisible():
             text = event.text()
             # If the key pressed is a printable character (A-Z, 0-9) without Ctrl/Alt
             if text and text.isprintable() and text != "/" and not event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
@@ -327,7 +327,7 @@ class KeyboardMixin:
                     return True # Eat the event
 
         # 2. GLOBAL TYPE-TO-SEARCH INTERCEPTOR
-        if e_type == QEvent.Type.KeyPress and hasattr(self, 'spotlight') and not self.spotlight.isVisible():
+        if e_type == QEvent.Type.KeyPress and not getattr(self, '_theme_builder_open', False) and hasattr(self, 'spotlight') and not self.spotlight.isVisible():
             from PyQt6.QtWidgets import QLineEdit, QApplication
             focus_widget = QApplication.focusWidget()
             

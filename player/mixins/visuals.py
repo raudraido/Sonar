@@ -355,7 +355,7 @@ class VisualsMixin:
                 border: none;
                 font-family: 'sans-serif', sans-serif;
                 font-weight: bold;
-                font-size: 13px;
+                font-size: {getattr(self.theme, 'font_size_primary', 13)}px;
                 border-radius: 5px;
                 margin-right: 4px;
             }}

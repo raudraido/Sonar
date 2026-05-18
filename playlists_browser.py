@@ -93,6 +93,8 @@ class PlaylistBridge(QObject):
     bgAlphaChanged            = pyqtSignal(float)
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
     keyTextForwarded          = pyqtSignal(str)
     slashPressed              = pyqtSignal()
     dimChanged                = pyqtSignal(bool)
@@ -1251,8 +1253,10 @@ class PlaylistsBrowser(QWidget):
             self.grid_bridge.bgAlphaChanged.emit(1.0)
             theme = getattr(self.window(), 'theme', None)
             if theme:
-                self.grid_bridge.fontColorPrimaryChanged.emit(getattr(theme, 'font_color_primary', '#eeeeee'))
-                self.grid_bridge.fontColorSecondaryChanged.emit(getattr(theme, 'font_color_secondary', '#999999'))
+                self.grid_bridge.fontColorPrimaryChanged.emit(getattr(theme, 'font_color_primary',    '#eeeeee'))
+                self.grid_bridge.fontColorSecondaryChanged.emit(getattr(theme, 'font_color_secondary','#999999'))
+                self.grid_bridge.fontSizePrimaryChanged.emit(getattr(theme, 'font_size_primary',      13))
+                self.grid_bridge.fontSizeSecondaryChanged.emit(getattr(theme, 'font_size_secondary',  12))
         if hasattr(self, 'status_label'):
             _theme = getattr(self.window(), 'theme', None)
             _sec_color = getattr(_theme, 'font_color_secondary', '#888888') if _theme else '#888888'

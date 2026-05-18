@@ -708,6 +708,7 @@ class SettingsWindow(QDialog):
         bc  = getattr(theme, 'border_color',         '#2a2a2a') if theme else '#2a2a2a'
         fc1 = getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd'
         fc2 = getattr(theme, 'font_color_secondary', '#777777') if theme else '#777777'
+        acc = getattr(theme, 'accent',               '#ffffff') if theme else '#ffffff'
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -787,6 +788,12 @@ class SettingsWindow(QDialog):
         self._settings_logo_base.setPixmap(_pix_base)
         self._settings_logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        self._settings_logo_tint = QLabel(_logo_ctr)
+        self._settings_logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
+        self._settings_logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._settings_logo_tint.setPixmap(self._tint_logo(acc, _logo_size))
+        self._settings_logo_tint.raise_()
+
         header.addWidget(_logo_ctr)
 
         title_col = QVBoxLayout()
@@ -815,16 +822,28 @@ class SettingsWindow(QDialog):
 
         preset_row = QHBoxLayout()
         preset_row.setSpacing(8)
+        self._preset_btns = {}
+        active_name = getattr(self.parent.theme, 'name', '')
         for preset_name in PRESETS:
             pb = QPushButton(preset_name)
             pb.setCursor(Qt.CursorShape.PointingHandCursor)
-            pb.setStyleSheet(
-                "QPushButton { background: #2a2a2a; color: #bbb; border: 1px solid #444; "
-                "border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
-                "QPushButton:hover { background: #3a3a3a; color: #fff; }"
-            )
+            self._preset_btns[preset_name] = pb
             pb.clicked.connect(lambda _=False, n=preset_name: self._apply_preset(n))
             preset_row.addWidget(pb)
+        self._acc = acc
+        self._bc = bc
+        self._fc1 = fc1
+        self._fc2 = fc2
+        self._refresh_preset_buttons(active_name)
+        builder_btn = QPushButton("Theme Builder…")
+        builder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        builder_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {acc}; border: 1px solid {acc}; "
+            f"border-radius: 4px; font-size: 12px; font-weight: bold; padding: 5px 14px; }}"
+            f"QPushButton:hover {{ background: {acc}22; }}"
+        )
+        builder_btn.clicked.connect(self._open_theme_builder)
+        preset_row.addWidget(builder_btn)
         preset_row.addStretch()
         layout.addLayout(preset_row)
 
@@ -938,6 +957,45 @@ class SettingsWindow(QDialog):
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(200, lambda: QApplication.instance().installEventFilter(self))
 
+    def _refresh_preset_buttons(self, active_name: str):
+        for name, btn in self._preset_btns.items():
+            if name == active_name:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: {self._acc}; color: #111; border: 1px solid {self._acc}; "
+                    f"border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: bold; }}"
+                    f"QPushButton:hover {{ background: {self._acc}; }}"
+                )
+            else:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: transparent; color: {self._fc2}; border: 1px solid {self._bc}; "
+                    f"border-radius: 5px; padding: 6px 14px; font-size: 12px; }}"
+                    f"QPushButton:hover {{ color: {self._fc1}; border-color: {self._fc1}; }}"
+                )
+
+    def _open_theme_builder(self):
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        from theme_builder import ThemeBuilderDialog
+        dlg = ThemeBuilderDialog(self.parent, self)
+        dlg.exec()
+
+    def _tint_logo(self, color: str, size: int) -> QPixmap:
+        from player import resource_path as _rp
+        raw = QPixmap(_rp("img/shahedron1.png"))
+        if raw.isNull():
+            return QPixmap()
+        raw = raw.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+        out = QPixmap(raw.size())
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.drawPixmap(0, 0, raw)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(out.rect(), QColor(color))
+        p.end()
+        return out
+
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
         if hasattr(self.parent, 'hide_dim'):
@@ -1025,6 +1083,7 @@ class SettingsWindow(QDialog):
             self.parent._queue_panel.apply_theme(t)
         self.parent.now_playing_widget.apply_theme(t)
         self.refresh_theme()
+        self._refresh_preset_buttons(name)
 
     def _save_lyrics_sources(self):
         from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY

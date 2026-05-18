@@ -191,6 +191,7 @@ class AlbumModel(QAbstractListModel):
     COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 4
     RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
     IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 6
+    SONG_COUNT_ROLE = Qt.ItemDataRole.UserRole + 7
 
     def __init__(self):
         super().__init__()
@@ -207,6 +208,9 @@ class AlbumModel(QAbstractListModel):
         if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
         if role == self.RAW_DATA_ROLE: return a
         if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
+        if role == self.SONG_COUNT_ROLE:
+            n = a.get('songCount') or a.get('trackCount') or ''
+            return f"{n} tracks" if n else ''
         return None
 
     def roleNames(self):
@@ -214,6 +218,7 @@ class AlbumModel(QAbstractListModel):
             self.TITLE_ROLE: b"albumTitle", self.ARTIST_ROLE: b"albumArtist",
             self.YEAR_ROLE: b"albumYear", self.COVER_ID_ROLE: b"coverId",
             self.RAW_DATA_ROLE: b"rawData", self.IS_LOADING_ROLE: b"isLoading",
+            self.SONG_COUNT_ROLE: b"albumSongCount",
         }
         
     def append_albums(self, new_albums):
@@ -951,6 +956,11 @@ class _TrackListDelegate(QStyledItemDelegate):
         _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
         return getattr(_theme, 'font_size_primary', self.font_size) if _theme else self.font_size
 
+    def _secondary_px(self) -> int:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_size_secondary', max(self.font_size - 2, 10)) if _theme else max(self.font_size - 2, 10)
+
     def _primary_color(self) -> str:
         _p = self.parent()
         _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
@@ -1030,7 +1040,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         if index.column() == 2:
             artist = index.data() or ''
             f = QFont()
-            f.setPixelSize(self._primary_px())
+            f.setPixelSize(self._secondary_px())
             fm = QFontMetrics(f)
             ax = draw_rect.left() + 4
             ay = draw_rect.center().y()
@@ -1080,11 +1090,11 @@ class _TrackListDelegate(QStyledItemDelegate):
         opt.rect = draw_rect
         opt.state = opt.state & ~QStyle.StateFlag.State_MouseOver & ~QStyle.StateFlag.State_Selected
         f = QFont(opt.font)
-        f.setPixelSize(self._primary_px())
+        f.setPixelSize(self._secondary_px())
         opt.font = f
         from PyQt6.QtGui import QPalette
         pal = QPalette(opt.palette)
-        pal.setColor(QPalette.ColorRole.Text, QColor(self._primary_color()))
+        pal.setColor(QPalette.ColorRole.Text, QColor(self._secondary_color()))
         opt.palette = pal
         super().paint(painter, opt, index)
 
@@ -2736,6 +2746,14 @@ class LibraryGridBrowser(QWidget):
                 f"color: {_sec_color}; font-weight: bold; background: transparent; border: none;"
             )
 
+        if hasattr(self, 'grid_bridge'):
+            theme = getattr(self.window(), 'theme', None)
+            if theme:
+                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+
         if getattr(self, 'current_accent', None) == color:
             return
 
@@ -2748,16 +2766,9 @@ class LibraryGridBrowser(QWidget):
                 "QWidget { background-color: transparent; border: none; }"
             )
 
-        # Broadcast BOTH the color and the opacity directly to the QML Engine!
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
             self.grid_bridge.bgAlphaChanged.emit(1.0)
-            theme = getattr(self.window(), 'theme', None)
-            if theme:
-                self.grid_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
-                self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
-                self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
-                self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
 
         # Update the detail view behind the scenes
         if hasattr(self, 'detail_view'):

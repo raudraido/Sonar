@@ -474,6 +474,8 @@ class NavigationMixin:
     
     def focus_spotlight(self):
         """Summons the search overlay via Ctrl+F."""
+        if getattr(self, '_theme_builder_open', False):
+            return
         if hasattr(self, 'spotlight') and not self.spotlight.isVisible():
             self.spotlight.show_search()
             

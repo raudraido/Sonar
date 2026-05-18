@@ -321,7 +321,7 @@ Rectangle {
                     
                     Text {
                         width: parent.width
-                        text: albumYear
+                        text: (albumSongCount ? albumSongCount : "") + (albumSongCount && albumYear ? " · " : "") + (albumYear ? albumYear : "")
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight

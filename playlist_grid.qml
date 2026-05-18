@@ -24,6 +24,8 @@ Rectangle {
     property string accentColor:        "#1db954"
     property string fontColorPrimary:   "#eeeeee"
     property string fontColorSecondary: "#999999"
+    property int    fontSizePrimary:    13
+    property int    fontSizeSecondary:  12
     property bool isScrollActive: false
     property bool dimmed: false
 
@@ -35,6 +37,8 @@ Rectangle {
         function onBgAlphaChanged(alpha)             { root.bgAlpha = alpha }
         function onFontColorPrimaryChanged(color)    { root.fontColorPrimary = color }
         function onFontColorSecondaryChanged(color)  { root.fontColorSecondary = color }
+        function onFontSizePrimaryChanged(size)      { root.fontSizePrimary = size }
+        function onFontSizeSecondaryChanged(size)    { root.fontSizeSecondary = size }
         function onDimChanged(value)                 { root.dimmed = value }
     }
 
@@ -234,7 +238,7 @@ Rectangle {
                         width: parent.width
                         text: playlistTitle
                         color: cardRoot.isHovered ? root.accentColor : root.fontColorPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
                     }
@@ -243,7 +247,7 @@ Rectangle {
                         width: parent.width
                         text: playlistSubtitle
                         color: root.fontColorSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
                     }
                 }

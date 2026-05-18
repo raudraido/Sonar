@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QGraphicsOpacityEffect, QLabel,
 )
 from PyQt6.QtCore import (
-    Qt, QSize, QPropertyAnimation, QEasingCurve, QEvent,
+    Qt, QSize, QPropertyAnimation, QEasingCurve, QEvent, QTimer,
 )
 from PyQt6.QtGui import QPixmap, QColor, QIcon
 from PyQt6.QtGui import QPainter as _QPainter
@@ -222,6 +222,7 @@ class LeftPanel(QWidget):
         _logo_ctr = QWidget()
         _logo_ctr.setFixedSize(_logo_size, _logo_size)
         _logo_ctr.setStyleSheet("QWidget { border: none; }")
+        _logo_ctr.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._logo_base = QLabel(_logo_ctr)
         self._logo_base.setGeometry(0, 0, _logo_size, _logo_size)
@@ -234,14 +235,32 @@ class LeftPanel(QWidget):
             )
         self._logo_base.setPixmap(_pix_base)
         self._logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._logo_base.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         self._logo_tint = QLabel(_logo_ctr)
         self._logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
         self._logo_tint.setPixmap(self._tint_logo("#fafafa", _logo_size))
         self._logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._logo_tint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._logo_tint.raise_()
 
         self._logo_size = _logo_size
+        self._click_count = 0
+        self._click_timer = QTimer()
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(500)
+        self._click_timer.timeout.connect(lambda: setattr(self, '_click_count', 0))
+
+        def _logo_clicked(e):
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._click_count += 1
+                self._click_timer.start()
+                if self._click_count >= 3:
+                    self._click_count = 0
+                    self._click_timer.stop()
+                    self._open_theme_builder()
+        _logo_ctr.mousePressEvent = _logo_clicked
+
         self.header_layout.addWidget(_logo_ctr)
         self.header_layout.addStretch()
         _left_outer.addWidget(self.header)
@@ -306,7 +325,6 @@ class LeftPanel(QWidget):
 
         # Restore vis section visibility
         if not int(settings.value('section_vis_visible', 1)):
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(0, self.vis_section._toggle)
 
     def _tint_logo(self, color: str, size: int | None = None) -> QPixmap:
@@ -325,6 +343,25 @@ class LeftPanel(QWidget):
         p.fillRect(out.rect(), QColor(color))
         p.end()
         return out
+
+    def _open_theme_builder(self):
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        from theme_builder import ThemeBuilderDialog
+        if getattr(self, '_theme_builder', None) is not None:
+            try:
+                self._theme_builder.raise_()
+                self._theme_builder.activateWindow()
+                return
+            except RuntimeError:
+                self._theme_builder = None
+        self._theme_builder = ThemeBuilderDialog(self._main)
+        self._main._theme_builder_open = True
+        def _on_destroyed():
+            self._theme_builder = None
+            self._main._theme_builder_open = False
+        self._theme_builder.destroyed.connect(_on_destroyed)
+        self._theme_builder.show()
 
     def set_master_color(self, color: str):
         self._logo_tint.setPixmap(self._tint_logo(color))

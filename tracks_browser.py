@@ -1136,6 +1136,8 @@ class LinkDelegate(QStyledItemDelegate):
         return getattr(w, 'theme', None)
     def _primary_color(self):
         t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#aaaaaa') if t else '#aaaaaa'
     def _primary_px(self):
         t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
 
@@ -1181,10 +1183,10 @@ class LinkDelegate(QStyledItemDelegate):
         painter.save()
 
         if is_hovering:
-            painter.setPen(QColor(self._primary_color()))
+            painter.setPen(QColor(self._secondary_color()))
             f = painter.font(); f.setUnderline(True); painter.setFont(f)
         else:
-            painter.setPen(QColor(self._primary_color()))
+            painter.setPen(QColor(self._secondary_color()))
 
         # 🟢 Define the drawing area (with a 5px buffer on the sides)
         draw_rect = opts.rect.adjusted(5, 0, -5, 0)
@@ -1276,6 +1278,8 @@ class PlainWrapDelegate(QStyledItemDelegate):
         return getattr(w, 'theme', None)
     def _primary_color(self):
         t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#aaaaaa') if t else '#aaaaaa'
 
     def set_master_color(self, color):
         self.master_color = QColor(color)
@@ -1292,7 +1296,7 @@ class PlainWrapDelegate(QStyledItemDelegate):
         if not text: return
 
         painter.save()
-        painter.setPen(QColor(self._primary_color()))
+        painter.setPen(QColor(self._secondary_color()))
 
         draw_rect = opts.rect.adjusted(5, 0, -5, 0)
         from PyQt6.QtGui import QTextLayout
@@ -1348,6 +1352,8 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         return getattr(w, 'theme', None)
     def _primary_color(self):
         t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#aaaaaa') if t else '#aaaaaa'
     def _primary_px(self):
         t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
 
@@ -1364,8 +1370,8 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
         painter.save()
         rect = opts.rect
         text = index.data(Qt.ItemDataRole.DisplayRole)
-        
-        base_color = QColor(self._primary_color())
+
+        base_color = QColor(self._secondary_color())
 
         parsed_parts = self.parse_text(text)
         x_offset = rect.left() + 5 
@@ -1497,6 +1503,8 @@ class MultiGenreDelegate(QStyledItemDelegate):
         return getattr(w, 'theme', None)
     def _primary_color(self):
         t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#aaaaaa') if t else '#aaaaaa'
     def _primary_px(self):
         t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
 
@@ -1525,7 +1533,7 @@ class MultiGenreDelegate(QStyledItemDelegate):
         if not text:
             return
 
-        base_color = QColor(self._primary_color())
+        base_color = QColor(self._secondary_color())
 
         hovered_idx, hovered_genre = self.current_hover
         painter.save()
@@ -2922,7 +2930,9 @@ class TracksBrowser(QWidget):
         default_color = QColor(getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd')
         transparent = QColor(0, 0, 0, 0)
         
-        normal_font = QFont("sans-serif", 10)
+        sec_px = getattr(theme, 'font_size_secondary', 12) if theme else 12
+        normal_font = QFont()
+        normal_font.setPixelSize(sec_px)
         normal_font.setBold(False)
         
         for i in range(self.tree.topLevelItemCount()):
@@ -4008,6 +4018,8 @@ class TracksBrowser(QWidget):
                 accent_color = color,
             )
 
+        self.update_scrollbar_color(color)
+
         if getattr(self, 'current_accent', None) == color:
             return
 
@@ -4108,9 +4120,6 @@ class TracksBrowser(QWidget):
                 self.footer.set_accent_color(color)
                 if h or in_album: self.footer.hide()
                 
-            # 🟢 3. Route to the new styling engine!
-            self.update_scrollbar_color(color)
-            
             self.tree.viewport().update()
         finally:
             self.setUpdatesEnabled(True)
@@ -4118,23 +4127,28 @@ class TracksBrowser(QWidget):
     def update_scrollbar_color(self, color_hex):
         row_height = "50px" if getattr(self, 'is_album_mode', False) else "75px"
         theme = getattr(self.window(), 'theme', None)
-        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
-        pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
+        pri_color = getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd'
+        sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
+        pri_size  = getattr(theme, 'font_size_primary',    14)        if theme else 14
+        sec_size  = getattr(theme, 'font_size_secondary',  12)        if theme else 12
 
         css = f"""
         {scrollbar_css(color_hex)}
 
-        QTreeWidget {{ background: transparent; border: none; font-size: {pri_size}px; outline: none; }}
-        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: {pri_color}; }}
+        QTreeWidget {{ background: transparent; border: none; font-size: {sec_size}px; outline: none; }}
+        QTreeWidget::item {{ height: {row_height}; padding: 0 4px; border: none; color: {sec_color}; }}
         QTreeWidget::item:selected {{ background: transparent; }}
         QTreeWidget::item:hover {{ background: transparent; }}
-        
-        QHeaderView::section {{ background: transparent; border: none; }}
+
+        QHeaderView::section {{ background: transparent; border: none; font-size: {pri_size}px; }}
         QHeaderView::section:hover {{ background: transparent; }}
         QHeaderView::section:pressed {{ background: transparent; }}
         """
         self.tree.setStyleSheet(css)
         self.tree.header().set_accent(color_hex)
+        if hasattr(self, 'current_playing_id'):
+            self.update_playing_status(self.current_playing_id, getattr(self, 'is_playing', False), color_hex)
+        self.tree.viewport().update()
 
         # 🟢 ALSO apply the alpha to the outer container so the blank space at the bottom matches!
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
