@@ -2196,11 +2196,8 @@ class LibraryGridBrowser(QWidget):
         self.qml_view.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         
         # DEMOTE Z-ORDER: Let Spotlight sit on top naturally without breaking the OS!
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)  # required for transparent QQuickWidget
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self.qml_view.setClearColor(Qt.GlobalColor.transparent)
-        self.qml_view.setStyleSheet("background: transparent; border: none;")
+        self.qml_view.setClearColor(self._qml_bg_color())
+        self.qml_view.setStyleSheet("border: none;")
         
         self.album_model = AlbumModel()
         self.grid_bridge = GridBridge(self.album_model)
@@ -2734,9 +2731,15 @@ class LibraryGridBrowser(QWidget):
         except Exception as e:
             print(f"Error fetching album tracks: {e}")
 
+    def _qml_bg_color(self):
+        r, g, b = (int(x) for x in getattr(self, '_bg_color', '14,14,14').split(','))
+        return QColor(r, g, b)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        if hasattr(self, 'qml_view'):
+            self.qml_view.setClearColor(self._qml_bg_color())
 
     def set_accent_color(self, color):
         if hasattr(self, 'status_label'):

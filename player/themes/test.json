@@ -1,0 +1,19 @@
+{
+  "name": "TEST",
+  "accent": "#0d65d1",
+  "dynamic_accent": false,
+  "auto_bg_from_accent": false,
+  "left_panel_bg": "228,234,248",
+  "queue_panel_bg": "228,234,248",
+  "footer_panel_bg": "228,234,248",
+  "main_panel_bg": "236,240,252",
+  "header_panel_bg": "236,240,252",
+  "font_size_primary": 13,
+  "font_size_secondary": 11,
+  "font_color_primary": "#265494",
+  "font_color_secondary": "#525563",
+  "auto_menu_hover": false,
+  "menu_hover_color": "#D4D6E7",
+  "auto_border_from_accent": false,
+  "manual_border_color": "#D4D6E7"
+}

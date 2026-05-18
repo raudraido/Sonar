@@ -762,10 +762,7 @@ class QMLAlbumSectionWidget(QWidget):
         # ── QML grid ───────────────────────────────────────────────────────
         self.qml_widget = QQuickWidget()
         self.qml_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self.qml_widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        self.qml_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.qml_widget.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self.qml_widget.setClearColor(Qt.GlobalColor.transparent)
+        self.qml_widget.setClearColor(QColor(14, 14, 14))
         self.qml_widget.setMinimumHeight(10)
 
         self.album_model = AlbumModel()
@@ -829,6 +826,11 @@ class QMLAlbumSectionWidget(QWidget):
     def _on_play_clicked(self, idx):
         if 0 <= idx < len(self.album_model.albums):
             self.play_album.emit(self.album_model.albums[idx])
+
+    def set_bg_color(self, c: str):
+        self._bg_color = c
+        r, g, b = (int(x) for x in c.split(','))
+        self.qml_widget.setClearColor(QColor(r, g, b))
 
     def set_accent_color(self, color):
         self.bridge.accentColorChanged.emit(color)
@@ -1855,6 +1857,10 @@ class ArtistRichDetailView(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        for i in range(self.sections_layout.count()):
+            row = self.sections_layout.itemAt(i).widget()
+            if row and hasattr(row, 'set_bg_color'):
+                row.set_bg_color(c)
 
     def set_accent_color(self, color):
 
@@ -2106,6 +2112,8 @@ class ArtistRichDetailView(QWidget):
 
             row = QMLAlbumSectionWidget(chunk_title, chunk_count, chunk)
             row._section_title = title  # used by _remove_section to identify this block
+            if hasattr(self, '_bg_color'):
+                row.set_bg_color(self._bg_color)
             row.set_accent_color(self.current_accent)
             row.album_clicked.connect(self.album_clicked.emit)
             row.play_album.connect(self.play_album.emit)
@@ -2619,11 +2627,8 @@ class ArtistGridBrowser(QWidget):
         self.qml_view = QMLGridWrapper()
         self.qml_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.qml_view.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self.qml_view.setClearColor(Qt.GlobalColor.transparent)
-        self.qml_view.setStyleSheet("background: transparent; border: none;")
+        self.qml_view.setClearColor(self._qml_bg_color())
+        self.qml_view.setStyleSheet("border: none;")
 
         self.artist_model = ArtistModel()
         self.grid_bridge = ArtistGridBridge(self.artist_model)
@@ -3282,9 +3287,15 @@ class ArtistGridBrowser(QWidget):
             if getattr(self, 'current_header_cover_id', None) == str(cover_id):
                 self.artist_view.set_header_image(pixmap)
 
+    def _qml_bg_color(self):
+        r, g, b = (int(x) for x in getattr(self, '_bg_color', '14,14,14').split(','))
+        return QColor(r, g, b)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+        if hasattr(self, 'qml_view'):
+            self.qml_view.setClearColor(self._qml_bg_color())
 
     def set_accent_color(self, color):
         self.current_accent = color

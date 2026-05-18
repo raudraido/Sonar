@@ -133,7 +133,7 @@ Rectangle {
 
         property real availableWidth: width - leftMargin - rightMargin
         property int  itemsPerRow: Math.max(1, Math.floor(availableWidth / (baseItemSize + (itemGap * 2))))
-        property real widthPerItem: availableWidth / itemsPerRow
+        property real widthPerItem: Math.floor(availableWidth / itemsPerRow)
 
         cellWidth:  widthPerItem
         cellHeight: widthPerItem + 70
@@ -241,6 +241,7 @@ Rectangle {
                         font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
 
                     Text {
@@ -249,6 +250,7 @@ Rectangle {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
+                        renderType: Text.NativeRendering
                     }
                 }
 

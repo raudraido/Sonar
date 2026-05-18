@@ -766,11 +766,8 @@ class PlaylistsBrowser(QWidget):
         self.qml_view = QMLGridWrapper()
         self.qml_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.qml_view.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.qml_view.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self.qml_view.setClearColor(Qt.GlobalColor.transparent)
-        self.qml_view.setStyleSheet("background: transparent; border: none;")
+        self.qml_view.setClearColor(self._qml_bg_color())
+        self.qml_view.setStyleSheet("border: none;")
 
         self.playlist_model = PlaylistModel()
         self.grid_bridge = PlaylistBridge(self.playlist_model)
@@ -1236,10 +1233,16 @@ class PlaylistsBrowser(QWidget):
         if hasattr(self, 'playlist_model'):
             self.playlist_model.update_cover(str(cover_id))
 
+    def _qml_bg_color(self):
+        r, g, b = (int(x) for x in getattr(self, '_bg_color', '14,14,14').split(','))
+        return QColor(r, g, b)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
         self.detail_view.set_bg_color(c)
+        if hasattr(self, 'qml_view'):
+            self.qml_view.setClearColor(self._qml_bg_color())
 
     def set_accent_color(self, color):
         self.current_accent = color

@@ -129,7 +129,7 @@ Rectangle {
 
         property real availableWidth: width - leftMargin - rightMargin
         property int itemsPerRow: Math.max(1, Math.floor(availableWidth / (baseItemSize + (itemGap * 2))))
-        property real widthPerItem: availableWidth / itemsPerRow
+        property real widthPerItem: Math.floor(availableWidth / itemsPerRow)
 
         cellWidth: widthPerItem
         cellHeight: widthPerItem + 80
