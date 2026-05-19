@@ -448,6 +448,8 @@ class PlaybackMixin:
             if self.current_index != -1: self.history.append(self.current_index)
             self.current_index = next_idx
             self.play_song(self.current_index)
+        else:
+            self._media_stop()
 
     def on_gapless_transition(self):
         print("Gapless transition triggered.")
@@ -466,28 +468,30 @@ class PlaybackMixin:
             new_index = self.get_next_index_calculated()
 
         if new_index != -1:
-            if self.current_index != -1: 
+            if self.current_index != -1:
                 self.history.append(self.current_index)
-            
+
             self.current_index = new_index
-            
+
             # UI Updates
             self.load_current_track_metadata_text_only()
             self.update_indicator()
             self.update_window_title()
-            
+
             # Pull the track from the playlist and use the 'track' variable
             track = self.playlist_data[self.current_index]
             target_path = track.get('stream_url') or track.get('path')
-            
+
             if target_path and getattr(self.seek_bar, 'display_mode', 0) in (0, 2):
                 self.seek_bar.reset_waveform()
                 self.audio_engine.request_waveform(target_path, num_points=10000)
-            
+
             self.visual_update_timer.start(350)
             self.preload_next()
             self._cast_relay_track(track)
             self._refresh_queue_panel()
+        else:
+            self._media_stop()
     
     def preload_next(self):
         """
@@ -564,9 +568,11 @@ class PlaybackMixin:
         # Sequential Logic
         if self.current_index in visible_indices:
             current_pos = visible_indices.index(self.current_index)
-            next_pos = (current_pos + 1) % len(visible_indices)
+            next_pos = current_pos + 1
+            if next_pos >= len(visible_indices):
+                return -1  # last track, no repeat → stop
             return visible_indices[next_pos]
-        else: 
+        else:
             return visible_indices[0]
    
     def get_visible_indices(self): 
