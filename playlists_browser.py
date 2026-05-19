@@ -279,6 +279,7 @@ class PlaylistDetailView(QWidget):
         # --- TRACKS BROWSER ---
         self.track_list = TracksBrowser(None)
         self.track_list.set_album_mode(True)
+        self.track_list.tree.header().filter_sort_disabled = True
         self.track_list.tree.setColumnWidth(7, 80)
         if hasattr(self.track_list, 'refresh_btn'):
             self.track_list.refresh_btn.hide()

@@ -772,6 +772,7 @@ class SmartSortHeader(QHeaderView):
         self._pending_click_col = None
         self._pending_click_pos = None
         self.album_mode = False
+        self.filter_sort_disabled = False
         self._accent = QColor('#555555')
         self.viewport().setMouseTracking(True)
 
@@ -817,6 +818,9 @@ class SmartSortHeader(QHeaderView):
                 and abs(event.pos().x() - self._pending_click_pos.x()) > self._CLICK_THRESHOLD):
             self._pending_click_col = None
             self._pending_click_pos = None
+        if self.filter_sort_disabled:
+            self.unsetCursor()
+            return super().mouseMoveEvent(event)
         if not self._is_resize_zone(event.pos()):
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
@@ -849,7 +853,7 @@ class SmartSortHeader(QHeaderView):
             self._pending_click_pos = None
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if not self.filter_sort_disabled and event.button() == Qt.MouseButton.LeftButton:
             pos = event.pos()
             logical = self.logicalIndexAt(pos)
             if logical > 0 and not self._is_resize_zone(pos):
@@ -868,7 +872,7 @@ class SmartSortHeader(QHeaderView):
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
 
-        centered_cols = {0, 5, 6, 7, 8, 9, 10, 11, 12}
+        centered_cols = {0, 5, 7, 8, 9, 10, 11, 12}
 
         # Pre-calculate icon visibility so text placement can account for it
         show_icon = logicalIndex != 0
@@ -1550,8 +1554,7 @@ class MultiGenreDelegate(QStyledItemDelegate):
 
         for line_idx, line_str in enumerate(display_lines):
             y = int(start_y + line_idx * line_spacing)
-            line_w = fm.horizontalAdvance(line_str)
-            x = draw_rect.left() + max(0, (draw_rect.width() - line_w) // 2)
+            x = draw_rect.left()
             for part in self.split_regex.split(line_str):
                 if not part:
                     continue
@@ -2920,7 +2923,7 @@ class TracksBrowser(QWidget):
             self._pi_movie = QMovie(resource_path("img/playing.gif"))
             self._pi_movie.setScaledSize(QSize(30, 30))
             
-        from PyQt6.QtWidgets import QLabel, QGraphicsColorizeEffect
+        from PyQt6.QtWidgets import QLabel
         from PyQt6.QtGui import QColor, QFont
         from PyQt6.QtCore import Qt
         
@@ -2953,9 +2956,6 @@ class TracksBrowser(QWidget):
                     pi_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                     pi_label.setStyleSheet("background: transparent;")
                     pi_label.setMovie(self._pi_movie)
-                    pi_effect = QGraphicsColorizeEffect(pi_label)
-                    pi_effect.setColor(rgb)
-                    pi_label.setGraphicsEffect(pi_effect)
                     self.tree.setItemWidget(item, 0, pi_label)
                     self._pi_movie.start()
                 else:
