@@ -42,6 +42,8 @@ _image_cache:       dict = {}   # url         → QPixmap
 TOUR_LIMIT  = 5
 BIT_APP_ID  = "js_app_id"
 
+_ARTIST_SEP = re.compile(r'\s*(?:///|•|feat\.|Feat\.|vs\.)\s*')
+
 
 # ── worker threads ────────────────────────────────────────────────────────────
 
@@ -126,6 +128,31 @@ class _ImageWorker(QThread):
         self.done.emit(pix)
 
 
+class _ArtistLookupWorker(QThread):
+    """Finds an artist ID in the local library by exact/closest name match."""
+    done = pyqtSignal(str)
+
+    def __init__(self, client, name):
+        super().__init__()
+        self._client = client
+        self._name   = name
+
+    def run(self):
+        try:
+            results = self._client.search3(self._name, artist_count=5, album_count=0, size=0)
+            artists = results.get('artist', [])
+            for a in artists:
+                if a.get('name', '').lower() == self._name.lower():
+                    self.done.emit(str(a.get('id', '')))
+                    return
+            if artists:
+                self.done.emit(str(artists[0].get('id', '')))
+                return
+        except Exception:
+            pass
+        self.done.emit('')
+
+
 # ── helper widgets ────────────────────────────────────────────────────────────
 
 def _sep(color="rgba(255,255,255,0.08)"):
@@ -135,10 +162,10 @@ def _sep(color="rgba(255,255,255,0.08)"):
     return line
 
 
-def _section_title(text, color="#888"):
+def _section_title(text, color="#888", size=10):
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
-        f"color: {color}; font-size: 10px; font-weight: bold; "
+        f"color: {color}; font-size: {size}px; font-weight: bold; "
         "letter-spacing: 1px; background: transparent;"
     )
     return lbl
@@ -167,6 +194,7 @@ class ArtistInfoPanel(QScrollArea):
         self._border_color      = "rgba(255,255,255,0.08)"
         self._font_color_primary   = "#eeeeee"
         self._font_color_secondary = "#888888"
+        self._font_size_secondary  = 12
         self._current_id   = None
         self._current_name = None
         self._show_all_tours = False
@@ -174,10 +202,16 @@ class ArtistInfoPanel(QScrollArea):
         self._bio_expanded   = False
         self._bio_full       = ""
 
-        self._raw_pix      = None
-        self._info_worker  = None
-        self._bit_worker   = None
-        self._img_worker   = None
+        self._artists          = []   # [(id_or_None, name), ...]
+        self._current_page_idx = 0
+        self._raw_artist_str   = None # full original string for dedup
+        self._client           = None
+
+        self._raw_pix       = None
+        self._info_worker   = None
+        self._bit_worker    = None
+        self._img_worker    = None
+        self._lookup_worker = None
 
         self.setWidgetResizable(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -230,27 +264,59 @@ class ArtistInfoPanel(QScrollArea):
     def apply_theme(self, theme):
         self._font_color_primary   = getattr(theme, 'font_color_primary',   '#eeeeee')
         self._font_color_secondary = getattr(theme, 'font_color_secondary', '#888888')
+        self._font_size_secondary  = getattr(theme, 'font_size_secondary',  12)
         self._border_color         = getattr(theme, 'border_color',         'rgba(255,255,255,0.08)')
         if self._all_events:
             self._rebuild_tour_section()
 
     def load_track(self, client, artist_id: str, artist_name: str):
-        if artist_id == self._current_id and artist_name == self._current_name:
+        if artist_name == self._raw_artist_str:
             return
-        self._current_id   = artist_id
-        self._current_name = artist_name
+        self._raw_artist_str = artist_name
+        self._client = client
+
+        parts = [p.strip() for p in _ARTIST_SEP.split(artist_name) if p.strip()]
+        if not parts:
+            parts = [artist_name]
+        self._artists = [(artist_id if i == 0 else None, name)
+                         for i, name in enumerate(parts)]
+        self._load_page(0)
+
+    def _load_page(self, idx):
+        self._current_page_idx = idx
+        aid, name = self._artists[idx]
+        self._current_id     = aid
+        self._current_name   = name
         self._show_all_tours = False
         self._bio_expanded   = False
         self._all_events     = []
         self._clear()
         self._build_loading()
 
-        if client and artist_id:
-            self._info_worker = _ArtistInfoWorker(client, artist_id)
+        if self._client and aid:
+            self._info_worker = _ArtistInfoWorker(self._client, aid)
+            self._info_worker.done.connect(self._on_artist_info)
+            self._info_worker.start()
+        elif self._client and name:
+            self._lookup_worker = _ArtistLookupWorker(self._client, name)
+            self._lookup_worker.done.connect(self._on_artist_id_found)
+            self._lookup_worker.start()
+        else:
+            self._on_artist_info({})
+
+    def _on_artist_id_found(self, artist_id: str):
+        if artist_id:
+            self._artists[self._current_page_idx] = (artist_id, self._artists[self._current_page_idx][1])
+            self._current_id = artist_id
+            self._info_worker = _ArtistInfoWorker(self._client, artist_id)
             self._info_worker.done.connect(self._on_artist_info)
             self._info_worker.start()
         else:
             self._on_artist_info({})
+
+    def _nav_to_page(self, idx):
+        if 0 <= idx < len(self._artists):
+            self._load_page(idx)
 
     # ── slots ─────────────────────────────────────────────────────────────────
 
@@ -313,9 +379,10 @@ class ArtistInfoPanel(QScrollArea):
         self._img_lbl = None
         self._raw_pix = None
         self._tour_widget = None
-        if self._img_worker and self._img_worker.isRunning():
-            try: self._img_worker.done.disconnect()
-            except: pass
+        for w in (self._img_worker, self._lookup_worker):
+            if w and w.isRunning():
+                try: w.done.disconnect()
+                except: pass
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -352,8 +419,52 @@ class ArtistInfoPanel(QScrollArea):
             self._img_worker.done.connect(self._on_image_loaded)
             self._img_worker.start()
 
-        # ── section label ─────────────────────────────────────────────────────
-        self._layout.addWidget(_section_title("Artist"))
+        # ── section label + pagination ────────────────────────────────────────
+        n = len(self._artists)
+        if n > 1:
+            hrow = QWidget()
+            hrow.setStyleSheet("background: transparent;")
+            hl = QHBoxLayout(hrow)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(4)
+            hl.addWidget(_section_title("Artist", self._font_color_secondary, self._font_size_secondary))
+            hl.addStretch()
+
+            idx = self._current_page_idx
+            btn_style = (
+                f"QPushButton {{ color: {self._accent}; background: transparent; border: none; "
+                f"font-size: {self._font_size_secondary + 4}px; padding: 0 2px; }}"
+                f"QPushButton:hover {{ color: white; }}"
+                f"QPushButton:disabled {{ color: #333; }}"
+            )
+            btn_prev = QPushButton("‹")
+            btn_prev.setFixedSize(26, 20)
+            btn_prev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_prev.setStyleSheet(btn_style)
+            btn_prev.setEnabled(idx > 0)
+            btn_prev.clicked.connect(lambda: self._nav_to_page(self._current_page_idx - 1))
+
+            page_lbl = QLabel(f"{idx + 1}/{n}")
+            page_lbl.setStyleSheet(
+                f"color: {self._font_color_secondary}; font-size: {self._font_size_secondary}px; "
+                "font-weight: bold; background: transparent;"
+            )
+
+            btn_next = QPushButton("›")
+            btn_next.setFixedSize(26, 20)
+            btn_next.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_next.setStyleSheet(btn_style)
+            btn_next.setEnabled(idx < n - 1)
+            btn_next.clicked.connect(lambda: self._nav_to_page(self._current_page_idx + 1))
+
+            hl.addWidget(btn_prev)
+            hl.addWidget(page_lbl)
+            hl.addWidget(btn_next)
+            self._layout.addWidget(hrow)
+        else:
+            self._layout.addWidget(_section_title("Artist", self._font_color_secondary, self._font_size_secondary))
         self._layout.addSpacing(4)
 
         # ── artist name ───────────────────────────────────────────────────────

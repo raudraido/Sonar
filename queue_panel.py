@@ -596,8 +596,8 @@ class QueuePanel(QWidget):
 
     def load_track(self, artist_id: str, artist_name: str):
         # Wipe stale content immediately if the artist has changed
-        current_id = getattr(self._artist_info_panel, '_current_id', None)
-        if artist_id != current_id:
+        current_str = getattr(self._artist_info_panel, '_raw_artist_str', None)
+        if artist_name != current_str:
             self._artist_info_panel._clear()
             self._artist_info_panel._build_empty("Loading…")
         self._pending_load = (artist_id, artist_name)
