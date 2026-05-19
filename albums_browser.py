@@ -917,7 +917,7 @@ class _TrackHeader(QHeaderView):
         f = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
-        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4, 5) else Qt.AlignmentFlag.AlignLeft
+        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4) else Qt.AlignmentFlag.AlignLeft
         painter.drawText(rect.adjusted(4, 0, -4, -8),
                          h_align | Qt.AlignmentFlag.AlignBottom, text)
 
@@ -1299,6 +1299,19 @@ class AlbumDetailView(QWidget):
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._update_track_right_margin)
 
         self.scroll_area.setWidget(_track_container)
+
+        # ── Search bar (sits between header and scrollable track list) ──────────
+        from PyQt6.QtWidgets import QLineEdit
+        self._search_bar = QLineEdit()
+        self._search_bar.setPlaceholderText("Search tracks…")
+        self._search_bar.setClearButtonEnabled(True)
+        self._search_bar.textChanged.connect(self._filter_tracks)
+        _sb_container = QWidget()
+        _sb_container.setStyleSheet("background: transparent;")
+        _sbl = QHBoxLayout(_sb_container)
+        _sbl.setContentsMargins(16, 6, 16, 2)
+        _sbl.addWidget(self._search_bar)
+        main_layout.addWidget(_sb_container)
         main_layout.addWidget(self.scroll_area, 1)
 
     # ── Track list ────────────────────────────────────────────────────────────
@@ -1370,34 +1383,99 @@ class AlbumDetailView(QWidget):
         self._tracks = tracks
         self.track_tree.setUpdatesEnabled(False)
         self.track_tree.clear()
-        for i, t in enumerate(tracks):
-            num      = str(t.get('track') or i + 1)
-            title    = t.get('title', '')
-            artist   = t.get('artist', '')
-            raw_star = t.get('starred', False)
-            heart    = '♥' if (raw_star and str(raw_star).lower() not in ('false', '0', 'none', '')) else '♡'
-            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-            secs     = dur_ms // 1000
-            duration = f"{secs // 60}:{secs % 60:02d}"
-            genre    = t.get('genre', '') or ''
-            item = QTreeWidgetItem([num, title, artist, heart, duration, genre])
-            item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            _theme = getattr(self.window(), 'theme', None)
-            _pri_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
-            _sec_color = QColor(getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa')
-            for col in range(6):
-                item.setForeground(col, _pri_color if col == 1 else _sec_color)
-            self.track_tree.addTopLevelItem(item)
+
+        _theme = getattr(self.window(), 'theme', None)
+        _pri_color = QColor(getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd')
+        _sec_color = QColor(getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa')
+
+        # Group by disc number
+        disc_groups: dict = {}
+        for idx, t in enumerate(tracks):
+            disc = int(t.get('discNumber') or t.get('disc') or 1)
+            disc_groups.setdefault(disc, []).append((idx, t))
+        multi_disc = len(disc_groups) > 1
+
+        total_rows = 0
+        for disc_num in sorted(disc_groups.keys()):
+            if multi_disc:
+                disc_item = QTreeWidgetItem(['', f'Disc {disc_num}', '', '', '', ''])
+                disc_item.setFirstColumnSpanned(True)
+                disc_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                disc_item.setData(0, Qt.ItemDataRole.UserRole, {'_is_disc_header': True})
+                f = disc_item.font(1); f.setBold(True); disc_item.setFont(1, f)
+                disc_item.setForeground(1, _sec_color)
+                self.track_tree.addTopLevelItem(disc_item)
+                total_rows += 1
+
+            for track_idx, t in disc_groups[disc_num]:
+                num      = str(t.get('track') or track_idx + 1)
+                title    = t.get('title', '')
+                artist   = t.get('artist', '')
+                raw_star = t.get('starred', False)
+                heart    = '♥' if (raw_star and str(raw_star).lower() not in ('false', '0', 'none', '')) else '♡'
+                dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                secs     = dur_ms // 1000
+                duration = f"{secs // 60}:{secs % 60:02d}"
+                genre    = t.get('genre', '') or ''
+                item = QTreeWidgetItem([num, title, artist, heart, duration, genre])
+                item.setData(0, Qt.ItemDataRole.UserRole, {'_track_idx': track_idx, 'id': str(t.get('id', ''))})
+                item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(5, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter)
+                for col in range(6):
+                    item.setForeground(col, _pri_color if col == 1 else _sec_color)
+                self.track_tree.addTopLevelItem(item)
+                total_rows += 1
+
         self.track_tree.setUpdatesEnabled(True)
         row_h = self.track_tree.sizeHintForRow(0) if tracks else 38
         hdr_h = self.track_tree.header().height()
-        self.track_tree.setFixedHeight(hdr_h + row_h * len(tracks) + 4)
+        self.track_tree.setFixedHeight(hdr_h + row_h * total_rows + 4)
         self.tracks_loaded.emit()
         if self._last_playing_id is not None:
             self.update_playing_status(self._last_playing_id, self._last_is_playing, self._last_playing_accent)
+
+    def _filter_tracks(self, text: str):
+        query = text.lower().strip()
+        visible = 0
+        for i in range(self.track_tree.topLevelItemCount()):
+            item = self.track_tree.topLevelItem(i)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and data.get('_is_disc_header'):
+                continue
+            if not query:
+                item.setHidden(False)
+                visible += 1
+            else:
+                match = query in item.text(1).lower() or query in item.text(2).lower()
+                item.setHidden(not match)
+                if match:
+                    visible += 1
+        # Hide disc headers whose tracks are all hidden
+        for i in range(self.track_tree.topLevelItemCount()):
+            item = self.track_tree.topLevelItem(i)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if not (isinstance(data, dict) and data.get('_is_disc_header')):
+                continue
+            # Check if any sibling track between this header and the next is visible
+            j = i + 1
+            any_visible = False
+            while j < self.track_tree.topLevelItemCount():
+                sibling = self.track_tree.topLevelItem(j)
+                sdata = sibling.data(0, Qt.ItemDataRole.UserRole)
+                if isinstance(sdata, dict) and sdata.get('_is_disc_header'):
+                    break
+                if not sibling.isHidden():
+                    any_visible = True
+                    break
+                j += 1
+            item.setHidden(not any_visible)
+            if any_visible:
+                visible += 1
+        row_h = self.track_tree.sizeHintForRow(0) if self._tracks else 38
+        hdr_h = self.track_tree.header().height()
+        self.track_tree.setFixedHeight(hdr_h + row_h * visible + 4)
 
     def _artist_part_at(self, pos) -> str:
         item = self.track_tree.itemAt(pos)
@@ -1618,9 +1696,12 @@ class AlbumDetailView(QWidget):
         return pix
 
     def _on_track_double_clicked(self, item, _col):
-        idx = self.track_tree.indexOfTopLevelItem(item)
-        if 0 <= idx < len(self._tracks):
-            self.track_play_signal.emit(self._tracks, idx)
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if isinstance(data, dict) and data.get('_is_disc_header'):
+            return
+        track_idx = data.get('_track_idx', -1) if isinstance(data, dict) else self.track_tree.indexOfTopLevelItem(item)
+        if 0 <= track_idx < len(self._tracks):
+            self.track_play_signal.emit(self._tracks, track_idx)
 
     # ── Blurred background ────────────────────────────────────────────────────
 
@@ -1720,14 +1801,21 @@ class AlbumDetailView(QWidget):
         self._last_playing_id = playing_id
         self._last_is_playing = is_playing
         self._last_playing_accent = accent
-        playing_row = next((i for i, t in enumerate(self._tracks) if str(t.get('id')) == str(playing_id)), -1) if is_playing else -1
+        playing_track_idx = next((i for i, t in enumerate(self._tracks) if str(t.get('id')) == str(playing_id)), -1) if is_playing else -1
         accent_color = QColor(accent)
         _theme = getattr(self.window(), 'theme', None)
         default_color = QColor(getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd')
         sec_color = QColor(getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa')
+        playing_tree_row = -1
         for i in range(self.track_tree.topLevelItemCount()):
             item = self.track_tree.topLevelItem(i)
-            row_is_playing = (i == playing_row)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and data.get('_is_disc_header'):
+                continue
+            track_idx = data.get('_track_idx', -1) if isinstance(data, dict) else -1
+            row_is_playing = (track_idx == playing_track_idx and playing_track_idx >= 0)
+            if row_is_playing:
+                playing_tree_row = i
             for col in range(self.track_tree.columnCount()):
                 if row_is_playing:
                     item.setForeground(col, accent_color)
@@ -1735,8 +1823,8 @@ class AlbumDetailView(QWidget):
                     item.setForeground(col, default_color)
                 else:
                     item.setForeground(col, sec_color)
-        self._track_delegate.set_playing(playing_row, accent, is_playing)
-        if playing_row >= 0 and is_playing:
+        self._track_delegate.set_playing(playing_tree_row, accent, is_playing)
+        if playing_tree_row >= 0 and is_playing:
             self._playing_movie.start()
         else:
             self._playing_movie.stop()
@@ -1795,6 +1883,26 @@ class AlbumDetailView(QWidget):
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
         self._scroll_reveal.color = color
+
+        if hasattr(self, '_search_bar'):
+            _theme = getattr(self.window(), 'theme', None)
+            _bg   = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14'
+            _bc   = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a'
+            _fg   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd'
+            _fgs  = getattr(_theme, 'font_color_secondary', '#888888')  if _theme else '#888888'
+            _fsize = getattr(_theme, 'font_size_secondary', 12)         if _theme else 12
+            self._search_bar.setStyleSheet(f"""
+                QLineEdit {{
+                    background-color: rgb({_bg});
+                    color: {_fg};
+                    border: 1px solid {_bc};
+                    border-radius: 6px;
+                    padding: 5px 8px;
+                    font-size: {_fsize}px;
+                }}
+                QLineEdit:focus {{ border-color: {color}; }}
+                QLineEdit::placeholder {{ color: {_fgs}; }}
+            """)
 
         icon_path = resource_path("img/shuffle.png")
         if os.path.exists(icon_path):
