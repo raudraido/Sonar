@@ -363,11 +363,24 @@ class NavigationMixin:
                 self.global_artist_view._exact_artist_image = True
                 self.global_artist_view.set_header_image(found_px)
 
-        # 3. Load the data!
+        # 3. Load the data — always try to resolve the id from the name cache so
+        #    LiveArtistDetailWorker can skip the expensive phase-1 search3 lookup.
+        client = getattr(self, 'navidrome_client', None)
+        def _resolve_id(name):
+            if not name or not client:
+                return None
+            cached = getattr(client, '_artist_name_id', {}).get(name.lower().strip())
+            return cached or None
+
         if isinstance(artist_data, str):
-            self.global_artist_view.load_artist({'id': None, 'name': artist_data})
+            self.global_artist_view.load_artist(
+                {'id': _resolve_id(artist_data), 'name': artist_data}
+            )
         else:
-            self.global_artist_view.load_artist(artist_data)
+            data = dict(artist_data)
+            if not data.get('id'):
+                data['id'] = _resolve_id(data.get('name', ''))
+            self.global_artist_view.load_artist(data)
             
         if hasattr(self, 'theme'):
             self.global_artist_view.set_accent_color(self.theme.accent)

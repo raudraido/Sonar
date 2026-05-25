@@ -67,6 +67,8 @@ class SubsonicClient:
         self._api_cache = LRUCache(max_size=20)
         self._artists_cache = None
         self._scan_status_cache = None
+        self._artist_name_id: dict = {}  # name→id, session-scoped, populated from every source
+        self._artist_session_cache: dict = {}  # id→result, avoids disk I/O on revisit
 
         self._auth_lock = threading.Lock()
         self._page_cache = {}      # key → (timestamp, tracks, total_count)
@@ -384,10 +386,14 @@ class SubsonicClient:
                     (stats.get('artist') or {}).get('songCount', 0),
                     item.get('songCount', 0)
                 )
+                aid  = item.get('id')
+                name = item.get('name', 'Unknown Artist')
+                if aid and name:
+                    self._artist_name_id[name.lower().strip()] = aid
                 clean_artists.append({
-                    'id': item.get('id'),
-                    'name': item.get('name', 'Unknown Artist'),
-                    'coverArt': item.get('id'),
+                    'id': aid,
+                    'name': name,
+                    'coverArt': aid,
                     'albumCount': item.get('albumCount', 0),
                     'songCount': song_count,
                     'playCount': item.get('playCount', 0)
@@ -397,6 +403,120 @@ class SubsonicClient:
             print(f"[DEBUG API] Native API fetch failed: {e}")
             return [], 0
     
+    def get_artist_info_native(self, artist_id):
+        """Fetch artist bio + similar artists from Navidrome's own DB via native API.
+        Returns dict with keys: biography, similarArtist (list).
+        No live Last.fm call — reads from Navidrome's pre-fetched database."""
+        _skey = f"native_{artist_id}"
+        if _skey in self._artist_session_cache:
+            return self._artist_session_cache[_skey]
+        key = f"artist_info_native_{artist_id}"
+        cached = self._disk_cache_get(key)
+        if cached is not None:
+            self._artist_session_cache[_skey] = cached
+            return cached
+        if not hasattr(self, 'native_jwt') or not self.native_jwt:
+            self.authenticate_native()
+        headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
+        try:
+            r = requests.get(f"{self.base_url}/api/artist/{artist_id}",
+                             headers=headers, timeout=8)
+            if r.status_code == 401:
+                if self.authenticate_native():
+                    headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
+                    r = requests.get(f"{self.base_url}/api/artist/{artist_id}",
+                                     headers=headers, timeout=8)
+            if r.status_code != 200:
+                return {}
+            data = r.json()
+            # Also cache the name→id mapping while we have the data
+            name = data.get('name', '')
+            if name:
+                self._artist_name_id[name.lower().strip()] = artist_id
+            result = {}
+            bio = data.get('biography') or ''
+            if bio:
+                result['biography'] = bio
+            similar = data.get('similarArtists') or []
+            if similar:
+                result['similarArtist'] = [
+                    {'id': a.get('id'), 'name': a.get('name', ''), 'coverArt': a.get('id')}
+                    for a in similar if a.get('name')
+                ]
+            if result:
+                self._disk_cache_set(key, result)
+                self._artist_session_cache[_skey] = result
+            return result
+        except Exception as e:
+            print(f"[get_artist_info_native] failed: {e}")
+        return {}
+
+    def warm_artist_name_cache(self) -> None:
+        """Start a one-shot background thread that populates _artist_name_id for every
+        known artist. Called once after the client is authenticated so that artist-name
+        clicks from any UI surface (footer, now-playing, queue, tracks list, etc.) can
+        skip the phase-1 search3 round-trip."""
+        if getattr(self, '_name_cache_warmed', False):
+            return
+        self._name_cache_warmed = True
+
+        def _run():
+            try:
+                artists = self.get_artists_live()
+                print(f"[Client] Name cache warm: {len(self._artist_name_id)} artists indexed.")
+            except Exception as e:
+                print(f"[Client] Name cache warm failed: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def resolve_artist_id(self, name: str) -> str | None:
+        """Return artist id for name, using in-memory cache to avoid repeat search3 calls."""
+        key = name.lower().strip()
+        if key in self._artist_name_id:
+            return self._artist_name_id[key]
+        try:
+            sr = self.search3(name, size=0, artist_count=5, album_count=0)
+            for a in sr.get('artist', []):
+                if a.get('name', '').lower().strip() == key:
+                    id_ = a.get('id')
+                    if id_:
+                        self._artist_name_id[key] = id_
+                        return id_
+        except Exception:
+            pass
+        return None
+
+    def prefetch_artist(self, artist_id: str) -> None:
+        """Warm get_artist + get_artist_info_native disk caches in a background daemon thread.
+        Caps concurrent prefetches at 3 and skips if both caches are already warm."""
+        if not artist_id:
+            return
+        if not hasattr(self, '_prefetch_set'):
+            self._prefetch_set: set = set()
+            self._prefetch_lock = threading.Lock()
+            self._prefetch_active = 0
+        with self._prefetch_lock:
+            if artist_id in self._prefetch_set or self._prefetch_active >= 3:
+                return
+            if (self._disk_cache_get(f"artist_{artist_id}") is not None and
+                    self._disk_cache_get(f"artist_info_native_{artist_id}") is not None):
+                return
+            self._prefetch_set.add(artist_id)
+            self._prefetch_active += 1
+
+        def _run():
+            try:
+                if self._disk_cache_get(f"artist_{artist_id}") is None:
+                    self.get_artist(artist_id)
+                if self._disk_cache_get(f"artist_info_native_{artist_id}") is None:
+                    self.get_artist_info_native(artist_id)
+            finally:
+                with self._prefetch_lock:
+                    self._prefetch_set.discard(artist_id)
+                    self._prefetch_active -= 1
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def get_genres_native(self):
         """Fetches all genres from Navidrome native API. Returns {name: id} dict. Cached."""
         import requests
@@ -609,9 +729,13 @@ class SubsonicClient:
                 raw_artists = data['subsonic-response']['searchResult3'].get('artist', [])
                 if isinstance(raw_artists, dict): raw_artists = [raw_artists]
                 for artist in raw_artists:
+                    aid = artist.get('id')
+                    name = artist.get('name', 'Unknown Artist')
+                    if aid and name:
+                        self._artist_name_id[name.lower().strip()] = aid
                     clean_artists.append({
-                        'id': artist.get('id'),
-                        'name': artist.get('name', 'Unknown Artist'),
+                        'id': aid,
+                        'name': name,
                         'coverArt': artist.get('coverArt'),
                         'albumCount': artist.get('albumCount', 0),
                         'songCount': artist.get('songCount', 0),
@@ -970,9 +1094,12 @@ class SubsonicClient:
         return []
 
     def get_artist(self, artist_id):
+        if artist_id in self._artist_session_cache:
+            return self._artist_session_cache[artist_id]
         key = f"artist_{artist_id}"
         cached = self._disk_cache_get(key)
         if cached is not None:
+            self._artist_session_cache[artist_id] = cached
             return cached
         params = self._get_auth_params()
         params['id'] = artist_id
@@ -982,6 +1109,10 @@ class SubsonicClient:
             if 'subsonic-response' in data and 'artist' in data['subsonic-response']:
                 result = data['subsonic-response']['artist']
                 self._disk_cache_set(key, result)
+                self._artist_session_cache[artist_id] = result
+                name = result.get('name', '')
+                if name:
+                    self._artist_name_id[name.lower().strip()] = artist_id
                 return result
         except Exception as e:
             print(f"Error getting artist info: {e}")
@@ -989,6 +1120,14 @@ class SubsonicClient:
 
     def get_artist_info2(self, artist_id):
         """Calls getArtistInfo2 to get Last.fm biography, similar artists, etc."""
+        _skey = f"info2_{artist_id}"
+        if _skey in self._artist_session_cache:
+            return self._artist_session_cache[_skey]
+        key = f"artist_info2_{artist_id}"
+        cached = self._disk_cache_get(key)
+        if cached is not None:
+            self._artist_session_cache[_skey] = cached
+            return cached
         params = self._get_auth_params()
         params['id'] = artist_id
         try:
@@ -996,6 +1135,9 @@ class SubsonicClient:
             data = r.json()
             sr = data.get('subsonic-response', {})
             info = sr.get('artistInfo2') or sr.get('artistInfo') or {}
+            if info:
+                self._disk_cache_set(key, info)
+                self._artist_session_cache[_skey] = info
             return info
         except Exception as e:
             print(f"Error getting artist info2: {e}")
@@ -1327,7 +1469,7 @@ class SubsonicClient:
         params['albumCount'] = 0
         params['artistCount'] = 0
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params)
+            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=15)
             data = r.json()
             if 'subsonic-response' in data and 'searchResult3' in data['subsonic-response']:
                 raw_songs = data['subsonic-response']['searchResult3'].get('song', [])

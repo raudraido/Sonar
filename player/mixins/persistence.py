@@ -185,6 +185,11 @@ class PersistenceMixin:
         if client.ping():
             print("Success! Live connected to Navidrome.")
 
+            # Warm the artist name→id cache in background so every surface
+            # (footer, now-playing, queue, etc.) can skip phase-1 lookups.
+            if hasattr(client, 'warm_artist_name_cache'):
+                client.warm_artist_name_cache()
+
             # Store client for lazy initialization of tabs not yet visited
             self._pending_client = client
             if not hasattr(self, '_initialized_tabs'):

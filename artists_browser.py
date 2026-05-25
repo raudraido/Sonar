@@ -112,6 +112,62 @@ class _AlbumSkeletonRow(QWidget):
         super().hideEvent(event)
 
 
+class _SectionSkeleton(QWidget):
+    """Shimmer skeleton for bio or popular-tracks section, shown before data arrives."""
+
+    def __init__(self, mode='bio', parent=None):
+        super().__init__(parent)
+        self._mode = mode
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)
+        self.setFixedHeight(180 if mode == 'bio' else 280)
+
+    def _tick(self):
+        self._phase = (self._phase + 0.04) % 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+
+        x = 8
+        phase = self._phase
+        bright = int(40 + 15 * math.sin(phase * 2 * math.pi))
+
+        # Section title pill
+        p.setBrush(QBrush(QColor(bright + 12, bright + 12, bright + 12)))
+        p.drawRoundedRect(QRectF(x, 14, 140, 16), 8, 8)
+
+        if self._mode == 'bio':
+            line_h, gap = 10, 18
+            for i in range(6):
+                ph = (phase + i * 0.1) % 1.0
+                br = int(32 + 10 * math.sin(ph * 2 * math.pi))
+                w = (self.width() - 16) * (0.95 if i < 5 else 0.55)
+                p.setBrush(QBrush(QColor(br, br, br)))
+                p.drawRoundedRect(QRectF(x, 46 + i * gap, w, line_h), 5, 5)
+        else:
+            for i in range(5):
+                ph = (phase + i * 0.15) % 1.0
+                br = int(32 + 10 * math.sin(ph * 2 * math.pi))
+                y = 46 + i * 46
+                p.setBrush(QBrush(QColor(br, br, br)))
+                p.drawRoundedRect(QRectF(x, y + 2, 28, 28), 4, 4)
+                p.setBrush(QBrush(QColor(br + 6, br + 6, br + 6)))
+                p.drawRoundedRect(QRectF(x + 40, y + 5, 160, 10), 5, 5)
+                p.setBrush(QBrush(QColor(br - 4, br - 4, br - 4)))
+                p.drawRoundedRect(QRectF(x + 40, y + 20, 100, 8), 4, 4)
+
+        p.end()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+
 class LiveArtistDetailWorker(QThread):
     # Progressive signals — each fires as soon as its data arrives
     albums_ready    = pyqtSignal(dict, list, list)   # info, main_albums, singles
@@ -132,6 +188,9 @@ class LiveArtistDetailWorker(QThread):
 
             if not self.client: return
 
+            _t0 = time.time()
+            def _ms(t): return f"{(time.time() - t) * 1000:.0f}ms"
+
             _split_re = re.compile(r'(?: /// | • | / | feat\. | Feat\. | ft\. | Ft\. | vs\. | Vs\. )')
 
             def _artist_tokens(raw: str) -> set:
@@ -142,38 +201,87 @@ class LiveArtistDetailWorker(QThread):
                 try: return int(x.get('year', 0) or 0)
                 except: return 0
 
-            # ── PHASE 1: resolve ID if missing (fast — usually already set) ──
+            print(f"[TIMING] {self.artist_name!r} — worker started")
+
+            # ── PHASE 1: resolve ID if missing — uses in-memory cache to avoid repeat search3 ──
             if not self.artist_id and self.artist_name:
-                search_results = self.client.search_artist_tracks(self.artist_name)
-                target_name = self.artist_name.lower().strip()
-                for item in search_results:
-                    aid = item.get('artistId') or item.get('artist_id')
-                    t_art = str(item.get('artist', '')).lower().strip()
-                    a_art = str(item.get('albumArtist', '')).lower().strip()
-                    if (t_art == target_name or a_art == target_name) and aid:
-                        self.artist_id = aid
-                        break
+                _t1 = time.time()
+                if hasattr(self.client, 'resolve_artist_id'):
+                    self.artist_id = self.client.resolve_artist_id(self.artist_name)
+                else:
+                    target_name = self.artist_name.lower().strip()
+                    try:
+                        sr = self.client.search3(self.artist_name, size=0, artist_count=5, album_count=0)
+                        for a in sr.get('artist', []):
+                            if a.get('name', '').lower().strip() == target_name:
+                                self.artist_id = a.get('id')
+                                break
+                    except Exception:
+                        pass
+                print(f"[TIMING]   phase1 ID resolve: {_ms(_t1)}  id={self.artist_id}")
 
             # ── PHASES 2+3+4 in PARALLEL ─────────────────────────────────────
             # get_artist, get_top_songs, and get_artist_info2 are all independent
             # network calls — run them concurrently so total wait ≈ slowest one.
             def _fetch_artist():
-                if self.artist_id:
-                    return self.client.get_artist(self.artist_id) or {}
-                return {}
+                _t = time.time()
+                result = self.client.get_artist(self.artist_id) or {} if self.artist_id else {}
+                print(f"[TIMING]   get_artist: {_ms(_t)}  albums={len(result.get('album', []))}")
+                return result
 
             def _fetch_top_songs():
+                _t = time.time()
+                result = []
                 if self.artist_name:
-                    try: return self.client.get_top_songs(self.artist_name, count=5)
+                    try: result = self.client.get_top_songs(self.artist_name, count=5)
                     except Exception: pass
-                return []
+                print(f"[TIMING]   get_top_songs: {_ms(_t)}  count={len(result)}")
+                return result
 
             def _fetch_info2():
-                if self.artist_id and hasattr(self.client, 'get_artist_info2'):
-                    try: return self.client.get_artist_info2(self.artist_id) or {}
-                    except Exception: pass
-                return {}
+                if not self.artist_id:
+                    return {}
+                import threading as _th
 
+                # Run native and subsonic simultaneously — native is preferred when it
+                # has data (fast DB read), subsonic is the fallback that may hit Last.fm.
+                # Starting both at once saves up to ~500ms vs the old sequential approach.
+                sub_result  = [{}]
+                sub_done    = _th.Event()
+
+                def _run_subsonic():
+                    try:
+                        _t = time.time()
+                        r = self.client.get_artist_info2(self.artist_id) if hasattr(self.client, 'get_artist_info2') else {}
+                        sub_result[0] = r or {}
+                        print(f"[TIMING]   get_artist_info2: {_ms(_t)}  has_bio={bool(sub_result[0].get('biography'))}")
+                    except Exception:
+                        pass
+                    finally:
+                        sub_done.set()
+
+                if hasattr(self.client, 'get_artist_info2'):
+                    _th.Thread(target=_run_subsonic, daemon=True).start()
+                else:
+                    sub_done.set()
+
+                native_result = {}
+                if hasattr(self.client, 'get_artist_info_native'):
+                    _t = time.time()
+                    try:
+                        native_result = self.client.get_artist_info_native(self.artist_id) or {}
+                        print(f"[TIMING]   get_artist_info_native: {_ms(_t)}  has_bio={bool(native_result.get('biography'))}  similar={len(native_result.get('similarArtist', []))}")
+                    except Exception as e:
+                        print(f"[TIMING]   get_artist_info_native FAILED: {e}")
+
+                if native_result.get('biography') or native_result.get('similarArtist'):
+                    return native_result
+
+                # Native had nothing — wait for subsonic
+                sub_done.wait()
+                return sub_result[0]
+
+            _t_parallel = time.time()
             with ThreadPoolExecutor(max_workers=3) as pool:
                 f_artist = pool.submit(_fetch_artist)
                 f_songs  = pool.submit(_fetch_top_songs)
@@ -181,6 +289,7 @@ class LiveArtistDetailWorker(QThread):
 
                 # Albums: unblock as soon as get_artist returns
                 info = f_artist.result() or {}
+                print(f"[TIMING]   → albums_ready emit 1 at {_ms(_t0)} (parallel started {_ms(_t_parallel)} ago)")
                 if not info:
                     info = {'name': self.artist_name or "Unknown"}
 
@@ -210,10 +319,14 @@ class LiveArtistDetailWorker(QThread):
 
                 # Start appears_on search now that we have own_album_ids
                 def _fetch_appears():
+                    _t = time.time()
                     result = []
                     seen = set()
                     try:
-                        tracks = self.client.search_artist_tracks(self.artist_name) if self.artist_name else []
+                        # Use search3 directly (capped at 500) rather than the
+                        # full search_artist_tracks call which fetches 2000 songs.
+                        sr     = self.client.search3(self.artist_name, size=500, artist_count=0, album_count=0) if self.artist_name else {}
+                        tracks = sr.get('song', [])
                         for t in tracks:
                             alb_id = str(t.get('albumId') or t.get('album_id') or '')
                             if not alb_id or alb_id in own_album_ids or alb_id in seen:
@@ -235,32 +348,45 @@ class LiveArtistDetailWorker(QThread):
                             })
                     except Exception as e:
                         print(f"[LiveArtistDetailWorker] appears_on failed: {e}")
+                    print(f"[TIMING]   search3/appears: {_ms(_t)}  found={len(result)}")
                     result.sort(key=sort_by_year, reverse=True)
                     return result
 
                 f_appears = pool.submit(_fetch_appears)
 
-                # Top songs — likely already done by now; emit immediately
-                top_songs = f_songs.result() or []
-                self.top_songs_ready.emit(top_songs)
-
-                # Bio + similar artists from Last.fm — patch info and re-emit
-                extra = f_info2.result() or {}
-                bio = extra.get('biography') or extra.get('bio') or ''
-                if bio:
-                    info['biography'] = bio
-                similar = extra.get('similarArtist') or []
-                if isinstance(similar, dict):
-                    similar = [similar]
-                if similar:
-                    info['similar_artists'] = similar
-                if bio or similar:
-                    self.albums_ready.emit(info, main_albums, singles)
+                # Emit top_songs and bio each as soon as ready — whichever finishes first
+                from concurrent.futures import wait as _wait, FIRST_COMPLETED
+                pending = {f_songs, f_info2}
+                top_songs = []
+                while pending:
+                    done, pending = _wait(pending, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        if f is f_songs:
+                            top_songs = f.result() or []
+                            print(f"[TIMING]   → top_songs_ready emit at {_ms(_t0)}  count={len(top_songs)}")
+                            self.top_songs_ready.emit(top_songs)
+                        else:
+                            extra = f.result() or {}
+                            bio = extra.get('biography') or extra.get('bio') or ''
+                            if bio:
+                                info['biography'] = bio
+                            similar = extra.get('similarArtist') or []
+                            if isinstance(similar, dict):
+                                similar = [similar]
+                            if similar:
+                                info['similar_artists'] = similar
+                            if bio or similar:
+                                print(f"[TIMING]   → albums_ready emit 2 (bio/similar) at {_ms(_t0)}  has_bio={bool(bio)}  similar={len(similar)}")
+                                self.albums_ready.emit(info, main_albums, singles)
+                            else:
+                                print(f"[TIMING]   → no bio/similar at {_ms(_t0)}")
 
                 # Appears on — slowest, emit last
                 appears_on = f_appears.result() or []
+                print(f"[TIMING]   → appears_ready emit at {_ms(_t0)}  count={len(appears_on)}")
                 self.appears_ready.emit(appears_on)
 
+            print(f"[TIMING] {self.artist_name!r} — worker DONE at {_ms(_t0)}")
             self.details_ready.emit(info, top_songs, main_albums, singles, appears_on)
 
         except Exception as e:
@@ -695,7 +821,7 @@ class SectionGridBridge(QObject):
     selectIndex               = pyqtSignal(int)
     itemClicked               = pyqtSignal(int)
     playClicked               = pyqtSignal(int)
-    artistNameClicked         = pyqtSignal(str)
+    artistNameClicked         = pyqtSignal(str, str)  # name, artist_id
     contentHeightChanged      = pyqtSignal(int)
     fontSizePrimaryChanged    = pyqtSignal(int)
     fontSizeSecondaryChanged  = pyqtSignal(int)
@@ -714,9 +840,9 @@ class SectionGridBridge(QObject):
     def emitPlayClicked(self, idx):
         self.playClicked.emit(idx)
 
-    @pyqtSlot(str)
-    def emitArtistNameClicked(self, name):
-        self.artistNameClicked.emit(name)
+    @pyqtSlot(str, str)
+    def emitArtistNameClicked(self, name, artist_id=""):
+        self.artistNameClicked.emit(name, artist_id)
 
     @pyqtSlot(float)
     def reportContentHeight(self, h):
@@ -728,7 +854,7 @@ class QMLAlbumSectionWidget(QWidget):
     """Replaces AlbumRowWidget — uses a QML GridView for buttery-smooth resize."""
     album_clicked       = pyqtSignal(dict)
     play_album          = pyqtSignal(dict)
-    artist_name_clicked = pyqtSignal(str)
+    artist_name_clicked = pyqtSignal(str, str)  # name, artist_id
 
     def __init__(self, title, count, albums):
         super().__init__()
@@ -1046,7 +1172,7 @@ class AlbumRowWidget(QWidget):
             
             
             if getattr(self, 'lazy_load', False):
-                item.setData(Qt.ItemDataRole.UserRole, {'type': 'placeholder', 'title': 'Loading...'})
+                item.setData(Qt.ItemDataRole.UserRole, dict(album, type='placeholder'))
             else:
                 item.setData(Qt.ItemDataRole.UserRole, album)
                 
@@ -1519,7 +1645,9 @@ class ArtistRichDetailView(QWidget):
                     data = item.data(Qt.ItemDataRole.UserRole)
                     if data and data.get('type') != 'placeholder':
                         item.setIcon(row.get_placeholder_icon())
-                        item.setData(Qt.ItemDataRole.UserRole, {'type': 'placeholder', 'title': 'Loading...'})
+                        evicted = dict(row.full_albums[idx]) if idx < len(row.full_albums) else dict(data)
+                        evicted['type'] = 'placeholder'
+                        item.setData(Qt.ItemDataRole.UserRole, evicted)
                 continue
 
             for idx in range(lw.count()):
@@ -1550,7 +1678,9 @@ class ArtistRichDetailView(QWidget):
                     data = item.data(Qt.ItemDataRole.UserRole)
                     if data and data.get('type') != 'placeholder':
                         item.setIcon(row.get_placeholder_icon())
-                        item.setData(Qt.ItemDataRole.UserRole, {'type': 'placeholder', 'title': 'Loading...'})
+                        evicted = dict(row.full_albums[idx]) if idx < len(row.full_albums) else dict(data)
+                        evicted['type'] = 'placeholder'
+                        item.setData(Qt.ItemDataRole.UserRole, evicted)
 
     def _on_popular_album_clicked(self, data):
         
@@ -1956,6 +2086,15 @@ class ArtistRichDetailView(QWidget):
         self.img_label.setPixmap(circle_pix)
 
     def set_bio(self, text):
+        w = getattr(self, '_skeleton_bio', None)
+        if w:
+            try:
+                self.content_layout.removeWidget(w)
+                w.deleteLater()
+            except Exception:
+                pass
+            self._skeleton_bio = None
+
         if text:
             import re as _re
             clean = _re.sub(r'<[^>]+>', '', text).strip()
@@ -2045,6 +2184,15 @@ class ArtistRichDetailView(QWidget):
         self.related_artists_row = row
 
     def set_top_songs(self, songs):
+        w = getattr(self, '_skeleton_songs', None)
+        if w:
+            try:
+                self.content_layout.removeWidget(w)
+                w.deleteLater()
+            except Exception:
+                pass
+            self._skeleton_songs = None
+
         if songs:
             from PyQt6.QtWidgets import QApplication
             current_focus = QApplication.focusWidget()
@@ -2117,7 +2265,7 @@ class ArtistRichDetailView(QWidget):
             row.set_accent_color(self.current_accent)
             row.album_clicked.connect(self.album_clicked.emit)
             row.play_album.connect(self.play_album.emit)
-            row.artist_name_clicked.connect(lambda name: self.artist_clicked.emit({'name': name, 'id': None}))
+            row.artist_name_clicked.connect(lambda name, aid: self.artist_clicked.emit({'name': name, 'id': aid or None}))
             row.qml_widget.installEventFilter(self)
             self.sections_layout.addWidget(row)
 
@@ -2225,6 +2373,17 @@ class ArtistRichDetailView(QWidget):
             worker.finished.connect(lambda: self._worker_graveyard.discard(worker) if worker in self._worker_graveyard else None)
         except: pass
    
+    def _cleanup_section_skeletons(self):
+        for attr in ('_skeleton_bio', '_skeleton_songs'):
+            w = getattr(self, attr, None)
+            if w:
+                try:
+                    self.content_layout.removeWidget(w)
+                    w.deleteLater()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def load_artist(self, artist_data):
         self.pending_items = {}
         self.pending_qml_sections = {}  # cover_id -> [QMLAlbumSectionWidget]
@@ -2234,11 +2393,19 @@ class ArtistRichDetailView(QWidget):
         # 1. INSTANT VISUALS
         self.lbl_name.setText(self.current_artist_name)
         self.lbl_stats.setText("Loading...")
+        self._cleanup_section_skeletons()
         self.set_bio("")
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
         self._show_album_skeleton()
+
+        # Insert structural skeletons for bio and popular tracks
+        header_idx = self.content_layout.indexOf(self.header)
+        self._skeleton_bio = _SectionSkeleton('bio')
+        self._skeleton_songs = _SectionSkeleton('songs')
+        self.content_layout.insertWidget(header_idx + 1, self._skeleton_bio)
+        self.content_layout.insertWidget(header_idx + 2, self._skeleton_songs)
 
         if not getattr(self, '_header_already_loaded', False):
             self.img_label.setStyleSheet("background: #333; border-radius: 110px;")
@@ -2329,6 +2496,7 @@ class ArtistRichDetailView(QWidget):
 
     def _on_appears_ready(self, appears_on):
         """Phase 5 handler — fires after search_artist_tracks returns (slowest call)."""
+        self._cleanup_section_skeletons()
         self._loaded_appears_on = appears_on
         worker = getattr(self, 'cover_worker', None)
         self._remove_section("Appears on & Compilations")
@@ -2786,7 +2954,12 @@ class ArtistGridBrowser(QWidget):
                 cs = chunk * 50
                 ce = min(cs + 50, len(self.artist_model.artists))
                 for i in range(cs, ce):
-                    self.artist_model.artists[i] = {'type': 'placeholder', 'name': 'Loading...'}
+                    cur = self.artist_model.artists[i]
+                    self.artist_model.artists[i] = {
+                        'type': 'placeholder',
+                        'name': cur.get('name', '') if isinstance(cur, dict) else '',
+                        'id':   cur.get('id',   '') if isinstance(cur, dict) else '',
+                    }
                 self.artist_model.dataChanged.emit(
                     self.artist_model.index(cs, 0),
                     self.artist_model.index(ce - 1, 0),
@@ -2814,6 +2987,16 @@ class ArtistGridBrowser(QWidget):
             if chunk not in self.loaded_chunks and chunk not in self.active_chunk_workers:
                 self.loaded_chunks.add(chunk)
                 self.active_chunk_workers[chunk] = self.fetch_chunk(chunk)
+
+        # 5. Prefetch artist detail caches for visible artists (warms get_artist + bio)
+        client = getattr(self, 'client', None)
+        if client and hasattr(client, 'prefetch_artist'):
+            for i in range(start_idx, min(end_idx + 1, len(self.artist_model.artists))):
+                artist = self.artist_model.artists[i]
+                if isinstance(artist, dict) and artist.get('type') != 'placeholder':
+                    aid = artist.get('id')
+                    if aid:
+                        client.prefetch_artist(aid)
 
     def fetch_chunk(self, chunk_index):
         if hasattr(self, '_chunk_data_cache') and chunk_index in self._chunk_data_cache:
@@ -3247,6 +3430,16 @@ class ArtistGridBrowser(QWidget):
 
     def show_artist_details(self, artist_data, record_history=True):
         if not artist_data: return
+        if isinstance(artist_data, str):
+            artist_data = {'name': artist_data, 'id': None}
+        if not artist_data.get('id'):
+            client = getattr(self, 'client', None)
+            if client and hasattr(client, '_artist_name_id'):
+                name = artist_data.get('name', '')
+                cached_id = client._artist_name_id.get(name.lower().strip())
+                if cached_id:
+                    artist_data = dict(artist_data)
+                    artist_data['id'] = cached_id
         if record_history: self.add_to_history({'type': 'artist', 'data': artist_data})
 
         if hasattr(self, 'search_container'): self.search_container.hide()

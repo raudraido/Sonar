@@ -188,6 +188,12 @@ Item {
                         width: parent.width
                         spacing: 0
                         property int albumIndex: index
+                        property string primaryArtistId: {
+                            var hasSep = albumArtist.indexOf(" /// ") >= 0
+                                      || albumArtist.indexOf(" • ") >= 0
+                                      || albumArtist.indexOf(" / ") >= 0
+                            return hasSep ? "" : albumArtistId
+                        }
 
                         Repeater {
                             model: albumArtist.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
@@ -207,9 +213,10 @@ Item {
                                     onEntered: parent.hov = true
                                     onExited:  parent.hov = false
                                     onClicked: (mouse) => {
+                                        var aid = parent.parent.primaryArtistId
                                         grid.forceActiveFocus()
                                         grid.currentIndex = parent.parent.albumIndex
-                                        sectionBridge.emitArtistNameClicked(parent.text)
+                                        sectionBridge.emitArtistNameClicked(parent.text, aid)
                                         mouse.accepted = true
                                     }
                                 }

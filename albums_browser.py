@@ -76,7 +76,7 @@ class GridBridge(QObject):
     itemClicked = pyqtSignal(dict)
     playClicked = pyqtSignal(dict)
     artistClicked = pyqtSignal(dict)
-    artistNameClicked = pyqtSignal(str)
+    artistNameClicked = pyqtSignal(str, str)  # name, artist_id
     visibleRangeChanged = pyqtSignal(int, int)
     accentColorChanged = pyqtSignal(str)
     bgAlphaChanged = pyqtSignal(float)
@@ -131,9 +131,9 @@ class GridBridge(QObject):
         if 0 <= idx < len(self.album_model.albums):
             self.artistClicked.emit(self.album_model.albums[idx])
 
-    @pyqtSlot(str)
-    def emitArtistNameClicked(self, name):
-        self.artistNameClicked.emit(name)
+    @pyqtSlot(str, str)
+    def emitArtistNameClicked(self, name, artist_id=""):
+        self.artistNameClicked.emit(name, artist_id)
 
     @pyqtSlot(int)
     def emitIndexChanged(self, idx):
@@ -192,6 +192,7 @@ class AlbumModel(QAbstractListModel):
     RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
     IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 6
     SONG_COUNT_ROLE = Qt.ItemDataRole.UserRole + 7
+    ARTIST_ID_ROLE = Qt.ItemDataRole.UserRole + 8
 
     def __init__(self):
         super().__init__()
@@ -211,6 +212,8 @@ class AlbumModel(QAbstractListModel):
         if role == self.SONG_COUNT_ROLE:
             n = a.get('songCount') or a.get('trackCount') or ''
             return f"{n} tracks" if n else ''
+        if role == self.ARTIST_ID_ROLE:
+            return a.get('artistId') or a.get('albumArtistId') or ''
         return None
 
     def roleNames(self):
@@ -219,6 +222,7 @@ class AlbumModel(QAbstractListModel):
             self.YEAR_ROLE: b"albumYear", self.COVER_ID_ROLE: b"coverId",
             self.RAW_DATA_ROLE: b"rawData", self.IS_LOADING_ROLE: b"isLoading",
             self.SONG_COUNT_ROLE: b"albumSongCount",
+            self.ARTIST_ID_ROLE: b"albumArtistId",
         }
         
     def append_albums(self, new_albums):
@@ -2413,7 +2417,7 @@ class LibraryGridBrowser(QWidget):
         self.grid_bridge.playClicked.connect(lambda data: self.start_play_fetch(data['id']))
         self.grid_bridge.visibleRangeChanged.connect(self.check_viewport_qml)
         self.grid_bridge.artistClicked.connect(self.on_grid_artist_clicked)
-        self.grid_bridge.artistNameClicked.connect(self.switch_to_artist_tab.emit)
+        self.grid_bridge.artistNameClicked.connect(self._on_grid_artist_name_clicked)
 
         # OMNI-SCROLLER FIX: Python-side middle-click scroller for the QML grid.
         # QMLGridWrapper.verticalScrollBar() returns a DummyScrollBar (no-op), so the
@@ -2786,6 +2790,13 @@ class LibraryGridBrowser(QWidget):
             if search_input is None or not search_input.hasFocus():
                 self.qml_view.setFocus()
 
+    def _on_grid_artist_name_clicked(self, name, artist_id):
+        if artist_id:
+            client = getattr(self, 'client', None)
+            if client and hasattr(client, '_artist_name_id'):
+                client._artist_name_id[name.lower().strip()] = artist_id
+        self.switch_to_artist_tab.emit(name)
+
     def on_artist_name_clicked(self, artist_name):
         self.switch_to_artist_tab.emit(artist_name)
 
@@ -3039,8 +3050,11 @@ class LibraryGridBrowser(QWidget):
                 chunk_end = min(chunk_start + 50, self.true_server_count)
                 
                 for i in range(chunk_start, chunk_end):
-                    self.album_model.albums[i] = {'type': 'placeholder', 'title': 'Loading...'}
-                
+                    cur = self.album_model.albums[i]
+                    evicted = dict(cur) if isinstance(cur, dict) else {}
+                    evicted['type'] = 'placeholder'
+                    self.album_model.albums[i] = evicted
+
                 # Tell QML the chunks were wiped to save RAM
                 self.album_model.dataChanged.emit(
                     self.album_model.index(chunk_start, 0),
@@ -3084,15 +3098,23 @@ class LibraryGridBrowser(QWidget):
         start_row = chunk_index * 50
         covers_to_queue = []
         
+        client = getattr(self, 'client', None)
+        name_id_cache = getattr(client, '_artist_name_id', None) if client else None
         for i, album_data in enumerate(albums):
             target_row = start_row + i
             if target_row >= len(self.album_model.albums): break
-            
+
             cid = album_data.get('cover_id') or album_data.get('coverArt') or album_data.get('id')
             if cid:
                 album_data['cover_id'] = cid
                 covers_to_queue.append(cid)
-                
+
+            if name_id_cache is not None:
+                aid = album_data.get('artistId') or album_data.get('albumArtistId')
+                aname = album_data.get('artist') or album_data.get('albumArtist') or album_data.get('name', '')
+                if aid and aname:
+                    name_id_cache[aname.lower().strip()] = aid
+
             self.album_model.albums[target_row] = album_data
             
         self.album_model.dataChanged.emit(
@@ -3117,8 +3139,9 @@ class LibraryGridBrowser(QWidget):
         self.all_albums_cache = albums
         self.all_albums_sort = cache_key
         self.status_label.setText(f"{len(albums):,} albums".replace(",", " "))
-        # Reset model to sorted placeholders then fill in chunks
-        placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(len(albums))]
+        # Reset model: seed each slot with real metadata so text shows immediately;
+        # type='placeholder' keeps IS_LOADING=True so QML still shows image skeleton.
+        placeholders = [dict(a, type='placeholder') for a in albums]
         self.album_model.clear()
         self.album_model.append_albums(placeholders)
         self._fill_song_count_chunks(albums)
@@ -3129,6 +3152,8 @@ class LibraryGridBrowser(QWidget):
         if start >= len(albums):
             return
         end = min(start + chunk_size, len(albums))
+        client = getattr(self, 'client', None)
+        name_id_cache = getattr(client, '_artist_name_id', None) if client else None
         covers_to_queue = []
         for i, album in enumerate(albums[start:end]):
             row = start + i
@@ -3138,6 +3163,11 @@ class LibraryGridBrowser(QWidget):
             if cid:
                 album['cover_id'] = cid
                 covers_to_queue.append(cid)
+            if name_id_cache is not None:
+                aid = album.get('artistId') or album.get('albumArtistId')
+                aname = album.get('artist') or album.get('albumArtist') or album.get('name', '')
+                if aid and aname:
+                    name_id_cache[aname.lower().strip()] = aid
             self.album_model.albums[row] = album
         self.album_model.dataChanged.emit(
             self.album_model.index(start, 0),

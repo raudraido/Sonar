@@ -187,12 +187,24 @@ Rectangle {
                 property bool isKeyboardFocused: grid.activeFocus && grid.currentIndex === index
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
+                // Full skeleton: only when slot has no data at all
                 SkeletonCard {
-                    visible: isLoading
+                    visible: albumTitle === ""
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
                     pillCount: 2
+                }
+
+                // Gray image placeholder: data known but cover not yet loaded
+                Rectangle {
+                    visible: isLoading && albumTitle !== ""
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: width
+                    radius: 8
+                    color: "#1a1a1a"
                 }
 
                 Item {
@@ -263,7 +275,7 @@ Rectangle {
                 }
 
                 Column {
-                    visible: !isLoading
+                    visible: albumTitle !== ""
                     z: 2
 
                     anchors.top: coverContainer.bottom
@@ -286,6 +298,12 @@ Rectangle {
                         width: parent.width
                         spacing: 0
                         property int albumIndex: index
+                        property string primaryArtistId: {
+                            var hasSep = albumArtist.indexOf(" /// ") >= 0
+                                      || albumArtist.indexOf(" • ") >= 0
+                                      || albumArtist.indexOf(" / ") >= 0
+                            return hasSep ? "" : albumArtistId
+                        }
 
                         Repeater {
                             model: albumArtist.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
@@ -309,9 +327,10 @@ Rectangle {
                                     onExited:  parent.hov = false
                                     onClicked: (mouse) => {
                                         var albumIdx = parent.parent.albumIndex
+                                        var aid = parent.parent.primaryArtistId
                                         grid.forceActiveFocus()
                                         grid.currentIndex = albumIdx
-                                        bridge.emitArtistNameClicked(parent.text)
+                                        bridge.emitArtistNameClicked(parent.text, aid)
                                         mouse.accepted = true
                                     }
                                 }
