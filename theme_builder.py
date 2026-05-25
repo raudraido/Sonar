@@ -198,6 +198,7 @@ class ThemeBuilderDialog(QDialog):
             ('header_panel_bg', 'Header Panel'),
         ]:
             self._add_color_row(label, key, getattr(t, key), is_rgb=True)
+        self._add_color_row('Now Playing Cards', 'now_playing_card_bg', t.now_playing_card_bg, is_rgb=False)
 
         self._add_section('Typography')
         self._add_color_row('Primary Text Color',   'font_color_primary',   t.font_color_primary,   is_rgb=False)

@@ -443,7 +443,8 @@ class VisualsMixin:
                 self.tab_bar.setIconSize(QSize(16, 16))
                 icon_map = {
                     'home_tab':           'img/home.png',
-                    '_now_playing_panel': 'img/now_playing.png',
+                    '_now_playing_panel': 'img/now_playing.png',  # NowPlayingInfoTab
+
                     'album_browser':      'img/albums.png',
                     'artist_browser':     'img/artists.png',
                     'tracks_browser':     'img/tracks.png',
@@ -463,6 +464,8 @@ class VisualsMixin:
             c = QColor(self.theme.manual_border_color)
             self.theme.border_color = f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
         bc = self.theme.border_color
+        if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'apply_theme'):
+            self._now_playing_panel.apply_theme(self.theme)
 
         self._footer_panel.setStyleSheet(
             f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border-top: {bw}px solid {bc}; }}"
@@ -490,8 +493,8 @@ class VisualsMixin:
             _w = self.tabs.widget(_i)
             if hasattr(_w, 'set_bg_color'):
                 _w.set_bg_color(bg)
-        if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'set_bg_color'):
-            self._now_playing_panel.set_bg_color(bg)
+        if hasattr(self, '_queue_tree_panel') and hasattr(self._queue_tree_panel, 'set_bg_color'):
+            self._queue_tree_panel.set_bg_color(bg)
         if hasattr(self, '_left_panel') and hasattr(self._left_panel, 'header'):
             self._left_panel.header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
@@ -525,8 +528,8 @@ class VisualsMixin:
         timer_style = f"color: {mc}; font-family: 'sans-serif', sans-serif; font-size: 14px; font-weight: bold; background: transparent;"
         self.current_time_label.setStyleSheet(timer_style); self.total_time_label.setStyleSheet(timer_style)
 
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.set_accent_color(mc)
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.set_accent_color(mc)
 
         if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
             self.swin.refresh_theme()
@@ -761,6 +764,10 @@ class VisualsMixin:
                 )
                 self.now_playing_widget.set_track(track)
             
+            # Update the rich Now Playing info tab
+            if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'load_track'):
+                self._now_playing_panel.load_track(track)
+
             # 4. BPM Cache Check & Worker Trigger
             # Get the unique ID (Navidrome ID for streams, or file path for local)
             track_id = str(track.get('id') or track.get('path', 'unknown'))

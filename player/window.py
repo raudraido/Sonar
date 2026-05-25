@@ -37,6 +37,7 @@ from subsonic_client import SubsonicClient
 from albums_browser import LibraryGridBrowser
 from artists_browser import ArtistGridBrowser
 from now_playing import PlaylistTree, NowPlayingPanel, COL_LENGTH, COL_TITLE, COL_ALBUM
+from now_playing_info import NowPlayingInfoTab
 from home import HomeView
 from tracks_browser import TracksBrowser
 from spotlight_search import SpotlightSearch
@@ -532,9 +533,9 @@ class SonarPlayer(
         self.tabs.addTab(self.home_tab, "Home")
         self.home_tab.artist_clicked.connect(self.navigate_to_artist)
 
-        # 2. Now Playing
-        self._now_playing_panel = NowPlayingPanel(self)
-        self.tree = self._now_playing_panel.tree  # all self.tree.* refs keep working
+        # 2. Now Playing queue tree — kept hidden; self.tree.* refs still work
+        self._queue_tree_panel = NowPlayingPanel(self)
+        self.tree = self._queue_tree_panel.tree
         self.tree.sig_drag_started.connect(self.show_ghost_drag)
         self.tree.sig_drag_moved.connect(self.move_ghost_drag)
         self.tree.sig_drag_ended.connect(self.ghost_label.hide)
@@ -543,8 +544,17 @@ class SonarPlayer(
         self.tree.header().sectionResized.connect(self.enforce_artist_min_width)
         self.tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.tree.itemClicked.connect(self.on_queue_item_clicked)
-        self._now_playing_panel.load_column_state()
+        self._queue_tree_panel.load_column_state()
+
+        # Rich info panel goes in the Now Playing tab
+        self._now_playing_panel = NowPlayingInfoTab(self)
+        self._now_playing_panel.set_client(self.navidrome_client)
+        self._now_playing_panel.artist_clicked.connect(self.navigate_to_artist)
+        self._now_playing_panel.album_clicked.connect(self.navigate_to_album)
+        self._now_playing_panel.play_requested.connect(self._play_track_from_info)
         self.tabs.addTab(self._now_playing_panel, "Now Playing")
+        if hasattr(self, 'theme'):
+            self._now_playing_panel.apply_theme(self.theme)
 
         # 3. Albums
         self.album_browser = LibraryGridBrowser(None)
@@ -650,8 +660,7 @@ class SonarPlayer(
         self.home_tab.album_clicked.connect(lambda data: self.navigate_to_album(data))
         self.album_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.artist_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
-        self._now_playing_panel.artist_clicked.connect(lambda name: self.navigate_to_artist(name))
-        self._now_playing_panel.album_clicked.connect(lambda data: self.navigate_to_album(data))
+        # artist_clicked / album_clicked already connected above during NowPlayingInfoTab init
         self.tabs.currentChanged.connect(self.on_tab_changed_global)
         
 
@@ -1158,8 +1167,12 @@ class SonarPlayer(
         self.tree.blockSignals(False)
         self.refresh_ui_styles()
         self.update_indicator()
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
+
+    def _play_track_from_info(self, track: dict):
+        """Play a single track clicked in the NowPlayingInfoTab."""
+        self.play_track_from_data(track)
 
     def _queue_toggle_favorite(self, idx: int):
         if not (0 <= idx < len(self.playlist_data)):
@@ -1200,7 +1213,7 @@ class SonarPlayer(
             self.tree.topLevelItem(i).setText(0, str(i + 1))
         self.refresh_ui_styles()
         self.update_indicator()
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
         self._refresh_queue_panel()
 

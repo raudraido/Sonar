@@ -21,6 +21,9 @@ class Theme:
     main_panel_bg:   str = "14,14,14"
     header_panel_bg: str = "14,14,14"
 
+    # ── Now Playing card background ──────────────────────────────────────────
+    now_playing_card_bg: str = "#1e1e1e"
+
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_primary:   int = 14
     font_size_secondary: int = 12

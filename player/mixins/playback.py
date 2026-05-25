@@ -87,8 +87,8 @@ class PlaybackMixin:
 
         idx = len(self.playlist_data) - 1
         self.play_song(idx)
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
 
         cid = track_data.get('cover_id') or track_data.get('coverArt') or track_data.get('albumId')
         if cid:
@@ -105,8 +105,8 @@ class PlaybackMixin:
         cid = track_data.get('cover_id') or track_data.get('coverArt') or track_data.get('albumId')
         if cid:
             self.playlist_cover_worker.queue_covers([cid])
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
         self._refresh_queue_panel()
 
     def play_track_next(self, track_data):
@@ -129,8 +129,8 @@ class PlaybackMixin:
         cid = track_data.get('cover_id') or track_data.get('coverArt') or track_data.get('albumId')
         if cid:
             self.playlist_cover_worker.queue_covers([cid])
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
         self._refresh_queue_panel()
 
     _BATCH_CHUNK = 100   # items inserted per frame
@@ -159,8 +159,8 @@ class PlaybackMixin:
         self.tree.setUpdatesEnabled(True)
         self.update_indicator(scroll_to_current=False)
         self.update_window_title()
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
 
         # 3. Drip-feed remaining chunks without blocking the event loop.
         remaining = all_items[self._BATCH_CHUNK:]
@@ -174,8 +174,8 @@ class PlaybackMixin:
         if not chunk:
             if hasattr(self, 'playlist_cover_worker'):
                 self.playlist_cover_worker.queue_covers(cover_ids)
-            if hasattr(self, '_now_playing_panel'):
-                self._now_playing_panel.update_status()
+            if hasattr(self, '_queue_tree_panel'):
+                self._queue_tree_panel.update_status()
             return
         self.tree.setUpdatesEnabled(False)
         self.tree.addTopLevelItems(chunk)
@@ -187,7 +187,7 @@ class PlaybackMixin:
             self.playlist_data.clear()
             self.tree.clear()
             self.current_index = -1
-            if hasattr(self, '_now_playing_panel'): self._now_playing_panel.clear_filter()
+            if hasattr(self, '_queue_tree_panel'): self._queue_tree_panel.clear_filter()
             self.add_batch_to_ui(data)
             if self.playlist_data: self.play_song(0)
             return
@@ -201,7 +201,7 @@ class PlaybackMixin:
                 self.playlist_data.clear()
                 self.tree.clear()
                 self.current_index = -1
-                if hasattr(self, '_now_playing_panel'): self._now_playing_panel.clear_filter()
+                if hasattr(self, '_queue_tree_panel'): self._queue_tree_panel.clear_filter()
                 self.add_batch_to_ui(tracks)
                 self.play_song(0)
       
@@ -249,8 +249,8 @@ class PlaybackMixin:
         self.playlist_data.clear()
         self.tree.clear()
         self.current_index = -1
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.clear_filter()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.clear_filter()
         
         # 3. Use your existing native method to add and play the track!
         self.add_and_play_from_browser(track_data)
@@ -770,8 +770,8 @@ class PlaybackMixin:
             self.playlist_data = []
             self.tree.clear()
             self.current_index = -1
-            if hasattr(self, '_now_playing_panel'):
-                self._now_playing_panel.clear_filter()
+            if hasattr(self, '_queue_tree_panel'):
+                self._queue_tree_panel.clear_filter()
             self.loading_thread = MetadataWorker(files)
             self.loading_thread.progress.connect(self.add_batch_to_ui)
             self.loading_thread.progress.connect(self._play_first_batch_auto)
@@ -807,8 +807,8 @@ class PlaybackMixin:
         for i in range(self.tree.topLevelItemCount()): self.tree.topLevelItem(i).setText(0, str(i + 1))
         self.refresh_ui_styles()
         self.update_indicator()
-        if hasattr(self, '_now_playing_panel'):
-            self._now_playing_panel.update_status()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
         self._refresh_queue_panel()
 
     def sync_data_after_drag(self):
