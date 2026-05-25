@@ -84,6 +84,8 @@ if __name__ == '__main__':
     QFontDatabase.addApplicationFont(os.path.join(_base, "fonts", "InterVariable-Italic.ttf"))
     _font = QFont("Segoe UI")
     _font.setPointSize(10)
+    _font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    _font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     app.setFont(_font)
 
     # REQUIRED: Tells QSettings exactly where to save your data in the OS

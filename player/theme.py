@@ -24,11 +24,17 @@ class Theme:
     # ── Now Playing card background ──────────────────────────────────────────
     now_playing_card_bg: str = "#1e1e1e"
 
+    # ── Font family ──────────────────────────────────────────────────────────
+    app_font: str = ""              # empty = system default (Segoe UI)
+
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_primary:   int = 14
     font_size_secondary: int = 12
     font_color_primary:   str = "#dddddd"
     font_color_secondary: str = "#999999"
+
+    # ── Queue panel font size offset (-5 … +5 relative to global sizes) ──────
+    queue_font_size_offset: int = 0
 
     # ── Menu hover ───────────────────────────────────────────────────────────
     auto_menu_hover:  bool = True

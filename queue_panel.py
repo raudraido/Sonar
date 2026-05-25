@@ -656,9 +656,10 @@ class QueuePanel(QWidget):
         )
 
     def apply_theme(self, theme):
-        self._primary_px      = getattr(theme, 'font_size_primary',    14)
+        _offset               = getattr(theme, 'queue_font_size_offset', 0)
+        self._primary_px      = getattr(theme, 'font_size_primary',    14) + _offset
         self._primary_color   = getattr(theme, 'font_color_primary',   '#dddddd')
-        self._secondary_px    = getattr(theme, 'font_size_secondary',  12)
+        self._secondary_px    = getattr(theme, 'font_size_secondary',  12) + _offset
         self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
         self._queue_lbl.setStyleSheet(
             f'color: {self._primary_color}; font-weight: bold; font-size: 16px; background: transparent; border: none;'

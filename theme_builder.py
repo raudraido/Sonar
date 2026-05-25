@@ -1,13 +1,13 @@
 """theme_builder.py — Live theme editor dialog."""
 from __future__ import annotations
-import os, json, dataclasses
+import os, sys, json, dataclasses
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QCheckBox, QSpinBox, QScrollArea, QWidget, QFrame, QSizePolicy,
+    QCheckBox, QSpinBox, QComboBox, QScrollArea, QWidget, QFrame, QSizePolicy,
     QColorDialog, QApplication, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPainterPath
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QFontDatabase
 
 from player.theme import Theme
 from player.mixins.visuals import resolve_menu_hover
@@ -201,10 +201,12 @@ class ThemeBuilderDialog(QDialog):
         self._add_color_row('Now Playing Cards', 'now_playing_card_bg', t.now_playing_card_bg, is_rgb=False)
 
         self._add_section('Typography')
+        self._add_font_row('Font Family', 'app_font', t.app_font)
         self._add_color_row('Primary Text Color',   'font_color_primary',   t.font_color_primary,   is_rgb=False)
         self._add_color_row('Secondary Text Color', 'font_color_secondary', t.font_color_secondary, is_rgb=False)
         self._add_spin_row('Primary Font Size',   'font_size_primary',   t.font_size_primary,   8, 24)
         self._add_spin_row('Secondary Font Size', 'font_size_secondary', t.font_size_secondary, 8, 20)
+        self._add_spin_row('Queue Font Size Offset', 'queue_font_size_offset', t.queue_font_size_offset, -5, 5)
 
         self._add_section('Border')
         self._add_toggle_row('Auto border from accent', 'auto_border_from_accent', t.auto_border_from_accent)
@@ -306,6 +308,41 @@ class ThemeBuilderDialog(QDialog):
 
         spin.valueChanged.connect(on_change)
         self._row_wrap(label, spin)
+
+    def _add_font_row(self, label: str, key: str, current: str):
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        fonts_dir = os.path.join(base, 'fonts')
+        families: list[str] = []
+        if os.path.isdir(fonts_dir):
+            for fname in sorted(os.listdir(fonts_dir)):
+                if fname.lower().endswith(('.ttf', '.otf')):
+                    fid = QFontDatabase.addApplicationFont(os.path.join(fonts_dir, fname))
+                    if fid >= 0:
+                        for fam in QFontDatabase.applicationFontFamilies(fid):
+                            if fam not in families:
+                                families.append(fam)
+
+        combo = QComboBox()
+        combo.addItem('System Default', '')
+        for fam in families:
+            combo.addItem(fam, fam)
+        idx = combo.findData(current)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setFixedWidth(160)
+        combo.setStyleSheet(
+            f'QComboBox {{ background: transparent; color: {self._fc1};'
+            f' border: 1px solid {self._bc}; border-radius: 4px; padding: 4px 8px; font-size: 13px; }}'
+            f'QComboBox::drop-down {{ border: none; }}'
+            f'QComboBox QAbstractItemView {{ background: #1e1e1e; color: {self._fc1}; selection-background-color: {self._bc}; }}'
+        )
+
+        def on_change(_):
+            self._pending[key] = combo.currentData()
+            self._live_timer.start()
+
+        combo.currentIndexChanged.connect(on_change)
+        self._row_wrap(label, combo)
 
     # ── Live apply ─────────────────────────────────────────────────────────────
 

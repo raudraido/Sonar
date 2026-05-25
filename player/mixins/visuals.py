@@ -7,7 +7,7 @@ import sys
 import time
 from version import __version__
 
-from PyQt6.QtWidgets import QAbstractItemView, QLabel, QListWidget
+from PyQt6.QtWidgets import QAbstractItemView, QApplication, QLabel, QListWidget
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette
 
@@ -204,8 +204,20 @@ class VisualsMixin:
     def _perform_heavy_visual_update(self):
         """Called by timer when user has stopped skipping tracks."""
         if not (0 <= self.current_index < len(self.playlist_data)): return
-        
-        track = self.playlist_data[self.current_index]
+
+        track    = self.playlist_data[self.current_index]
+        track_id = str(track.get('id') or track.get('path', 'unknown'))
+
+        # BPM analysis — runs here so rapid skipping never piles up workers.
+        if not (hasattr(self, 'bpm_cache') and track_id in self.bpm_cache):
+            if hasattr(self, 'bpm_worker') and self.bpm_worker.isRunning():
+                try: self.bpm_worker.bpm_ready.disconnect()
+                except Exception: pass
+                self._safe_discard_worker(self.bpm_worker)
+            self.bpm_worker = BPMWorker(self.audio_engine, track)
+            self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
+            self.bpm_worker.start()
+
         cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
 
         # Skip if this exact cover was just rendered
@@ -239,6 +251,15 @@ class VisualsMixin:
         import gc; gc.collect()
 
     def refresh_ui_styles(self, scroll_to_current=True):
+        _font_name = getattr(self.theme, 'app_font', '')
+        _app = QApplication.instance()
+        if _app:
+            _f = QFont(_font_name if _font_name else 'Segoe UI')
+            _f.setPointSize(10)
+            _f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+            _f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+            _app.setFont(_f)
+
         mc = self.theme.accent
         if mc.startswith('#') and len(mc) > 7:
             mc = mc[:7]
@@ -768,28 +789,15 @@ class VisualsMixin:
             if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'load_track'):
                 self._now_playing_panel.load_track(track)
 
-            # 4. BPM Cache Check & Worker Trigger
-            # Get the unique ID (Navidrome ID for streams, or file path for local)
+            # 4. BPM Cache Check — worker is started in _perform_heavy_visual_update
             track_id = str(track.get('id') or track.get('path', 'unknown'))
-            
             if hasattr(self, 'bpm_cache') and track_id in self.bpm_cache:
-                # INSTANT LOAD FROM CACHE!
                 bpm = self.bpm_cache[track_id]
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
                 self.now_playing_widget.set_bpm(bpm)
             else:
-                # Not cached. Show loading text and start the worker
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
                 self.now_playing_widget.set_bpm(None)
-                
-                # Safely kill the old worker if the user skips tracks quickly
-                if hasattr(self, 'bpm_worker') and self.bpm_worker.isRunning():
-                    self._safe_discard_worker(self.bpm_worker)
-                    
-                # Launch the background C++ analyzer
-                self.bpm_worker = BPMWorker(self.audio_engine, track)
-                self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
-                self.bpm_worker.start()
 
             # Lyrics — load for the new track
             if hasattr(self, '_queue_panel'):
