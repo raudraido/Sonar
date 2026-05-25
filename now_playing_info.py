@@ -11,6 +11,8 @@ Card-based layout:
 
 import re
 
+_ARTIST_SEP = re.compile(r'\s*(?:///|•|feat\.|Feat\.|vs\.)\s*')
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QPushButton, QSizePolicy, QFrame,
@@ -100,6 +102,27 @@ class _AlbumTracksWorker(QThread):
         except Exception:
             tracks = []
         _album_tracks_cache[self._album_id] = tracks
+        self.done.emit(tracks)
+
+
+class _TopSongsWorker(QThread):
+    done = pyqtSignal(list)
+
+    def __init__(self, client, artist_name: str):
+        super().__init__()
+        self._client = client
+        self._name   = artist_name
+
+    def run(self):
+        key = self._name.strip().lower()
+        if key in _top_songs_cache:
+            self.done.emit(_top_songs_cache[key])
+            return
+        try:
+            tracks = self._client.get_top_songs(self._name, count=5) or []
+        except Exception:
+            tracks = []
+        _top_songs_cache[key] = tracks
         self.done.emit(tracks)
 
 
@@ -328,6 +351,94 @@ class _TrackRow(QWidget):
         super().paintEvent(event)
 
 
+# ── Top-song row (title + album subtitle) ─────────────────────────────────────
+
+class _TopSongRow(QWidget):
+    play_requested = pyqtSignal(dict)
+
+    def __init__(self, track: dict, index: int, accent: str,
+                 fg: str, fg2: str, is_current: bool = False,
+                 hover_color: QColor = None, parent=None):
+        super().__init__(parent)
+        self._track       = track
+        self._hovered     = False
+        self._hover_color = hover_color or QColor(255, 255, 255, 25)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setFixedHeight(46)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        lo = QHBoxLayout(self)
+        lo.setContentsMargins(6, 0, 8, 0)
+        lo.setSpacing(6)
+
+        num_lbl = QLabel(str(index))
+        num_lbl.setFixedWidth(22)
+        num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        num_lbl.setStyleSheet(
+            f"color: {accent if is_current else fg2};"
+            f" font-size: 11px; font-weight: {'bold' if is_current else 'normal'};"
+            " background: transparent;"
+        )
+        lo.addWidget(num_lbl)
+
+        text_w = QWidget()
+        text_w.setStyleSheet('background: transparent;')
+        text_lo = QVBoxLayout(text_w)
+        text_lo.setContentsMargins(0, 0, 0, 0)
+        text_lo.setSpacing(1)
+
+        title_lbl = QLabel(track.get('title', 'Unknown'))
+        title_lbl.setStyleSheet(
+            f"color: {accent if is_current else fg};"
+            f" font-size: 12px; font-weight: {'bold' if is_current else 'normal'};"
+            " background: transparent;"
+        )
+        text_lo.addWidget(title_lbl)
+
+        album = track.get('album', '')
+        if album:
+            album_lbl = QLabel(album)
+            album_lbl.setStyleSheet(
+                f"color: {fg2}; font-size: 10px; background: transparent;"
+            )
+            text_lo.addWidget(album_lbl)
+
+        lo.addWidget(text_w, 1)
+
+        dur = _fmt_dur(track.get('duration', ''))
+        if dur:
+            dur_lbl = QLabel(dur)
+            dur_lbl.setFixedWidth(38)
+            dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            dur_lbl.setStyleSheet(f"color: {fg2}; font-size: 11px; background: transparent;")
+            lo.addWidget(dur_lbl)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.play_requested.emit(self._track)
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if self._hovered:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(QBrush(self._hover_color))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(self.rect(), 4, 4)
+            p.end()
+        super().paintEvent(event)
+
+
 # ── Tour date row ─────────────────────────────────────────────────────────────
 
 class _TourRow(QWidget):
@@ -461,12 +572,16 @@ class NowPlayingInfoTab(QWidget):
         self._card_bg       = '#1e1e1e'
         self._hover_color   = QColor(255, 255, 255, 25)
         self._settings      = QSettings('Icosahedron', 'Icosahedron')
+        self._top_artists: list[str] = []
+        self._top_page_idx: int      = 0
+        self._pending_track: dict | None = None
 
         self._w_info:  _ArtistInfoWorker  | None = None
         self._w_img:   _ImageWorker       | None = None
         self._w_cover: _ImageWorker       | None = None
         self._w_album: _AlbumTracksWorker | None = None
         self._w_bit:   _BandsintownWorker | None = None
+        self._w_top:   _TopSongsWorker    | None = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName('NowPlayingInfoTab')
@@ -499,42 +614,47 @@ class NowPlayingInfoTab(QWidget):
         self._track_card_lo.setSpacing(14)
         root.addWidget(self._track_card)
 
-        # ── Bottom row ────────────────────────────────────────────────
+        # ── Middle row: top songs (left) + artist (right) ────────────
+        self._top_card    = _Card()
+        self._top_card_lo = QVBoxLayout(self._top_card)
+        self._top_card_lo.setContentsMargins(14, 14, 14, 14)
+        self._top_card_lo.setSpacing(4)
+
+        self._artist_card    = _Card()
+        self._artist_card_lo = QVBoxLayout(self._artist_card)
+        self._artist_card_lo.setContentsMargins(14, 14, 14, 14)
+        self._artist_card_lo.setSpacing(6)
+
+        mid_w  = QWidget()
+        mid_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        mid_w.setStyleSheet('background: transparent;')
+        mid_lo = QHBoxLayout(mid_w)
+        mid_lo.setContentsMargins(0, 0, 0, 0)
+        mid_lo.setSpacing(10)
+        mid_lo.addWidget(self._top_card, 1, Qt.AlignmentFlag.AlignTop)
+        mid_lo.addWidget(self._artist_card, 1, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(mid_w)
+
+        # ── Bottom row: album (left) + tour (right) ───────────────────
+        self._album_card    = _Card()
+        self._album_card_lo = QVBoxLayout(self._album_card)
+        self._album_card_lo.setContentsMargins(14, 14, 14, 14)
+        self._album_card_lo.setSpacing(4)
+
+        self._tour_card    = _Card()
+        self._tour_card_lo = QVBoxLayout(self._tour_card)
+        self._tour_card_lo.setContentsMargins(14, 14, 14, 14)
+        self._tour_card_lo.setSpacing(4)
+
         bottom_w  = QWidget()
         bottom_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         bottom_w.setStyleSheet('background: transparent;')
         bottom_lo = QHBoxLayout(bottom_w)
         bottom_lo.setContentsMargins(0, 0, 0, 0)
         bottom_lo.setSpacing(10)
-        root.addWidget(bottom_w)
-
-        # Left: album card
-        self._album_card    = _Card()
-        self._album_card_lo = QVBoxLayout(self._album_card)
-        self._album_card_lo.setContentsMargins(14, 14, 14, 14)
-        self._album_card_lo.setSpacing(4)
         bottom_lo.addWidget(self._album_card, 1, Qt.AlignmentFlag.AlignTop)
-
-        # Right column: artist card + tour card
-        right_w  = QWidget()
-        right_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        right_w.setStyleSheet('background: transparent;')
-        right_lo = QVBoxLayout(right_w)
-        right_lo.setContentsMargins(0, 0, 0, 0)
-        right_lo.setSpacing(10)
-        bottom_lo.addWidget(right_w, 1, Qt.AlignmentFlag.AlignTop)
-
-        self._artist_card    = _Card()
-        self._artist_card_lo = QVBoxLayout(self._artist_card)
-        self._artist_card_lo.setContentsMargins(14, 14, 14, 14)
-        self._artist_card_lo.setSpacing(6)
-        right_lo.addWidget(self._artist_card)
-
-        self._tour_card    = _Card()
-        self._tour_card_lo = QVBoxLayout(self._tour_card)
-        self._tour_card_lo.setContentsMargins(14, 14, 14, 14)
-        self._tour_card_lo.setSpacing(4)
-        right_lo.addWidget(self._tour_card)
+        bottom_lo.addWidget(self._tour_card,  1, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(bottom_w)
 
         root.addStretch(1)
 
@@ -548,7 +668,17 @@ class NowPlayingInfoTab(QWidget):
     def set_client(self, client):
         self._client = client
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._pending_track is not None:
+            track, self._pending_track = self._pending_track, None
+            self.load_track(track)
+
     def load_track(self, track: dict):
+        if not self.isVisible():
+            self._pending_track = track
+            return
+        self._pending_track = None
         tid = track.get('id')
         if tid and tid == self._current_track.get('id'):
             return
@@ -560,13 +690,18 @@ class NowPlayingInfoTab(QWidget):
         self._build_artist_card({})
         self._build_tour_card([])
 
+        artist_name = track.get('artist', '')
+        parts = [p.strip() for p in _ARTIST_SEP.split(artist_name) if p.strip()]
+        self._top_artists   = parts if parts else ([artist_name] if artist_name else [])
+        self._top_page_idx  = 0
+        self._build_top_card([])
+
         if not self._client:
             return
 
-        artist_id   = track.get('artist_id') or track.get('artistId')
-        album_id    = track.get('albumId')    or track.get('album_id')
-        cover_id    = track.get('cover_id')   or track.get('coverArt')
-        artist_name = track.get('artist', '')
+        artist_id = track.get('artist_id') or track.get('artistId')
+        album_id  = track.get('albumId')    or track.get('album_id')
+        cover_id  = track.get('cover_id')   or track.get('coverArt')
 
         if artist_id:
             self._w_info = _ArtistInfoWorker(self._client, artist_id)
@@ -596,6 +731,16 @@ class NowPlayingInfoTab(QWidget):
             self._w_bit.done.connect(self._on_tour_events)
             self._w_bit.start()
 
+        if self._top_artists:
+            first = self._top_artists[0]
+            key   = first.strip().lower()
+            if key in _top_songs_cache:
+                self._build_top_card(_top_songs_cache[key])
+            else:
+                self._w_top = _TopSongsWorker(self._client, first)
+                self._w_top.done.connect(self._on_top_songs)
+                self._w_top.start()
+
     def set_accent_color(self, color: str):
         self._accent = color
         self._scroll.verticalScrollBar().setStyleSheet(
@@ -615,8 +760,8 @@ class NowPlayingInfoTab(QWidget):
         raw_bg = getattr(theme, 'main_panel_bg', self._bg)
         self._bg = str(raw_bg)
         self.setStyleSheet(f'#NowPlayingInfoTab {{ background: rgb({self._bg}); }}')
-        for card in (self._track_card, self._album_card,
-                     self._artist_card, self._tour_card):
+        for card in (self._track_card, self._top_card,
+                     self._album_card, self._artist_card, self._tour_card):
             card.set_border(self._border_color)
             card.set_bg(self._card_bg)
         hover_str = resolve_menu_hover(theme)
@@ -662,6 +807,9 @@ class NowPlayingInfoTab(QWidget):
 
     def _on_tour_events(self, events: list):
         self._build_tour_card(events)
+
+    def _on_top_songs(self, tracks: list):
+        self._build_top_card(tracks)
 
     # ── Card builders ──────────────────────────────────────────────────
 
@@ -837,6 +985,128 @@ class NowPlayingInfoTab(QWidget):
 
             more_btn.clicked.connect(_toggle_album)
             self._album_card_lo.addWidget(more_btn)
+
+    def _build_top_card(self, tracks: list):
+        self._clear_layout(self._top_card_lo)
+
+        n   = len(self._top_artists)
+        idx = self._top_page_idx
+        name = self._top_artists[idx] if self._top_artists else ''
+
+        # Header row
+        hrow = QWidget()
+        hrow.setStyleSheet('background: transparent;')
+        hrow_lo = QHBoxLayout(hrow)
+        hrow_lo.setContentsMargins(0, 0, 0, 0)
+        hrow_lo.setSpacing(4)
+
+        hdr = QLabel('MOST PLAYED BY THIS ARTIST')
+        hdr.setStyleSheet(
+            f'color: {self._accent}; font-size: 10px; font-weight: bold;'
+            ' letter-spacing: 1.5px; background: transparent;'
+        )
+        hrow_lo.addWidget(hdr)
+        hrow_lo.addStretch(1)
+
+        if n > 1:
+            btn_style = (
+                f'QPushButton {{ color: {self._accent}; background: transparent; border: none;'
+                f' font-size: 16px; padding: 0 2px; }}'
+                f'QPushButton:hover {{ color: white; }}'
+                f'QPushButton:disabled {{ color: #444; }}'
+            )
+            btn_prev = QPushButton('‹')
+            btn_prev.setFixedSize(22, 18)
+            btn_prev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_prev.setStyleSheet(btn_style)
+            btn_prev.setEnabled(idx > 0)
+            btn_prev.clicked.connect(lambda: self._nav_top_page(self._top_page_idx - 1))
+
+            page_lbl = QLabel(f'{idx + 1}/{n}')
+            page_lbl.setStyleSheet(
+                f'color: {self._fg2}; font-size: 11px; font-weight: bold; background: transparent;'
+            )
+
+            btn_next = QPushButton('›')
+            btn_next.setFixedSize(22, 18)
+            btn_next.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_next.setStyleSheet(btn_style)
+            btn_next.setEnabled(idx < n - 1)
+            btn_next.clicked.connect(lambda: self._nav_top_page(self._top_page_idx + 1))
+
+            hrow_lo.addWidget(btn_prev)
+            hrow_lo.addWidget(page_lbl)
+            hrow_lo.addWidget(btn_next)
+
+        if name:
+            go_btn = QPushButton('Go to Artist ↗')
+            go_btn.setFlat(True)
+            go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            go_btn.setStyleSheet(
+                f'QPushButton {{ color: {self._fg2}; font-size: 11px; background: transparent;'
+                f' border: none; padding: 0 0 0 6px; }}'
+                f'QPushButton:hover {{ color: {self._accent}; }}'
+            )
+            go_btn.clicked.connect(lambda: self.artist_clicked.emit(name))
+            hrow_lo.addWidget(go_btn)
+
+        self._top_card_lo.addWidget(hrow)
+
+        if not tracks:
+            ph = QLabel('Loading…')
+            ph.setStyleSheet(
+                f'color: {self._fg2}; font-size: 11px; background: transparent; padding: 6px 0;'
+            )
+            self._top_card_lo.addWidget(ph)
+            return
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(
+            'border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 2px 0;'
+        )
+        sep.setFixedHeight(1)
+        self._top_card_lo.addWidget(sep)
+
+        current_id = self._current_track.get('id')
+        for i, tr in enumerate(tracks[:5]):
+            row = _TopSongRow(
+                tr, i + 1,
+                accent=self._accent, fg=self._fg, fg2=self._fg2,
+                is_current=(tr.get('id') == current_id),
+                hover_color=self._hover_color,
+            )
+            row.play_requested.connect(self.play_requested)
+            self._top_card_lo.addWidget(row)
+
+        if name:
+            credit = QLabel(f'Top tracks from {name}')
+            credit.setStyleSheet(
+                f'color: {self._fg2}; font-size: 10px; background: transparent; padding-top: 4px;'
+            )
+            self._top_card_lo.addWidget(credit)
+
+    def _nav_top_page(self, idx: int):
+        if not (0 <= idx < len(self._top_artists)):
+            return
+        self._top_page_idx = idx
+        artist_name = self._top_artists[idx]
+        key = artist_name.strip().lower()
+        if key in _top_songs_cache:
+            self._build_top_card(_top_songs_cache[key])
+            return
+        self._build_top_card([])
+        if self._w_top and self._w_top.isRunning():
+            try:
+                self._w_top.done.disconnect()
+            except Exception:
+                pass
+            self._w_top.quit()
+        self._w_top = _TopSongsWorker(self._client, artist_name)
+        self._w_top.done.connect(self._on_top_songs)
+        self._w_top.start()
 
     def _build_artist_card(self, info: dict, bio: str = '', similar: list = None):
         self._clear_layout(self._artist_card_lo)
@@ -1049,8 +1319,8 @@ class NowPlayingInfoTab(QWidget):
                 w.deleteLater()
 
     def _show_empty(self, msg: str):
-        for lo in (self._track_card_lo, self._album_card_lo,
-                   self._artist_card_lo, self._tour_card_lo):
+        for lo in (self._track_card_lo, self._top_card_lo,
+                   self._album_card_lo, self._artist_card_lo, self._tour_card_lo):
             self._clear_layout(lo)
         lbl = QLabel(msg)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1071,7 +1341,7 @@ class NowPlayingInfoTab(QWidget):
             self._w_bit.start()
 
     def _cancel_workers(self):
-        for attr in ('_w_info', '_w_img', '_w_cover', '_w_album', '_w_bit'):
+        for attr in ('_w_info', '_w_img', '_w_cover', '_w_album', '_w_bit', '_w_top'):
             w = getattr(self, attr, None)
             if w and w.isRunning():
                 try:
