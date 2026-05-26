@@ -283,14 +283,18 @@ class SonarPlayer(
         if _saved_theme:
             self.theme = Theme.from_json(_saved_theme)
         else:
-            # Migrate from legacy separate keys
+            # Try to migrate from legacy separate keys; fall back to Cream preset
             try:
                 _vis = json.loads(self.settings.value('visual_settings') or '{}')
             except Exception:
                 _vis = {}
-            _color   = self.settings.value('last_master_color') or "#fafafa"
+            _color   = self.settings.value('last_master_color')
             _dynamic = bool(int(self.settings.value('dynamic_color', 1) or 1))
-            self.theme = Theme.from_legacy(_vis, _color, _dynamic)
+            if _color:
+                self.theme = Theme.from_legacy(_vis, _color, _dynamic)
+            else:
+                from player.theme import load_presets as _lp
+                self.theme = _lp().get('Cream', Theme())
         
         self.is_shuffle = False
         self.is_repeat = False
