@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QPushButton, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer
-from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize
+from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics, QIcon
 
 from player.mixins.visuals import resolve_menu_hover
 
@@ -39,20 +39,41 @@ BIO_LINES    = 4
 class _ArtistInfoWorker(QThread):
     done = pyqtSignal(dict)
 
-    def __init__(self, client, artist_id):
+    def __init__(self, client, artist_id=None, artist_name=None):
         super().__init__()
-        self._client    = client
-        self._artist_id = artist_id
+        self._client      = client
+        self._artist_id   = artist_id
+        self._artist_name = artist_name
 
     def run(self):
-        if self._artist_id in _artist_info_cache:
-            self.done.emit(_artist_info_cache[self._artist_id])
+        aid = self._artist_id
+        if not aid and self._artist_name:
+            cache_key = f'name:{self._artist_name.strip().lower()}'
+            if cache_key in _artist_info_cache:
+                self.done.emit(_artist_info_cache[cache_key])
+                return
+            try:
+                result = self._client.search3(self._artist_name, artist_count=1, album_count=0, size=0) or {}
+                artists = result.get('artist', [])
+                if artists:
+                    aid = artists[0].get('id')
+            except Exception:
+                pass
+            if not aid:
+                _artist_info_cache[cache_key] = {}
+                self.done.emit({})
+                return
+
+        if aid in _artist_info_cache:
+            self.done.emit(_artist_info_cache[aid])
             return
         try:
-            info = self._client.get_artist_info2(self._artist_id) or {}
+            info = self._client.get_artist_info2(aid) or {}
         except Exception:
             info = {}
-        _artist_info_cache[self._artist_id] = info
+        _artist_info_cache[aid] = info
+        if self._artist_name:
+            _artist_info_cache[f'name:{self._artist_name.strip().lower()}'] = info
         self.done.emit(info)
 
 
@@ -124,6 +145,22 @@ class _TopSongsWorker(QThread):
             tracks = []
         _top_songs_cache[key] = tracks
         self.done.emit(tracks)
+
+
+class _SongDetailWorker(QThread):
+    done = pyqtSignal(dict)
+
+    def __init__(self, client, song_id):
+        super().__init__()
+        self._client  = client
+        self._song_id = song_id
+
+    def run(self):
+        try:
+            raw = self._client.get_song(self._song_id) or {}
+        except Exception:
+            raw = {}
+        self.done.emit(raw)
 
 
 class _BandsintownWorker(QThread):
@@ -622,8 +659,10 @@ class NowPlayingInfoTab(QWidget):
     set_bg_color(color: str)
     """
 
-    artist_clicked = pyqtSignal(str)
-    album_clicked  = pyqtSignal(dict)
+    artist_clicked    = pyqtSignal(str)
+    album_clicked     = pyqtSignal(dict)
+    favorite_toggled  = pyqtSignal(str, bool)   # (track_id, new_starred_state)
+    lyrics_requested  = pyqtSignal()
     play_requested = pyqtSignal(dict)
 
     def __init__(self, parent=None):
@@ -637,10 +676,12 @@ class NowPlayingInfoTab(QWidget):
         self._border_color  = '#2a2a2a'
         self._card_bg       = '#1e1e1e'
         self._hover_color         = QColor(255, 255, 255, 25)
+        self._font_size_primary   = 17
         self._font_size_secondary = 12
         self._settings            = QSettings('Icosahedron', 'Icosahedron')
         self._top_artists: list[str] = []
         self._top_page_idx: int      = 0
+        self._artist_page_idx: int   = 0
         self._pending_track: dict | None = None
 
         self._w_info:  _ArtistInfoWorker  | None = None
@@ -649,6 +690,7 @@ class NowPlayingInfoTab(QWidget):
         self._w_album: _AlbumTracksWorker | None = None
         self._w_bit:   _BandsintownWorker | None = None
         self._w_top:   _TopSongsWorker    | None = None
+        self._w_song:  _SongDetailWorker  | None = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName('NowPlayingInfoTab')
@@ -770,8 +812,9 @@ class NowPlayingInfoTab(QWidget):
 
         artist_name = track.get('artist', '')
         parts = [p.strip() for p in _ARTIST_SEP.split(artist_name) if p.strip()]
-        self._top_artists   = parts if parts else ([artist_name] if artist_name else [])
-        self._top_page_idx  = 0
+        self._top_artists     = parts if parts else ([artist_name] if artist_name else [])
+        self._top_page_idx    = 0
+        self._artist_page_idx = 0
         self._build_top_card([])
 
         if not self._client:
@@ -781,8 +824,12 @@ class NowPlayingInfoTab(QWidget):
         album_id  = track.get('albumId')    or track.get('album_id')
         cover_id  = track.get('cover_id')   or track.get('coverArt')
 
+        first_artist = self._top_artists[0] if self._top_artists else ''
         if artist_id:
-            self._w_info = _ArtistInfoWorker(self._client, artist_id)
+            self._w_info = _ArtistInfoWorker(self._client, artist_id=artist_id, artist_name=first_artist)
+        elif first_artist:
+            self._w_info = _ArtistInfoWorker(self._client, artist_name=first_artist)
+        if self._w_info:
             self._w_info.done.connect(self._on_artist_info)
             self._w_info.start()
 
@@ -804,8 +851,15 @@ class NowPlayingInfoTab(QWidget):
             except Exception:
                 pass
 
-        if artist_name and self._bit_enabled():
-            self._w_bit = _BandsintownWorker(artist_name)
+        song_id = track.get('id')
+        if song_id and (track.get('samplingRate') is None or track.get('bitDepth') is None):
+            self._w_song = _SongDetailWorker(self._client, song_id)
+            self._w_song.done.connect(self._on_song_detail)
+            self._w_song.start()
+
+        first_for_tour = self._top_artists[0] if self._top_artists else artist_name
+        if first_for_tour and self._bit_enabled():
+            self._w_bit = _BandsintownWorker(first_for_tour)
             self._w_bit.done.connect(self._on_tour_events)
             self._w_bit.start()
 
@@ -833,6 +887,7 @@ class NowPlayingInfoTab(QWidget):
         self._accent              = getattr(theme, 'accent', self._accent)
         self._fg                  = getattr(theme, 'font_color_primary', self._fg)
         self._fg2                 = getattr(theme, 'font_color_secondary', self._fg2)
+        self._font_size_primary   = getattr(theme, 'font_size_primary', self._font_size_primary)
         self._font_size_secondary = getattr(theme, 'font_size_secondary', self._font_size_secondary)
         self._border_color        = getattr(theme, 'border_color', self._border_color)
         self._card_bg      = getattr(theme, 'now_playing_card_bg', self._card_bg)
@@ -889,6 +944,56 @@ class NowPlayingInfoTab(QWidget):
     def _on_top_songs(self, tracks: list):
         self._build_top_card(tracks)
 
+    def _on_song_detail(self, raw: dict):
+        if not raw:
+            return
+        changed = False
+        for field in ('samplingRate', 'bitDepth'):
+            if raw.get(field) is not None and self._current_track.get(field) is None:
+                self._current_track[field] = raw[field]
+                changed = True
+        if changed:
+            self._build_track_card(self._current_track)
+
+    def _nav_artist_page(self, idx: int):
+        if not (0 <= idx < len(self._top_artists)):
+            return
+        self._artist_page_idx = idx
+        self._build_artist_card({})
+        name = self._top_artists[idx]
+
+        # Artist bio
+        cache_key = f'name:{name.strip().lower()}'
+        if cache_key in _artist_info_cache:
+            self._on_artist_info(_artist_info_cache[cache_key])
+        else:
+            if self._w_info and self._w_info.isRunning():
+                try:
+                    self._w_info.done.disconnect()
+                except Exception:
+                    pass
+                self._w_info.quit()
+            self._w_info = _ArtistInfoWorker(self._client, artist_name=name)
+            self._w_info.done.connect(self._on_artist_info)
+            self._w_info.start()
+
+        # Tour dates
+        if self._bit_enabled():
+            self._build_tour_card([])
+            bit_key = name.strip().lower()
+            if bit_key in _bit_cache:
+                self._build_tour_card(_bit_cache[bit_key])
+            else:
+                if self._w_bit and self._w_bit.isRunning():
+                    try:
+                        self._w_bit.done.disconnect()
+                    except Exception:
+                        pass
+                    self._w_bit.quit()
+                self._w_bit = _BandsintownWorker(name)
+                self._w_bit.done.connect(self._on_tour_events)
+                self._w_bit.start()
+
     # ── Card builders ──────────────────────────────────────────────────
 
     def _build_track_card(self, track: dict):
@@ -909,57 +1014,208 @@ class NowPlayingInfoTab(QWidget):
         title = track.get('title', 'Unknown')
         t_lbl = QLabel(title)
         t_lbl.setStyleSheet(
-            f'color: {self._fg}; font-size: 17px; font-weight: bold; background: transparent;'
+            f'color: {self._fg}; font-size: {self._font_size_primary + 15}px; font-weight: bold; background: transparent;'
         )
         right_lo.addWidget(t_lbl)
 
-        artist = track.get('artist', '')
-        album  = track.get('album', '')
-        year   = str(track.get('year', '') or '')
-        meta_parts = [p for p in [artist, album, year] if p]
-        meta_lbl = QLabel(' • '.join(meta_parts))
-        meta_lbl.setStyleSheet(
-            f'color: {self._fg2}; font-size: 12px; background: transparent;'
+        artist   = track.get('artist', '')
+        album    = track.get('album', '')
+        album_id = track.get('albumId') or track.get('album_id', '')
+        year     = str(track.get('year', '') or '')
+        meta_fs  = self._font_size_secondary + 1
+
+        meta_w  = QWidget()
+        meta_w.setStyleSheet('background: transparent;')
+        meta_lo = QHBoxLayout(meta_w)
+        meta_lo.setContentsMargins(0, 0, 0, 0)
+        meta_lo.setSpacing(0)
+
+        _sep_style = f'color: {self._fg2}; font-size: {meta_fs}px; background: transparent;'
+        _lnk_style = (
+            f'QPushButton {{ color: {self._fg2}; font-size: {meta_fs}px; background: transparent;'
+            f' border: none; padding: 0; text-decoration: none; }}'
+            f'QPushButton:hover {{ color: {self._fg}; text-decoration: underline; }}'
         )
-        right_lo.addWidget(meta_lbl)
 
-        # Chip row
-        chips_w = QWidget()
-        chips_w.setStyleSheet('background: transparent;')
-        chips_lo = QHBoxLayout(chips_w)
-        chips_lo.setContentsMargins(0, 2, 0, 0)
-        chips_lo.setSpacing(5)
+        if artist:
+            artists = [a for a in _ARTIST_SEP.split(artist) if a.strip()]
+            for i, a_name in enumerate(artists):
+                if i > 0:
+                    sep = QLabel(' • ')
+                    sep.setStyleSheet(_sep_style)
+                    meta_lo.addWidget(sep)
+                btn = QPushButton(a_name)
+                btn.setFlat(True)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setStyleSheet(_lnk_style)
+                btn.clicked.connect(lambda _=False, a=a_name: self.artist_clicked.emit(a))
+                meta_lo.addWidget(btn)
 
-        genre   = track.get('genre', '')
-        bitrate = track.get('bitRate') or track.get('bit_rate')
-        dur     = _fmt_dur(track.get('duration', ''))
+        if album:
+            sep = QLabel(' • ')
+            sep.setStyleSheet(_sep_style)
+            meta_lo.addWidget(sep)
+            btn = QPushButton(album)
+            btn.setFlat(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(_lnk_style)
+            btn.clicked.connect(lambda _=False, aid=album_id, aname=album: self.album_clicked.emit({'id': aid, 'name': aname, 'title': aname}))
+            meta_lo.addWidget(btn)
 
+        if year:
+            sep = QLabel(' • ')
+            sep.setStyleSheet(_sep_style)
+            meta_lo.addWidget(sep)
+            yr_lbl = QLabel(year)
+            yr_lbl.setStyleSheet(_sep_style)
+            meta_lo.addWidget(yr_lbl)
+
+        meta_lo.addStretch(1)
+        right_lo.addWidget(meta_w)
+
+        # Info row (plain text)
+        info_parts = []
+
+        genre = track.get('genre', '')
         if genre:
-            chips_lo.addWidget(self._chip(genre))
+            info_parts.append(genre)
+
+        bitrate = track.get('bitRate') or track.get('bit_rate')
         if bitrate:
             try:
                 br  = int(bitrate)
                 fmt = 'FLAC' if br > 900 else 'MP3'
-                chips_lo.addWidget(self._chip(fmt))
-                chips_lo.addWidget(self._chip(f'{br} kbps'))
+                info_parts.append(fmt)
+                info_parts.append(f'{br} kbps')
             except (TypeError, ValueError):
                 pass
-        if dur:
-            chips_lo.addWidget(self._chip(dur))
-        chips_lo.addStretch(1)
-        right_lo.addWidget(chips_w)
 
+        sample_rate = track.get('samplingRate') or track.get('sampleRate')
+        if sample_rate:
+            try:
+                khz = int(sample_rate) / 1000
+                khz_str = (f'{khz:.1f}'.rstrip('0').rstrip('.')) + ' kHz'
+                info_parts.append(khz_str)
+            except (TypeError, ValueError):
+                pass
+
+        bit_depth = track.get('bitDepth') or track.get('bit_depth')
+        if bit_depth:
+            try:
+                info_parts.append(f'{int(bit_depth)}-bit')
+            except (TypeError, ValueError):
+                pass
+
+        dur = _fmt_dur(_parse_dur(track.get('duration', 0))) or _fmt_dur(track.get('duration_ms', 0) / 1000)
+        if dur:
+            info_parts.append(dur)
+
+        if info_parts:
+            info_lbl = QLabel('   '.join(info_parts))
+            info_lbl.setStyleSheet(
+                f'color: {self._fg2}; font-size: {self._font_size_secondary}px;'
+                ' background: transparent;'
+            )
+            right_lo.addWidget(info_lbl)
+
+        # ── Action buttons row ────────────────────────────────────────
+        from player import resource_path as _rp
+        is_starred = bool(track.get('starred'))
+        track_id   = track.get('id', '')
+
+        btn_row_w  = QWidget()
+        btn_row_w.setStyleSheet('background: transparent;')
+        btn_row_lo = QHBoxLayout(btn_row_w)
+        btn_row_lo.setContentsMargins(0, 4, 0, 0)
+        btn_row_lo.setSpacing(8)
+
+        def _tint_pix(path, color, size=20):
+            p = QPixmap(_rp(path))
+            if p.isNull():
+                return p
+            p = p.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+            out = QPixmap(p.size())
+            out.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(out)
+            painter.drawPixmap(0, 0, p)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            painter.fillRect(out.rect(), QColor(color))
+            painter.end()
+            return out
+
+        heart_btn = QPushButton()
+        heart_btn.setFlat(True)
+        heart_btn.setFixedSize(28, 28)
+        heart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        heart_btn.setStyleSheet('QPushButton { background: transparent; border: none; }')
+        heart_btn.setIcon(QIcon(_tint_pix(
+            'img/heart_filled.png' if is_starred else 'img/heart.png',
+            '#E91E63' if is_starred else '#555555',
+        )))
+        heart_btn.setIconSize(QSize(20, 20))
+
+        def _on_heart(*, tid=track_id, btn=heart_btn):
+            t = self._current_track
+            raw = t.get('starred')
+            cur = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+            new = not cur
+            t['starred'] = new
+            btn.setIcon(QIcon(_tint_pix(
+                'img/heart_filled.png' if new else 'img/heart.png',
+                '#E91E63' if new else '#555555',
+            )))
+            self.favorite_toggled.emit(tid, new)
+
+        heart_btn.clicked.connect(_on_heart)
+        btn_row_lo.addWidget(heart_btn)
+
+        lyrics_btn = QPushButton()
+        lyrics_btn.setFlat(True)
+        lyrics_btn.setFixedSize(28, 28)
+        lyrics_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        lyrics_btn.setStyleSheet('QPushButton { background: transparent; border: none; }')
+        lyrics_btn.setIcon(QIcon(_tint_pix('img/lyrics.png', '#666666')))
+        lyrics_btn.setIconSize(QSize(20, 20))
+        lyrics_btn.clicked.connect(self.lyrics_requested.emit)
+        btn_row_lo.addWidget(lyrics_btn)
+
+        btn_row_lo.addStretch(1)
+        right_lo.addWidget(btn_row_w)
         right_lo.addStretch(1)
 
     def _build_album_card(self, tracks: list, current_id):
         self._clear_layout(self._album_card_lo)
 
+        hrow = QWidget()
+        hrow.setStyleSheet('background: transparent;')
+        hrow_lo = QHBoxLayout(hrow)
+        hrow_lo.setContentsMargins(0, 0, 0, 0)
+        hrow_lo.setSpacing(4)
+
         hdr = QLabel('FROM THIS ALBUM')
         hdr.setStyleSheet(
-            f'color: {self._accent}; font-size: 10px; font-weight: bold;'
+            f'color: {self._accent}; font-size: {self._font_size_secondary}px; font-weight: bold;'
             ' letter-spacing: 1.5px; background: transparent;'
         )
-        self._album_card_lo.addWidget(hdr)
+        hrow_lo.addWidget(hdr)
+        hrow_lo.addStretch(1)
+
+        album_id  = self._current_track.get('albumId') or self._current_track.get('album_id', '')
+        album_name = self._current_track.get('album', '')
+        if album_id or album_name:
+            go_btn = QPushButton('Go to Album ↗')
+            go_btn.setFlat(True)
+            go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            go_btn.setStyleSheet(
+                f'QPushButton {{ color: {self._fg2}; font-size: {self._font_size_secondary}px; background: transparent;'
+                f' border: none; padding: 0; }}'
+                f'QPushButton:hover {{ color: {self._accent}; }}'
+            )
+            go_btn.clicked.connect(lambda _=False, aid=album_id, aname=album_name: self.album_clicked.emit({'id': aid, 'name': aname, 'title': aname}))
+            hrow_lo.addWidget(go_btn)
+
+        self._album_card_lo.addWidget(hrow)
 
         if not tracks:
             ph = QLabel('Loading…')
@@ -1078,9 +1334,9 @@ class NowPlayingInfoTab(QWidget):
         hrow_lo.setContentsMargins(0, 0, 0, 0)
         hrow_lo.setSpacing(4)
 
-        hdr = QLabel('MOST PLAYED BY THIS ARTIST')
+        hdr = QLabel(f'MOST PLAYED BY {name.upper()}' if name else 'MOST PLAYED BY THIS ARTIST')
         hdr.setStyleSheet(
-            f'color: {self._accent}; font-size: 10px; font-weight: bold;'
+            f'color: {self._accent}; font-size: {self._font_size_secondary}px; font-weight: bold;'
             ' letter-spacing: 1.5px; background: transparent;'
         )
         hrow_lo.addWidget(hdr)
@@ -1123,7 +1379,7 @@ class NowPlayingInfoTab(QWidget):
             go_btn.setFlat(True)
             go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             go_btn.setStyleSheet(
-                f'QPushButton {{ color: {self._fg2}; font-size: 11px; background: transparent;'
+                f'QPushButton {{ color: {self._fg2}; font-size: {self._font_size_secondary}px; background: transparent;'
                 f' border: none; padding: 0 0 0 6px; }}'
                 f'QPushButton:hover {{ color: {self._accent}; }}'
             )
@@ -1190,12 +1446,72 @@ class NowPlayingInfoTab(QWidget):
         self._clear_layout(self._artist_card_lo)
         self._artist_photo_lbl = None
 
+        n   = len(self._top_artists)
+        idx = self._artist_page_idx
+        current_artist_name = self._top_artists[idx] if self._top_artists else (
+            self._current_track.get('artist', '') or info.get('name', '')
+        )
+
+        # Header row with optional pagination
+        hrow = QWidget()
+        hrow.setStyleSheet('background: transparent;')
+        hrow_lo = QHBoxLayout(hrow)
+        hrow_lo.setContentsMargins(0, 0, 0, 0)
+        hrow_lo.setSpacing(4)
+
         hdr = QLabel('ABOUT THE ARTIST')
         hdr.setStyleSheet(
-            f'color: {self._accent}; font-size: 10px; font-weight: bold;'
+            f'color: {self._accent}; font-size: {self._font_size_secondary}px; font-weight: bold;'
             ' letter-spacing: 1.5px; background: transparent;'
         )
-        self._artist_card_lo.addWidget(hdr)
+        hrow_lo.addWidget(hdr)
+        hrow_lo.addStretch(1)
+
+        if n > 1:
+            btn_style = (
+                f'QPushButton {{ color: {self._accent}; background: transparent; border: none;'
+                f' font-size: 16px; padding: 0 2px; }}'
+                f'QPushButton:hover {{ color: white; }}'
+                f'QPushButton:disabled {{ color: #444; }}'
+            )
+            btn_prev = QPushButton('‹')
+            btn_prev.setFixedSize(22, 18)
+            btn_prev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_prev.setStyleSheet(btn_style)
+            btn_prev.setEnabled(idx > 0)
+            btn_prev.clicked.connect(lambda: self._nav_artist_page(self._artist_page_idx - 1))
+
+            page_lbl = QLabel(f'{idx + 1}/{n}')
+            page_lbl.setStyleSheet(
+                f'color: {self._fg2}; font-size: 11px; font-weight: bold; background: transparent;'
+            )
+
+            btn_next = QPushButton('›')
+            btn_next.setFixedSize(22, 18)
+            btn_next.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_next.setStyleSheet(btn_style)
+            btn_next.setEnabled(idx < n - 1)
+            btn_next.clicked.connect(lambda: self._nav_artist_page(self._artist_page_idx + 1))
+
+            hrow_lo.addWidget(btn_prev)
+            hrow_lo.addWidget(page_lbl)
+            hrow_lo.addWidget(btn_next)
+
+        if current_artist_name:
+            go_btn = QPushButton('Go to Artist ↗')
+            go_btn.setFlat(True)
+            go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            go_btn.setStyleSheet(
+                f'QPushButton {{ color: {self._fg2}; font-size: {self._font_size_secondary}px; background: transparent;'
+                f' border: none; padding: 0 0 0 6px; }}'
+                f'QPushButton:hover {{ color: {self._accent}; }}'
+            )
+            go_btn.clicked.connect(lambda _=False, a=current_artist_name: self.artist_clicked.emit(a))
+            hrow_lo.addWidget(go_btn)
+
+        self._artist_card_lo.addWidget(hrow)
 
         # Photo + name row
         namerow_w = QWidget()
@@ -1208,10 +1524,7 @@ class NowPlayingInfoTab(QWidget):
         self._artist_photo_lbl = photo
         namerow_lo.addWidget(photo)
 
-        artist_name = (
-            self._current_track.get('artist', '') or
-            info.get('name', '')
-        )
+        artist_name = current_artist_name or info.get('name', '')
         name_lbl = QLabel(artist_name)
         name_lbl.setStyleSheet(
             f'color: {self._fg}; font-size: 14px; font-weight: bold; background: transparent;'
@@ -1303,7 +1616,7 @@ class NowPlayingInfoTab(QWidget):
 
         hdr = QLabel('ON TOUR')
         hdr.setStyleSheet(
-            f'color: {self._accent}; font-size: 10px; font-weight: bold;'
+            f'color: {self._accent}; font-size: {self._font_size_secondary}px; font-weight: bold;'
             ' letter-spacing: 1.5px; background: transparent;'
         )
         self._tour_card_lo.addWidget(hdr)
@@ -1436,7 +1749,7 @@ class NowPlayingInfoTab(QWidget):
             self._w_bit.start()
 
     def _cancel_workers(self):
-        for attr in ('_w_info', '_w_img', '_w_cover', '_w_album', '_w_bit', '_w_top'):
+        for attr in ('_w_info', '_w_img', '_w_cover', '_w_album', '_w_bit', '_w_top', '_w_song'):
             w = getattr(self, attr, None)
             if w and w.isRunning():
                 try:

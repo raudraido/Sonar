@@ -141,7 +141,7 @@ class PersistenceMixin:
         """Called automatically when the startup playlist finishes populating the UI."""
         self.update_window_title()
         try:
-            saved_idx = int(self.settings.value('saved_current_index', -1))
+            saved_idx = int(float(self.settings.value('saved_current_index', -1)))
             
             if 0 <= saved_idx < len(self.playlist_data):
                 self.current_index = saved_idx
@@ -151,7 +151,7 @@ class PersistenceMixin:
                 self.update_indicator(scroll_to_current=True)
                 
                 # Restore the seek bar position
-                saved_pos = int(self.settings.value('saved_position', 0))
+                saved_pos = int(float(self.settings.value('saved_position', 0)))
                 if saved_pos > 0:
                     self.seek_bar.blockSignals(True)
                     self.seek_bar.setValue(saved_pos)

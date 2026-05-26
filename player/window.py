@@ -30,6 +30,7 @@ from PyQt6.QtGui import (
 import os
 import sys
 import json
+import threading
 from version import __version__
 from visualizer import AudioVisualizer
 from audio_engine import AudioEngine
@@ -552,6 +553,15 @@ class SonarPlayer(
         self._now_playing_panel.artist_clicked.connect(self.navigate_to_artist)
         self._now_playing_panel.album_clicked.connect(self.navigate_to_album)
         self._now_playing_panel.play_requested.connect(self._play_track_from_info)
+        self._now_playing_panel.favorite_toggled.connect(
+            lambda tid, state: (
+                [t.__setitem__('starred', state) for t in self.playlist_data if t.get('id') == tid],
+                threading.Thread(target=lambda: self.navidrome_client and self.navidrome_client.set_favorite(tid, state), daemon=True).start()
+            )
+        )
+        self._now_playing_panel.lyrics_requested.connect(
+            lambda: (self._queue_panel.btn_lyrics.setChecked(True),)
+        )
         self.tabs.addTab(self._now_playing_panel, "Now Playing")
         if hasattr(self, 'theme'):
             self._now_playing_panel.apply_theme(self.theme)
