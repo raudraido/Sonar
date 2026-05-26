@@ -80,14 +80,30 @@ class _ArtistInfoWorker(QThread):
 class _ImageWorker(QThread):
     done = pyqtSignal(QPixmap)
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, cover_id: str | None = None):
         super().__init__()
-        self._url = url
+        self._url      = url
+        self._cover_id = cover_id
 
     def run(self):
         if self._url in _artist_img_cache:
             self.done.emit(_artist_img_cache[self._url])
             return
+        # Check CoverCache before making a network request
+        if self._cover_id:
+            try:
+                from cover_cache import CoverCache
+                cache = CoverCache.instance()
+                data = cache.get_full(self._cover_id) or cache.get_thumb(self._cover_id)
+                if data:
+                    pix = QPixmap()
+                    pix.loadFromData(data)
+                    if not pix.isNull():
+                        _artist_img_cache[self._url] = pix
+                        self.done.emit(pix)
+                        return
+            except Exception:
+                pass
         try:
             import urllib.request
             req = urllib.request.Request(
@@ -884,7 +900,7 @@ class NowPlayingInfoTab(QWidget):
                     if self._cover_art_lbl:
                         self._cover_art_lbl.set_pixmap(pix)
                 else:
-                    self._w_cover = _ImageWorker(url)
+                    self._w_cover = _ImageWorker(url, cover_id=cover_id)
                     self._w_cover.done.connect(self._on_cover_art)
                     self._w_cover.start()
             except Exception:
@@ -1010,6 +1026,7 @@ class NowPlayingInfoTab(QWidget):
     def _on_cover_art(self, pix: QPixmap):
         if not pix.isNull():
             self._current_track['_cover_pixmap'] = pix
+            self._cover_pixmap = pix
         if self._cover_art_lbl and not pix.isNull():
             self._cover_art_lbl.set_pixmap(pix)
 

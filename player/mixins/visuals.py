@@ -145,37 +145,48 @@ class VisualsMixin:
         self.blur_thread.finished.connect(self.apply_threaded_art)
         self.blur_thread.start()
 
+    def _apply_dominant_color(self, dominant_color: str):
+        """Apply a dominant accent color to the UI (theme + all dependent widgets)."""
+        if dominant_color.startswith('#') and len(dominant_color) > 7:
+            dominant_color = dominant_color[:7]
+        self.theme.accent = dominant_color
+        self._auto_tint_bg_colors()
+        if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
+        if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
+        if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
+        self.now_playing_widget.set_accent_color(self.theme.accent)
+        if 0 <= self.current_index < len(self.playlist_data):
+            track = self.playlist_data[self.current_index]
+            raw_artist = track.get('artist', 'Unknown')
+            formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{self.theme.accent}; font-size:24px'>•</span> ")
+            year = str(track.get('year', '') or '').strip()
+            if year and year != '0':
+                formatted_artist += f"  •  {year}"
+            self.track_artist.setText(formatted_artist)
+            if hasattr(self, 'heart_btn'):
+                raw_state = track.get('starred')
+                is_fav = raw_state.lower() in ('true', '1') if isinstance(raw_state, str) else bool(raw_state)
+                self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.theme.accent))
+        self.refresh_ui_styles(scroll_to_current=False)
+
     def apply_threaded_art(self, blurred_qimg, cover_qimg, raw_art, dominant_color):
         self.old_cover_pixmap = getattr(self, 'current_cover_pixmap', None)
         self.current_cover_pixmap = QPixmap()
         if not cover_qimg.isNull():
             self.current_cover_pixmap = QPixmap.fromImage(cover_qimg)
-            
+
         # Store cover_id instead of raw bytes — CoverCache already has the data on disk
         self.current_raw_art = raw_art
-        
+
         if self.theme.dynamic_accent:
-            if dominant_color.startswith('#') and len(dominant_color) > 7:
-                dominant_color = dominant_color[:7]
-            self.theme.accent = dominant_color
-            self._auto_tint_bg_colors()
-            if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
-            if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
-            if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
-            self.now_playing_widget.set_accent_color(self.theme.accent)
-            if 0 <= self.current_index < len(self.playlist_data):
-                track = self.playlist_data[self.current_index]
-                raw_artist = track.get('artist', 'Unknown')
-                formatted_artist = raw_artist.replace(" /// ", f" <span style='color:{self.theme.accent}; font-size:24px'>•</span> ")
-                year = str(track.get('year', '') or '').strip()
-                if year and year != '0':
-                    formatted_artist += f"  •  {year}"
-                self.track_artist.setText(formatted_artist)
-                if hasattr(self, 'heart_btn'):
-                    raw_state = track.get('starred')
-                    is_fav = raw_state.lower() in ('true', '1') if isinstance(raw_state, str) else bool(raw_state)
-                    self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.theme.accent))
-            self.refresh_ui_styles(scroll_to_current=False)
+            if dominant_color not in ('#cccccc', self.theme.accent):
+                # Cache the freshly computed color so future plays are instant
+                cid = getattr(self, '_last_rendered_cid', None)
+                if cid:
+                    if not hasattr(self, '_color_cache'):
+                        self._color_cache = {}
+                    self._color_cache[str(cid)] = dominant_color
+            self._apply_dominant_color(dominant_color)
 
         if not self.current_cover_pixmap.isNull():
             self.now_playing_widget.set_cover(self.current_cover_pixmap)
@@ -199,7 +210,9 @@ class VisualsMixin:
             self.swin.refresh_theme()
 
     def apply_cover_art(self, data):
-        self.update_background_threaded(None, raw_data_override=data)
+        calc = not getattr(self, '_skip_color_calc', False)
+        self._skip_color_calc = False
+        self.update_background_threaded(None, raw_data_override=data, calc_color=calc)
 
     def _perform_heavy_visual_update(self):
         """Called by timer when user has stopped skipping tracks."""
@@ -225,14 +238,23 @@ class VisualsMixin:
             return
         self._last_rendered_cid = cid
 
+        # Apply cached dominant color immediately so the UI updates without waiting for BlurWorker
+        if not hasattr(self, '_color_cache'):
+            self._color_cache = {}
+        cached_color = self._color_cache.get(str(cid)) if cid else None
+        if cached_color and getattr(self.theme, 'dynamic_accent', False):
+            self._apply_dominant_color(cached_color)
+            self._skip_color_calc = True
+        else:
+            self._skip_color_calc = False
+
         # 1. Trigger the heavy Blur/Color calculation
         if cid and hasattr(self, 'navidrome_client'):
              cover_id = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
-             
-             
+
              if getattr(self, 'cover_loader', None) and self.cover_loader.isRunning():
                  self._safe_discard_worker(self.cover_loader)
-                 
+
              self.cover_loader = CoverLoaderWorker(self.navidrome_client, cover_id)
              self.cover_loader.finished.connect(self.apply_cover_art)
              self.cover_loader.start()
@@ -487,6 +509,9 @@ class VisualsMixin:
                         if idx >= 0:
                             self.tab_bar.setTabIcon(idx, get_cached_icon(img, mc))
 
+            if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'apply_theme'):
+                self._now_playing_panel.apply_theme(self.theme)
+
         bw = self.theme.border_width
         if self.theme.auto_border_from_accent:
             self.theme.border_color = QColor(mc).darker(250).name()
@@ -494,8 +519,6 @@ class VisualsMixin:
             c = QColor(self.theme.manual_border_color)
             self.theme.border_color = f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
         bc = self.theme.border_color
-        if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'apply_theme'):
-            self._now_playing_panel.apply_theme(self.theme)
 
         self._footer_panel.setStyleSheet(
             f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border-top: {bw}px solid {bc}; }}"
@@ -803,7 +826,20 @@ class VisualsMixin:
                     album=track.get('album', '')
                 )
                 self.now_playing_widget.set_track(track)
-            
+                # Eagerly show cached cover art in the footer without waiting for BlurWorker
+                _cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
+                if _cid:
+                    try:
+                        from cover_cache import CoverCache
+                        _data = CoverCache.instance().get_full(_cid) or CoverCache.instance().get_thumb(_cid)
+                        if _data:
+                            _pix = QPixmap()
+                            _pix.loadFromData(_data)
+                            if not _pix.isNull():
+                                self.now_playing_widget.set_cover(_pix)
+                    except Exception:
+                        pass
+
             # Update the rich Now Playing info tab
             if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'load_track'):
                 self._now_playing_panel.load_track(track)
