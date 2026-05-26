@@ -16,11 +16,17 @@ from player.workers import PlaylistLoaderWorker
 from player.widgets import SettingsWindow, _DimOverlay
 
 class PersistenceMixin:
+    @staticmethod
+    def _serializable_track(track: dict) -> dict:
+        _ok = (str, int, float, bool, type(None))
+        return {k: v for k, v in track.items() if isinstance(v, _ok)}
+
     def save_playlist(self):
         try:
             self.settings.setValue('window_width',  str(self.width()))
             self.settings.setValue('window_height', str(self.height()))
-            self.settings.setValue('current_playlist', json.dumps(self.playlist_data))
+            safe = [self._serializable_track(t) for t in self.playlist_data]
+            self.settings.setValue('current_playlist', json.dumps(safe))
             self.settings.setValue('saved_current_index', str(self.current_index))
             self.settings.setValue('saved_position', str(self.seek_bar.position_ms))
             self.settings.setValue('theme', self.theme.to_json())

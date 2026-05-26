@@ -211,6 +211,104 @@ class _TooltipFilter(_QObject):
         return False
 
 
+class _ResizeHandle(QWidget):
+    """Transparent overlay at a panel border — only the drag icon is visible."""
+
+    _DEFAULT_OPACITY = 0.4
+
+    def __init__(self, target: QWidget, default_w: int, sign: int,
+                 settings_key: str, settings, reposition_cb, parent=None):
+        super().__init__(parent)
+        self._target         = target
+        self._min_w          = int(default_w * 0.9)
+        self._max_w          = int(default_w * 1.1)
+        self._sign           = sign
+        self._key            = settings_key
+        self._settings       = settings
+        self._reposition_cb  = reposition_cb
+        self._drag_x         = None
+        self._drag_w         = None
+
+        self.setFixedWidth(12)
+        self.setCursor(Qt.CursorShape.SizeHorCursor)
+        # Transparent overlay: no background paint, only the icon
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAutoFillBackground(False)
+
+        raw = QPixmap(resource_path('img/drag.png'))
+        self._pix_dim    = self._tint(raw, '#888888')
+        self._pix_bright = self._tint(raw, '#ffffff')
+        self._pix        = self._pix_dim
+
+        self._eff  = QGraphicsOpacityEffect(self)
+        self._eff.setOpacity(self._DEFAULT_OPACITY)
+        self.setGraphicsEffect(self._eff)
+        self._anim = QPropertyAnimation(self._eff, b'opacity')
+        self._anim.setDuration(180)
+
+    @staticmethod
+    def _tint(raw: QPixmap, color: str) -> QPixmap:
+        if raw.isNull():
+            return raw
+        out = QPixmap(raw.size())
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        p.drawPixmap(0, 0, raw)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(out.rect(), QColor(color))
+        p.end()
+        return out
+
+    def update_color(self, color: str):
+        raw = QPixmap(resource_path('img/drag.png'))
+        if not raw.isNull():
+            self._pix_bright = self._tint(raw, color)
+            self.update()
+
+    def paintEvent(self, event):
+        if self._pix.isNull():
+            return
+        p = QPainter(self)
+        x = (self.width()  - self._pix.width())  // 2
+        y = (self.height() - self._pix.height()) // 2
+        p.drawPixmap(x, y, self._pix)
+        p.end()
+
+    def enterEvent(self, event):
+        self._pix = self._pix_bright
+        self._anim.stop(); self._anim.setEndValue(1.0); self._anim.start()
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._pix = self._pix_dim
+        self._anim.stop(); self._anim.setEndValue(self._DEFAULT_OPACITY); self._anim.start()
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_x = event.globalPosition().x()
+            self._drag_w = self._target.width()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_x is None:
+            return
+        dx = (event.globalPosition().x() - self._drag_x) * self._sign
+        new_w = max(self._min_w, min(self._max_w, int(self._drag_w + dx)))
+        self._target.setFixedWidth(new_w)
+        QTimer.singleShot(0, self._reposition_cb)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_x is not None:
+            self._settings.setValue(self._key, self._target.width())
+        self._drag_x = None
+        self._drag_w = None
+        super().mouseReleaseEvent(event)
+
+
 class SonarPlayer(
     PlaybackMixin,
     NavigationMixin,
@@ -416,6 +514,34 @@ class SonarPlayer(
         self._pi_movie.setScaledSize(QSize(40, 40))
 
         # --- END of INIT ---
+
+    def _reposition_resize_handles(self):
+        cw = self.centralWidget()
+        if cw is None:
+            return
+        for handle, panel, edge in (
+            (self._left_handle,  self._left_panel,             'right'),
+            (self._queue_handle, self._queue_panel_container,  'left'),
+        ):
+            if handle is None or panel is None:
+                continue
+            panel_pos = panel.mapTo(cw, QPoint(panel.width() if edge == 'right' else 0, 0))
+            x = panel_pos.x() - handle.width() // 2
+            y = panel.mapTo(cw, QPoint(0, 0)).y()
+            handle.setGeometry(x, y, handle.width(), panel.height())
+            handle.raise_()
+
+        # Keep sidebar art square as left panel is resized
+        if getattr(self, '_sidebar_art_visible', False):
+            new_h = max(0, self._left_panel.width() - 16)
+            self._art_section.setMaximumHeight(new_h)
+            self._art_section.setMinimumHeight(new_h)
+            if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
+                self._art_close_btn.move(self._art_section.width() - 28, 4)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._reposition_resize_handles)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -741,14 +867,16 @@ class SonarPlayer(
         right_panel.addWidget(self.tab_stack, 1)      # content — browser backgrounds only
         _right_widget = self._main_panel
 
-        self._left_panel.setFixedWidth(330)
+        _left_w = max(297, min(363, int(self.settings.value('left_panel_width', 330))))
+        self._left_panel.setFixedWidth(_left_w)
         content.addWidget(self._left_panel)
         content.addWidget(_right_widget, 1)
         body.addLayout(content, 1)
 
         # ── Permanent queue sidebar ──────────────────────────────────────────
         self._queue_panel_container = QWidget()
-        self._queue_panel_container.setFixedWidth(400)
+        _queue_w = max(360, min(440, int(self.settings.value('queue_panel_width', 400))))
+        self._queue_panel_container.setFixedWidth(_queue_w)
         _qc_layout = QVBoxLayout(self._queue_panel_container)
         _qc_layout.setContentsMargins(0, 0, 0, 0) #QUEUE margins (bottom)
         _qc_layout.setSpacing(0)
@@ -1054,6 +1182,15 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
+
+        # Overlay drag handles — transparent, sit at panel borders
+        self._left_handle = _ResizeHandle(
+            self._left_panel, 330, +1, 'left_panel_width', self.settings,
+            self._reposition_resize_handles, central_widget)
+        self._queue_handle = _ResizeHandle(
+            self._queue_panel_container, 400, -1, 'queue_panel_width', self.settings,
+            self._reposition_resize_handles, central_widget)
+        QTimer.singleShot(0, self._reposition_resize_handles)
 
     # ── Cast ──────────────────────────────────────────────────────────────────
 

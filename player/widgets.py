@@ -835,15 +835,6 @@ class SettingsWindow(QDialog):
         self._fc1 = fc1
         self._fc2 = fc2
         self._refresh_preset_buttons(active_name)
-        builder_btn = QPushButton("Theme Builder…")
-        builder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        builder_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: {acc}; border: 1px solid {acc}; "
-            f"border-radius: 4px; font-size: 12px; font-weight: bold; padding: 5px 14px; }}"
-            f"QPushButton:hover {{ background: {acc}22; }}"
-        )
-        builder_btn.clicked.connect(self._open_theme_builder)
-        preset_row.addWidget(builder_btn)
         preset_row.addStretch()
         layout.addLayout(preset_row)
 
