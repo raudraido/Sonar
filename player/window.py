@@ -421,7 +421,9 @@ class SonarPlayer(
         if event.type() == QEvent.Type.WindowStateChange:
             minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized)
 
-            vis_active = not minimized
+            on_vis_tab = (hasattr(self, '_vis_container') and
+                          self.tabs.currentWidget() is self._vis_container)
+            vis_active = not minimized and on_vis_tab
             if hasattr(self, 'audio_engine'):
                 self.audio_engine.set_visualizer_active(vis_active)
             if hasattr(self, 'visualizer'):
@@ -631,9 +633,16 @@ class SonarPlayer(
         )
         _vis_lo.addWidget(self._coming_soon_lbl)
         _vis_lo.addWidget(self.visualizer, 1)
+        self._vis_container = _vis_container
         self._vis_icon_pix = QPixmap(resource_path('img/visualizer.png'))
         self.tabs.addTab(_vis_container, "Visualizer")
         self._vis_tab_idx = self.tabs.count() - 1
+
+        def _on_vis_tab_changed(idx):
+            is_vis = (self.tabs.widget(idx) is self._vis_container)
+            self.audio_engine.set_visualizer_active(is_vis)
+            self.visualizer.visualizer_enabled = is_vis
+        self.tabs.currentChanged.connect(_on_vis_tab_changed)
 
         # 8. THE HIDDEN GLOBAL ALBUM TAB!
         from albums_browser import AlbumDetailView
