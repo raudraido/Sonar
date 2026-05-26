@@ -24,6 +24,9 @@ class Theme:
     # ── Now Playing card background ──────────────────────────────────────────
     now_playing_card_bg: str = "#1e1e1e"
 
+    # ── Skeleton / placeholder cards ─────────────────────────────────────────
+    skeleton_base: str = "#282828"
+
     # ── Font family ──────────────────────────────────────────────────────────
     app_font: str = ""              # empty = system default (Segoe UI)
 

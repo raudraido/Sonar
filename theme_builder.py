@@ -199,6 +199,7 @@ class ThemeBuilderDialog(QDialog):
         ]:
             self._add_color_row(label, key, getattr(t, key), is_rgb=True)
         self._add_color_row('Now Playing Cards', 'now_playing_card_bg', t.now_playing_card_bg, is_rgb=False)
+        self._add_color_row('Skeleton / Placeholders', 'skeleton_base', t.skeleton_base, is_rgb=False)
 
         self._add_section('Typography')
         self._add_font_row('Font Family', 'app_font', t.app_font)

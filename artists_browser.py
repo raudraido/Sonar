@@ -62,10 +62,12 @@ class ArtistPlayWorker(QThread):
 class _AlbumSkeletonRow(QWidget):
     """Placeholder row shown while album data is being fetched. Paints shimmer-style ghost cards."""
 
-    def __init__(self, card_count=6, parent=None):
+    def __init__(self, card_count=6, base_color="#282828", parent=None):
         super().__init__(parent)
         self._card_count = card_count
         self._phase = 0.0
+        c = QColor(base_color)
+        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(40)  # ~25 fps shimmer
@@ -88,7 +90,7 @@ class _AlbumSkeletonRow(QWidget):
             x = spacing + i * (card_w + spacing)
             # Shimmer brightness offset per card
             phase = (self._phase + i * 0.15) % 1.0
-            brightness = int(40 + 20 * math.sin(phase * 2 * math.pi))
+            brightness = int(self._base + 20 * math.sin(phase * 2 * math.pi))
 
             # Card background
             rect = QRectF(x, y, card_w, card_h)
@@ -115,10 +117,12 @@ class _AlbumSkeletonRow(QWidget):
 class _SectionSkeleton(QWidget):
     """Shimmer skeleton for bio or popular-tracks section, shown before data arrives."""
 
-    def __init__(self, mode='bio', parent=None):
+    def __init__(self, mode='bio', base_color="#282828", parent=None):
         super().__init__(parent)
         self._mode = mode
         self._phase = 0.0
+        c = QColor(base_color)
+        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(40)
@@ -135,7 +139,7 @@ class _SectionSkeleton(QWidget):
 
         x = 8
         phase = self._phase
-        bright = int(40 + 15 * math.sin(phase * 2 * math.pi))
+        bright = int(self._base + 15 * math.sin(phase * 2 * math.pi))
 
         # Section title pill
         p.setBrush(QBrush(QColor(bright + 12, bright + 12, bright + 12)))
@@ -145,14 +149,14 @@ class _SectionSkeleton(QWidget):
             line_h, gap = 10, 18
             for i in range(6):
                 ph = (phase + i * 0.1) % 1.0
-                br = int(32 + 10 * math.sin(ph * 2 * math.pi))
+                br = int(self._base + 10 * math.sin(ph * 2 * math.pi))
                 w = (self.width() - 16) * (0.95 if i < 5 else 0.55)
                 p.setBrush(QBrush(QColor(br, br, br)))
                 p.drawRoundedRect(QRectF(x, 46 + i * gap, w, line_h), 5, 5)
         else:
             for i in range(5):
                 ph = (phase + i * 0.15) % 1.0
-                br = int(32 + 10 * math.sin(ph * 2 * math.pi))
+                br = int(self._base + 10 * math.sin(ph * 2 * math.pi))
                 y = 46 + i * 46
                 p.setBrush(QBrush(QColor(br, br, br)))
                 p.drawRoundedRect(QRectF(x, y + 2, 28, 28), 4, 4)
@@ -827,6 +831,7 @@ class SectionGridBridge(QObject):
     fontSizeSecondaryChanged  = pyqtSignal(int)
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
+    skeletonBaseColorChanged  = pyqtSignal(str)
 
     def __init__(self, model):
         super().__init__()
@@ -966,6 +971,8 @@ class QMLAlbumSectionWidget(QWidget):
             self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
             self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
             self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            self.bridge.skeletonBaseColorChanged.emit(
+                getattr(theme, 'skeleton_base', '#282828'))
             self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
             self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
 
@@ -1502,7 +1509,7 @@ class ArtistRichDetailView(QWidget):
         
         self.img_label = QLabel()
         self.img_label.setFixedSize(220, 220)
-        self.img_label.setStyleSheet("background: #333; border-radius: 110px; border: 2px solid #444;")
+        self.img_label.setStyleSheet("background: #282828; border-radius: 110px;")
         self.img_label.setScaledContents(True)
         
         info_col = QWidget()
@@ -2018,6 +2025,9 @@ class ArtistRichDetailView(QWidget):
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
+        sk_color  = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
+        if hasattr(self, 'img_label') and not self.img_label.pixmap():
+            self.img_label.setStyleSheet(f"background: {sk_color}; border-radius: 110px;")
         if hasattr(self, 'lbl_type'):
             self.lbl_type.setStyleSheet(f"font-weight: bold; color: {sec_color}; font-size: 12px; letter-spacing: 1px;")
         if hasattr(self, 'lbl_name'):
@@ -2238,8 +2248,11 @@ class ArtistRichDetailView(QWidget):
     def clear_sections(self):
         while self.sections_layout.count():
             child = self.sections_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            w = child.widget()
+            if w:
+                if hasattr(w, '_timer'):
+                    w._timer.stop()
+                w.deleteLater()
 
     # Max albums per QML widget — keeps each texture well under GPU limits
     _QML_CHUNK = 80
@@ -2372,12 +2385,28 @@ class ArtistRichDetailView(QWidget):
         try:
             worker.finished.connect(lambda: self._worker_graveyard.discard(worker) if worker in self._worker_graveyard else None)
         except: pass
+
+    def stop_all_workers(self):
+        """Terminate all running workers immediately — called on app shutdown."""
+        workers = set(getattr(self, '_worker_graveyard', set()))
+        w = getattr(self, 'live_detail_worker', None)
+        if w:
+            workers.add(w)
+        for worker in workers:
+            if worker.isRunning():
+                worker.quit()
+                if not worker.wait(300):
+                    worker.terminate()
+        if hasattr(self, '_worker_graveyard'):
+            self._worker_graveyard.clear()
    
     def _cleanup_section_skeletons(self):
         for attr in ('_skeleton_bio', '_skeleton_songs'):
             w = getattr(self, attr, None)
             if w:
                 try:
+                    if hasattr(w, '_timer'):
+                        w._timer.stop()
                     self.content_layout.removeWidget(w)
                     w.deleteLater()
                 except Exception:
@@ -2402,13 +2431,15 @@ class ArtistRichDetailView(QWidget):
 
         # Insert structural skeletons for bio and popular tracks
         header_idx = self.content_layout.indexOf(self.header)
-        self._skeleton_bio = _SectionSkeleton('bio')
-        self._skeleton_songs = _SectionSkeleton('songs')
+        sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
+        self._skeleton_bio = _SectionSkeleton('bio', base_color=sk_color)
+        self._skeleton_songs = _SectionSkeleton('songs', base_color=sk_color)
         self.content_layout.insertWidget(header_idx + 1, self._skeleton_bio)
         self.content_layout.insertWidget(header_idx + 2, self._skeleton_songs)
 
         if not getattr(self, '_header_already_loaded', False):
-            self.img_label.setStyleSheet("background: #333; border-radius: 110px;")
+            sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
+            self.img_label.setStyleSheet(f"background: {sk_color}; border-radius: 110px;")
             self.set_header_image(None)
         self._header_already_loaded = False  
         self._exact_artist_image = False     
@@ -2421,8 +2452,9 @@ class ArtistRichDetailView(QWidget):
 
         
         if getattr(self, 'live_detail_worker', None) and self.live_detail_worker.isRunning():
-            try: self.live_detail_worker.details_ready.disconnect()
-            except: pass
+            for sig in ('albums_ready', 'top_songs_ready', 'appears_ready', 'details_ready'):
+                try: getattr(self.live_detail_worker, sig).disconnect()
+                except: pass
             self._safe_discard_worker(self.live_detail_worker)
 
         self._loaded_appears_on  = []
@@ -2440,7 +2472,8 @@ class ArtistRichDetailView(QWidget):
 
     def _show_album_skeleton(self):
         """Show placeholder skeleton cards while the album data is loading."""
-        skeleton = _AlbumSkeletonRow()
+        sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
+        skeleton = _AlbumSkeletonRow(base_color=sk_color)
         skeleton._section_title = "_skeleton"
         self.sections_layout.insertWidget(0, skeleton)
 
@@ -2523,6 +2556,8 @@ class ArtistRichDetailView(QWidget):
             w = item.widget() if item else None
             if w and getattr(w, '_section_title', None) == title:
                 self.sections_layout.removeWidget(w)
+                if hasattr(w, '_timer'):
+                    w._timer.stop()
                 w.deleteLater()
 
     def _try_set_focus(self):
@@ -2661,6 +2696,7 @@ class ArtistGridBridge(QObject):
     fontSizeSecondaryChanged  = pyqtSignal(int)
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
+    skeletonBaseColorChanged  = pyqtSignal(str)
 
     def __init__(self, artist_model):
         super().__init__()
@@ -3516,6 +3552,8 @@ class ArtistGridBrowser(QWidget):
                 self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
                 self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
                 self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+                self.grid_bridge.skeletonBaseColorChanged.emit(
+                    getattr(theme, 'skeleton_base', '#282828'))
 
         self.detail_view.set_accent_color(color)
         self.artist_view.set_accent_color(color)

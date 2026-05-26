@@ -2,6 +2,7 @@ import QtQuick
 
 Item {
     property int pillCount: 2
+    property string baseColor: "#2a2a2a"
 
     Rectangle {
         id: coverPlaceholder
@@ -10,7 +11,7 @@ Item {
         anchors.top: parent.top
         height: width
         radius: 8
-        color: "#2a2a2a"
+        color: baseColor
     }
 
     Column {
@@ -24,14 +25,14 @@ Item {
             width: parent.width * 0.75
             height: 11
             radius: 5
-            color: "#2a2a2a"
+            color: baseColor
         }
 
         Rectangle {
             width: parent.width * 0.5
             height: 9
             radius: 4
-            color: "#222"
+            color: Qt.darker(baseColor, 1.15)
             visible: pillCount >= 2
         }
     }

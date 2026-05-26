@@ -24,10 +24,12 @@ _PAGE = 50   # albums per fetch
 class _ShimmerDelegate(QStyledItemDelegate):
     """Paints animated shimmer cards for skeleton placeholder items."""
 
-    def __init__(self, viewport):
+    def __init__(self, viewport, base_color="#282828"):
         super().__init__(viewport)
         self._phase    = 0.0
         self._viewport = viewport
+        c = QColor(base_color)
+        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
         self._timer    = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(40)   # ~25 fps
@@ -55,8 +57,8 @@ class _ShimmerDelegate(QStyledItemDelegate):
         cx, cy   = rect.x() + padding, rect.y() + padding
 
         phase      = (self._phase + index.row() * 0.18) % 1.0
-        brightness = int(42 + 22 * math.sin(phase * 2 * math.pi))
-        dim        = max(20, brightness - 12)
+        brightness = int(self._base + 22 * math.sin(phase * 2 * math.pi))
+        dim        = max(0, brightness - 12)
 
         # Album art placeholder
         painter.setBrush(QBrush(QColor(brightness, brightness, brightness)))
@@ -475,7 +477,8 @@ class HomeAlbumRowWidget(QWidget):
         # Install shimmer delegate (stops and replaces on populate)
         if not isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
             self._real_delegate    = self.list_widget.itemDelegate()
-            self._shimmer_delegate = _ShimmerDelegate(self.list_widget.viewport())
+            sk = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
+            self._shimmer_delegate = _ShimmerDelegate(self.list_widget.viewport(), base_color=sk)
             self.list_widget.setItemDelegate(self._shimmer_delegate)
 
         self._render_page()
@@ -551,10 +554,14 @@ class HomeAlbumRowWidget(QWidget):
         self._btn_left.set_color(color)
         self._btn_right.set_color(color)
         self._grip.set_color(color)
-        self.list_widget.viewport().update()
         theme = getattr(self.window(), 'theme', None)
         if theme:
             self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-size: 15px; font-weight: bold; background: transparent;")
+            if isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
+                sk = getattr(theme, 'skeleton_base', '#282828')
+                c = QColor(sk)
+                self.list_widget.itemDelegate()._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
+        self.list_widget.viewport().update()
 
     # ── Resize ────────────────────────────────────────────────────────────
 
@@ -595,7 +602,8 @@ class HomeAlbumRowWidget(QWidget):
                                     Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                     Qt.TransformationMode.SmoothTransformation))
         ph = QPixmap(max(1, cw - 12), max(1, cw - 12))
-        ph.fill(QColor("#1a1a1a"))
+        sk = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#1a1a1a')
+        ph.fill(QColor(sk))
         return QIcon(ph)
 
     def _render_page(self):

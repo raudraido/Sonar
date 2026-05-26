@@ -11,6 +11,7 @@ Item {
     property int    fontSizeSecondary:  12
     property string fontColorPrimary:   "#eeeeee"
     property string fontColorSecondary: "#cccccc"
+    property string skeletonBaseColor:  "#282828"
 
     Connections {
         target: sectionBridge
@@ -19,6 +20,7 @@ Item {
         function onFontSizeSecondaryChanged(size)  { root.fontSizeSecondary = size }
         function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
         function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
+        function onSkeletonBaseColorChanged(color) { root.skeletonBaseColor = color }
         function onSelectIndex(idx) {
             if (idx >= 0 && idx < grid.count) {
                 grid.currentIndex = idx
@@ -109,7 +111,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
-                        color: coverId ? "transparent" : "#1a1a1a"
+                        color: coverId ? "transparent" : root.skeletonBaseColor
                     }
 
                     Image {

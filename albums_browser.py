@@ -80,10 +80,11 @@ class GridBridge(QObject):
     visibleRangeChanged = pyqtSignal(int, int)
     accentColorChanged = pyqtSignal(str)
     bgAlphaChanged = pyqtSignal(float)
-    fontSizePrimaryChanged   = pyqtSignal(int)
-    fontSizeSecondaryChanged = pyqtSignal(int)
-    fontColorPrimaryChanged  = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
+    skeletonBaseColorChanged  = pyqtSignal(str)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
     indexChanged = pyqtSignal(int)
@@ -1930,6 +1931,10 @@ class AlbumDetailView(QWidget):
             self.lbl_artist.set_color(color)
         if hasattr(self, '_track_header'):
             self._track_header.set_accent(color)
+        if hasattr(self, 'cover_label'):
+            theme = getattr(self.window(), 'theme', None)
+            sk = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
+            self.cover_label.setStyleSheet(f"background-color: {sk}; border-radius: 12px;")
         if hasattr(self, '_track_delegate'):
             theme = getattr(self.window(), 'theme', None)
             if theme:
@@ -2974,6 +2979,8 @@ class LibraryGridBrowser(QWidget):
                 self.grid_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
                 self.grid_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
                 self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+                self.grid_bridge.skeletonBaseColorChanged.emit(
+                    getattr(theme, 'skeleton_base', '#282828'))
 
         if getattr(self, 'current_accent', None) == color:
             return

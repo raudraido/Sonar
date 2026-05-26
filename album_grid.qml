@@ -29,6 +29,7 @@ Rectangle {
     property int    fontSizeSecondary:  12
     property string fontColorPrimary:   "#eeeeee"
     property string fontColorSecondary: "#cccccc"
+    property string skeletonBaseColor:  "#282828"
 
     Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
@@ -40,6 +41,7 @@ Rectangle {
         function onFontSizeSecondaryChanged(size)  { root.fontSizeSecondary = size }
         function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
         function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
+        function onSkeletonBaseColorChanged(color) { root.skeletonBaseColor = color }
 
         
         function onCancelScroll() {
@@ -194,6 +196,7 @@ Rectangle {
                     anchors.right: parent.right
                     anchors.top: parent.top
                     pillCount: 2
+                    baseColor: root.skeletonBaseColor
                 }
 
                 // Gray image placeholder: data known but cover not yet loaded
@@ -204,7 +207,7 @@ Rectangle {
                     anchors.top: parent.top
                     height: width
                     radius: 8
-                    color: "#1a1a1a"
+                    color: root.skeletonBaseColor
                 }
 
                 Item {
@@ -217,7 +220,7 @@ Rectangle {
                     Rectangle {
                         anchors.fill: parent
                         radius: 8
-                        color: coverId ? "transparent" : "#1a1a1a"
+                        color: coverId ? "transparent" : root.skeletonBaseColor
                     }
 
                     Image {

@@ -377,6 +377,17 @@ class PersistenceMixin:
             self.artist_browser.cover_worker.quit()
             self.artist_browser.cover_worker.wait()
 
+        # Stop artist detail workers (LiveArtistDetailWorker instances do blocking
+        # network calls; without terminating them the process hangs after window close)
+        for _av in ('global_artist_view',):
+            _view = getattr(self, _av, None)
+            if _view and hasattr(_view, 'stop_all_workers'):
+                _view.stop_all_workers()
+        _ab = getattr(self, 'artist_browser', None)
+        _inner = getattr(_ab, 'artist_view', None)
+        if _inner and hasattr(_inner, 'stop_all_workers'):
+            _inner.stop_all_workers()
+
         # 4. Stop remaining Python worker threads
         if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning(): 
             self.loading_thread.quit()

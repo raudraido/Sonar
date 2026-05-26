@@ -1036,16 +1036,25 @@ class NoFocusDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
 class SkeletonDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None, base_color="#282828"):
+        super().__init__(parent)
+        self.set_base_color(base_color)
+
+    def set_base_color(self, hex_color: str):
+        c = QColor(hex_color)
+        luma = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
+        self._pill_color = QColor(luma + 18, luma + 18, luma + 18)
+
     def paint(self, painter, option, index):
         painter.save()
         painter.setPen(QColor(255, 255, 255, 10))
         painter.drawLine(option.rect.bottomLeft(), option.rect.bottomRight())
-        
+
         rect = option.rect
         col = index.column()
-        
+
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#3a3a3a")) # Brighter gray pill color
+        painter.setBrush(self._pill_color)
         
         h = 12
         y = rect.top() + (rect.height() - h) // 2
@@ -2721,8 +2730,9 @@ class TracksBrowser(QWidget):
         self.tree.clear()
         
         if not hasattr(self, 'skeleton_delegate'):
-            self.skeleton_delegate = SkeletonDelegate(self.tree)
-            
+            sk = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
+            self.skeleton_delegate = SkeletonDelegate(self.tree, base_color=sk)
+
         # 🟢 Skip column 0 so it uses the standard text renderer for the numbers!
         for i in range(1, 13):
             self.tree.setItemDelegateForColumn(i, self.skeleton_delegate)
@@ -4005,6 +4015,10 @@ class TracksBrowser(QWidget):
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
 
     def set_accent_color(self, color):
+        _theme = getattr(self.window(), 'theme', None)
+        if hasattr(self, 'skeleton_delegate'):
+            self.skeleton_delegate.set_base_color(
+                getattr(_theme, 'skeleton_base', '#282828') if _theme else '#282828')
         if hasattr(self, 'search_container'):
             _theme = getattr(self.window(), 'theme', None)
             from player.mixins.visuals import resolve_menu_hover
