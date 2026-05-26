@@ -79,6 +79,8 @@ class AudioVisualizer(QWidget):
         self._vu_rms       = 0.0   # smoothed RMS in linear domain
         self._vu_bg        = QPixmap(resource_path("img/vuM.png"))
         self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
+        self._vu_bg_scaled    = QPixmap()
+        self._vu_frame_scaled = QPixmap()
         self._raw_vis_data = []
         self._vu_debug_frame = 0
         _s = QSettings("Icosahedron", "Visualizer")
@@ -122,6 +124,8 @@ class AudioVisualizer(QWidget):
                 bin_end = bin_start + 1
                 
             self.bar_bins.append((bin_start, bin_end))
+
+        self._bg_color: QColor | None = None
 
         self.setMinimumHeight(120)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -303,17 +307,28 @@ class AudioVisualizer(QWidget):
         super().resizeEvent(event)
         self._floor_pen = None
         W, H = self.width(), self.height()
-        # Only position toggle button when it hasn't been re-parented to _SectionWidget
-        if self.btn_toggle_vis.parent() is self:
-            self.btn_toggle_vis.move(W - self.btn_toggle_vis.width() - 8, 8)
+        cw = int(W * 2 / 3)
+        cx = (W - cw) // 2
         if not self._vu_bg.isNull():
             iw, ih = self._vu_bg.width(), self._vu_bg.height()
-            scale = min(W / iw, H / ih)
-            dh = int(ih * scale)
+            scale = min(cw / iw, H / ih)
+            sw, sh = int(iw * scale), int(ih * scale)
+            self._vu_bg_scaled = self._vu_bg.scaled(
+                sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            if not self._vu_frame.isNull():
+                self._vu_frame_scaled = self._vu_frame.scaled(
+                    sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+            ch = sh
         else:
-            dh = H
-        btn_bottom = dh - 4
-        self.btn_ref_level.move((W - self.btn_ref_level.width()) // 2,
+            ch = H
+        cy = (H - ch) // 2
+        # Only position toggle button when it hasn't been re-parented to _SectionWidget
+        if self.btn_toggle_vis.parent() is self:
+            self.btn_toggle_vis.move(cx + cw - self.btn_toggle_vis.width() - 8, cy + 8)
+        btn_bottom = cy + ch - 4
+        self.btn_ref_level.move(cx + (cw - self.btn_ref_level.width()) // 2,
                                 btn_bottom - self.btn_ref_level.height())
 
     def enterEvent(self, event):
@@ -447,6 +462,15 @@ class AudioVisualizer(QWidget):
         self._floor_pen_width = w
         self._floor_pen_x = x_offset
 
+    def set_bg_color(self, rgb_str: str):
+        """Accept 'r,g,b' string from theme and repaint background."""
+        try:
+            r, g, b = (int(x) for x in rgb_str.split(','))
+            self._bg_color = QColor(r, g, b)
+        except Exception:
+            self._bg_color = None
+        self.update()
+
     def paintEvent(self, event):
         if not getattr(self, 'visualizer_enabled', True):
             return
@@ -454,20 +478,36 @@ class AudioVisualizer(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if self.vis_mode == 0:
-            self._paint_bars(painter)
-        else:
-            self._paint_vu_meter(painter)
+        full_w, full_h = self.width(), self.height()
 
-        painter.end()
+        if self._bg_color is not None:
+            painter.fillRect(self.rect(), self._bg_color)
 
-    def _paint_bars(self, painter):
-        W, H = self.width(), self.height()
-
+        cw = int(full_w * 2 / 3)
+        cx = (full_w - cw) // 2
         if not self._vu_bg.isNull():
             iw, ih = self._vu_bg.width(), self._vu_bg.height()
-            scale  = min(W / iw, H / ih)
-            dw, dh = int(iw * scale), int(ih * scale)
+            scale = min(cw / iw, full_h / ih)
+            ch = int(ih * scale)
+        else:
+            ch = full_h
+        cy = (full_h - ch) // 2
+
+        painter.save()
+        painter.translate(cx, cy)
+
+        if self.vis_mode == 0:
+            self._paint_bars(painter, cw, ch)
+        else:
+            self._paint_vu_meter(painter, cw, ch)
+
+        painter.restore()
+        painter.end()
+
+    def _paint_bars(self, painter, W, H):
+        _bg = self._vu_bg_scaled if not self._vu_bg_scaled.isNull() else self._vu_bg
+        if not _bg.isNull():
+            dw, dh = _bg.width(), _bg.height()
             dx, dy = (W - dw) // 2, 0
         else:
             dx, dy, dw, dh = 0, 0, W, H
@@ -491,21 +531,19 @@ class AudioVisualizer(QWidget):
             painter.drawRoundedRect(QRectF(x, y_top, bar_w, bar_h), radius, radius)
 
 
-    def _paint_vu_meter(self, painter):
-        W, H = self.width(), self.height()
+    def _paint_vu_meter(self, painter, W, H):
 
-        # ── Layer 1: full background (glass + frame) ──────────────────────────
-        if not self._vu_bg.isNull():
-            iw, ih = self._vu_bg.width(), self._vu_bg.height()
-            scale  = min(W / iw, H / ih)
-            dw, dh = int(iw * scale), int(ih * scale)
+        # ── Layer 1: full background — use pre-scaled copy for crisp rendering ─
+        _bg = self._vu_bg_scaled if not self._vu_bg_scaled.isNull() else self._vu_bg
+        if not _bg.isNull():
+            dw, dh = _bg.width(), _bg.height()
             dx, dy = (W - dw) // 2, 0
             radius = 8.0
             path = QPainterPath()
             path.addRoundedRect(QRectF(dx, dy, dw, dh), radius, radius)
             painter.save()
             painter.setClipPath(path)
-            painter.drawPixmap(dx, dy, dw, dh, self._vu_bg)
+            painter.drawPixmap(dx, dy, _bg)
             painter.restore()
         else:
             dx, dy, dw, dh = 0, 0, W, H
@@ -602,8 +640,9 @@ class AudioVisualizer(QWidget):
 
         # ── Layer 3: frame overlay (transparent glass, opaque bezel) ──────────
         # Drawn on top so the frame covers the needle tail naturally.
-        if not self._vu_frame.isNull():
+        _frame = self._vu_frame_scaled if not self._vu_frame_scaled.isNull() else self._vu_frame
+        if not _frame.isNull():
             painter.save()
             painter.setClipPath(path)
-            painter.drawPixmap(dx, dy, dw, dh, self._vu_frame)
+            painter.drawPixmap(dx, dy, _frame)
             painter.restore()

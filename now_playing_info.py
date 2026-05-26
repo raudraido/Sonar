@@ -718,6 +718,7 @@ class NowPlayingInfoTab(QWidget):
         self._top_page_idx: int      = 0
         self._artist_page_idx: int   = 0
         self._pending_track: dict | None = None
+        self._cover_pixmap: QPixmap | None = None
 
         self._w_info:  _ArtistInfoWorker  | None = None
         self._w_img:   _ImageWorker       | None = None
@@ -838,6 +839,7 @@ class NowPlayingInfoTab(QWidget):
         if tid and tid == self._current_track.get('id'):
             return
         self._current_track = track
+        self._cover_pixmap  = None
         self._cancel_workers()
 
         self._build_track_card(track)
@@ -877,8 +879,10 @@ class NowPlayingInfoTab(QWidget):
             try:
                 url = self._client.get_cover_art_url(cover_id, 400)
                 if url in _artist_img_cache:
+                    pix = _artist_img_cache[url]
+                    self._cover_pixmap = pix
                     if self._cover_art_lbl:
-                        self._cover_art_lbl.set_pixmap(_artist_img_cache[url])
+                        self._cover_art_lbl.set_pixmap(pix)
                 else:
                     self._w_cover = _ImageWorker(url)
                     self._w_cover.done.connect(self._on_cover_art)
@@ -946,6 +950,7 @@ class NowPlayingInfoTab(QWidget):
         """Rebuild all card content using cached data (called after theme change)."""
         track = self._current_track
         self._build_track_card(track)
+        self._restore_cover_art()
 
         album_id = track.get('albumId') or track.get('album_id', '')
         if album_id and album_id in _album_tracks_cache:
@@ -1003,6 +1008,8 @@ class NowPlayingInfoTab(QWidget):
             self._artist_photo_lbl.set_pixmap(pix)
 
     def _on_cover_art(self, pix: QPixmap):
+        if not pix.isNull():
+            self._current_track['_cover_pixmap'] = pix
         if self._cover_art_lbl and not pix.isNull():
             self._cover_art_lbl.set_pixmap(pix)
 
@@ -1015,6 +1022,14 @@ class NowPlayingInfoTab(QWidget):
     def _on_top_songs(self, tracks: list):
         self._build_top_card(tracks)
 
+    def _restore_cover_art(self):
+        """Re-apply cached cover art to the current art widget after a card rebuild."""
+        if not self._cover_art_lbl:
+            return
+        pix = self._cover_pixmap
+        if pix and not pix.isNull():
+            self._cover_art_lbl.set_pixmap(pix)
+
     def _on_song_detail(self, raw: dict):
         if not raw:
             return
@@ -1025,6 +1040,7 @@ class NowPlayingInfoTab(QWidget):
                 changed = True
         if changed:
             self._build_track_card(self._current_track)
+            self._restore_cover_art()
 
     def _nav_artist_page(self, idx: int):
         if not (0 <= idx < len(self._top_artists)):
@@ -1505,7 +1521,7 @@ class NowPlayingInfoTab(QWidget):
             self._top_card_lo.addWidget(row)
 
         if name:
-            credit = QLabel(f'Top tracks from {name}')
+            credit = QLabel(f'Top tracks from {name} via Last.fm')
             credit.setStyleSheet(
                 f'color: {self._fg2}; font-size: 10px; background: transparent; padding-top: 4px;'
             )

@@ -332,6 +332,15 @@ class VisualsMixin:
         self._last_theme_key = theme_key
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
+        if hasattr(self, '_vis_icon_pix') and not self._vis_icon_pix.isNull():
+            out = QPixmap(self._vis_icon_pix.size())
+            out.fill(Qt.GlobalColor.transparent)
+            p = QPainter(out)
+            p.drawPixmap(0, 0, self._vis_icon_pix)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(out.rect(), QColor(mc))
+            p.end()
+            self.tabs.tabBar().setTabIcon(self._vis_tab_idx, QIcon(out))
         if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
@@ -514,6 +523,16 @@ class VisualsMixin:
             _w = self.tabs.widget(_i)
             if hasattr(_w, 'set_bg_color'):
                 _w.set_bg_color(bg)
+            elif _w is not None and _w.objectName() == 'VisContainer':
+                _w.setStyleSheet(f'#VisContainer {{ background: rgb({bg}); }}')
+                if hasattr(self, 'visualizer'):
+                    self.visualizer.set_bg_color(bg)
+                if hasattr(self, '_coming_soon_lbl'):
+                    self._coming_soon_lbl.setStyleSheet(
+                        f"color: {self.theme.font_color_primary}; background: transparent;"
+                        f" border: none; font-size: {self.theme.font_size_primary}px;"
+                        f" letter-spacing: 1px; padding: 10px 0 0 0;"
+                    )
         if hasattr(self, '_queue_tree_panel') and hasattr(self._queue_tree_panel, 'set_bg_color'):
             self._queue_tree_panel.set_bg_color(bg)
         if hasattr(self, '_left_panel') and hasattr(self._left_panel, 'header'):

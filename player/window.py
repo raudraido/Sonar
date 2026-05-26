@@ -104,8 +104,11 @@ class _TabsCompat(_QObject):
 
     # ── QTabWidget-compatible API ─────────────────────────────────────────────
 
-    def addTab(self, widget, label: str) -> int:
-        idx = self._bar.addTab(label)
+    def addTab(self, widget, label: str, icon=None) -> int:
+        if icon is not None:
+            idx = self._bar.addTab(icon, label)
+        else:
+            idx = self._bar.addTab(label)
         self._stack.addWidget(widget)
         return idx
 
@@ -418,8 +421,7 @@ class SonarPlayer(
         if event.type() == QEvent.Type.WindowStateChange:
             minimized = bool(self.windowState() & Qt.WindowState.WindowMinimized)
 
-            vis_section_visible = getattr(self, '_vis_section', None) and self._vis_section._content.isVisible()
-            vis_active = (not minimized) and bool(vis_section_visible)
+            vis_active = not minimized
             if hasattr(self, 'audio_engine'):
                 self.audio_engine.set_visualizer_active(vis_active)
             if hasattr(self, 'visualizer'):
@@ -494,11 +496,8 @@ class SonarPlayer(
 
         # --- LEFT PANEL ---
         self._left_panel = LeftPanel(self, self.audio_engine, self.settings)
-        # Expose sub-objects as window attributes so mixins keep working unchanged
-        self.visualizer    = self._left_panel.visualizer
         self.art_container = self._left_panel.art_container
         self._art_section  = self._left_panel.art_section
-        self._vis_section  = self._left_panel.vis_section
         self._sidebar_art_anim = self._left_panel.sidebar_art_anim
         self._sidebar_art_visible = False
         self._info_section = None  # removed from left panel
@@ -617,8 +616,26 @@ class SonarPlayer(
         if hasattr(self, 'theme'): self.playlists_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.playlists_browser, "Playlists")
 
+        # 7. Visualizer
+        self.visualizer = AudioVisualizer(self.audio_engine)
+        _vis_container = QWidget()
+        _vis_container.setObjectName('VisContainer')
+        _vis_lo = QVBoxLayout(_vis_container)
+        _vis_lo.setContentsMargins(0, 0, 0, 0)
+        _vis_lo.setSpacing(0)
+        self._coming_soon_lbl = QLabel("Coming Soon™")
+        self._coming_soon_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._coming_soon_lbl.setStyleSheet(
+            "color: rgba(255,255,255,0.18); background: transparent; border: none;"
+            "font-size: 11px; letter-spacing: 1px; padding: 10px 0 0 0;"
+        )
+        _vis_lo.addWidget(self._coming_soon_lbl)
+        _vis_lo.addWidget(self.visualizer, 1)
+        self._vis_icon_pix = QPixmap(resource_path('img/visualizer.png'))
+        self.tabs.addTab(_vis_container, "Visualizer")
+        self._vis_tab_idx = self.tabs.count() - 1
 
-        # 7. THE HIDDEN GLOBAL ALBUM TAB!
+        # 8. THE HIDDEN GLOBAL ALBUM TAB!
         from albums_browser import AlbumDetailView
         self.global_album_view = AlbumDetailView(None)
         

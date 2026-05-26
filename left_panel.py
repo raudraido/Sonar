@@ -14,7 +14,6 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QPixmap, QColor, QIcon
 from PyQt6.QtGui import QPainter as _QPainter
 
-from visualizer import AudioVisualizer
 from player.widgets import SquareArtContainer
 from player import resource_path
 
@@ -287,45 +286,10 @@ class LeftPanel(QWidget):
             lambda v: self.art_section.setMinimumHeight(int(v))
         )
 
-        # Visualizer
-        self.visualizer = AudioVisualizer(audio_engine)
-        self.visualizer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.visualizer.setMaximumWidth(16777215)
-
-        vis_container = QWidget()
-        vis_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        vis_layout = QHBoxLayout(vis_container)
-        vis_layout.setContentsMargins(0, 0, 0, 0)
-        vis_layout.setSpacing(0)
-        vis_layout.addWidget(self.visualizer)
-
-        self.vis_section = _SectionWidget(vis_container, 'vis', main_window, show_controls=True)
-
-        # Wire the visualizer's switch button as the companion to the hide button.
-        # Disable AudioVisualizer's own hover management so _SectionWidget owns it.
-        btn_vis = self.visualizer.btn_toggle_vis
-        btn_vis.setGraphicsEffect(None)
-        btn_vis.hide()
-        self.visualizer.toggle_opacity = None
-        self.visualizer.hover_anim = None
-        btn_vis.setParent(self.vis_section)
-        btn_vis.raise_()
-        self.vis_section._companion_btn = btn_vis
-        # Tear down the opacity state created during __init__ so the first
-        # enterEvent calls _init_opacity_effect() with the companion already set.
-        self.vis_section._btn.setGraphicsEffect(None)
-        self.vis_section._btn.hide()
-        self.vis_section._toggle_opacity = None
-        self.vis_section._hover_anim = None
-
-        # Fixed order: visualizer fills, art slides in at bottom
-        _layout.addWidget(self.vis_section, 1)
+        # Art sits at the bottom of the left panel
+        _layout.addStretch(1)
         _layout.addSpacing(8)
         _layout.addWidget(self.art_section, 0)
-
-        # Restore vis section visibility
-        if not int(settings.value('section_vis_visible', 1)):
-            QTimer.singleShot(0, self.vis_section._toggle)
 
     def _tint_logo(self, color: str, size: int | None = None) -> QPixmap:
         sz = size if size is not None else self._logo_size
