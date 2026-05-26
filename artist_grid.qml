@@ -176,11 +176,21 @@ Rectangle {
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
                 SkeletonCard {
-                    visible: isLoading
+                    visible: artistName === ""
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
                     pillCount: 1
+                }
+
+                Rectangle {
+                    visible: isLoading && artistName !== ""
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: width
+                    radius: 8
+                    color: "#1a1a1a"
                 }
 
                 Item {
@@ -251,7 +261,7 @@ Rectangle {
                 }
 
                 Column {
-                    visible: !isLoading
+                    visible: artistName !== ""
                     z: 2
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8
