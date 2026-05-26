@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QFrame,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer
-from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush
+from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics
 
 from player.mixins.visuals import resolve_menu_hover
 
@@ -174,6 +174,21 @@ class _BandsintownWorker(QThread):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _parse_qcolor(s: str) -> QColor:
+    """Parse #rrggbb, #aarrggbb, or rgba(r,g,b,a) into a QColor."""
+    s = s.strip()
+    if s.startswith('rgba('):
+        try:
+            parts = s[5:-1].split(',')
+            r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+            a = int(float(parts[3])) if len(parts) > 3 else 255
+            return QColor(r, g, b, a)
+        except Exception:
+            return QColor(42, 42, 42)
+    c = QColor(s)
+    return c if c.isValid() else QColor(42, 42, 42)
+
+
 def _fmt_dur(seconds) -> str:
     try:
         s = int(float(seconds))
@@ -275,6 +290,57 @@ class _RoundedPixmapLabel(QWidget):
             p.drawPixmap(0, 0, scaled, ox, oy, r.width(), r.height())
         else:
             p.fillRect(r, QColor(45, 45, 45))
+        p.end()
+
+
+# ── Hover chip (similar artists) ─────────────────────────────────────────────
+
+class _HoverChip(QWidget):
+    clicked = pyqtSignal()
+
+    def __init__(self, text: str, fg: str, border_color: str, font_size: int,
+                 hover_color: QColor = None, parent=None):
+        super().__init__(parent)
+        self._hovered      = False
+        self._hover_color  = hover_color or QColor(255, 255, 255, 25)
+        self._border_color = _parse_qcolor(border_color)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        lo = QHBoxLayout(self)
+        lo.setContentsMargins(8, 3, 8, 3)
+        lo.setSpacing(0)
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f'color: {fg}; font-size: {font_size}px; background: transparent;')
+        lo.addWidget(lbl)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setBrush(QBrush(QColor(255, 255, 255, 20)))
+        p.setPen(QPen(self._border_color, 1))
+        p.drawRoundedRect(r, 4, 4)
+        if self._hovered:
+            p.setBrush(QBrush(self._hover_color))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(r, 4, 4)
         p.end()
 
 
@@ -570,8 +636,9 @@ class NowPlayingInfoTab(QWidget):
         self._bg            = '14,14,14'
         self._border_color  = '#2a2a2a'
         self._card_bg       = '#1e1e1e'
-        self._hover_color   = QColor(255, 255, 255, 25)
-        self._settings      = QSettings('Icosahedron', 'Icosahedron')
+        self._hover_color         = QColor(255, 255, 255, 25)
+        self._font_size_secondary = 12
+        self._settings            = QSettings('Icosahedron', 'Icosahedron')
         self._top_artists: list[str] = []
         self._top_page_idx: int      = 0
         self._pending_track: dict | None = None
@@ -614,7 +681,14 @@ class NowPlayingInfoTab(QWidget):
         self._track_card_lo.setSpacing(14)
         root.addWidget(self._track_card)
 
-        # ── Middle row: top songs (left) + artist (right) ────────────
+        # ── Two-column layout ─────────────────────────────────────────
+        # Left col:  album card → top songs card
+        # Right col: artist card → tour card
+        self._album_card    = _Card()
+        self._album_card_lo = QVBoxLayout(self._album_card)
+        self._album_card_lo.setContentsMargins(14, 14, 14, 14)
+        self._album_card_lo.setSpacing(4)
+
         self._top_card    = _Card()
         self._top_card_lo = QVBoxLayout(self._top_card)
         self._top_card_lo.setContentsMargins(14, 14, 14, 14)
@@ -625,36 +699,40 @@ class NowPlayingInfoTab(QWidget):
         self._artist_card_lo.setContentsMargins(14, 14, 14, 14)
         self._artist_card_lo.setSpacing(6)
 
-        mid_w  = QWidget()
-        mid_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        mid_w.setStyleSheet('background: transparent;')
-        mid_lo = QHBoxLayout(mid_w)
-        mid_lo.setContentsMargins(0, 0, 0, 0)
-        mid_lo.setSpacing(10)
-        mid_lo.addWidget(self._top_card, 1, Qt.AlignmentFlag.AlignTop)
-        mid_lo.addWidget(self._artist_card, 1, Qt.AlignmentFlag.AlignTop)
-        root.addWidget(mid_w)
-
-        # ── Bottom row: album (left) + tour (right) ───────────────────
-        self._album_card    = _Card()
-        self._album_card_lo = QVBoxLayout(self._album_card)
-        self._album_card_lo.setContentsMargins(14, 14, 14, 14)
-        self._album_card_lo.setSpacing(4)
-
         self._tour_card    = _Card()
         self._tour_card_lo = QVBoxLayout(self._tour_card)
         self._tour_card_lo.setContentsMargins(14, 14, 14, 14)
         self._tour_card_lo.setSpacing(4)
 
-        bottom_w  = QWidget()
-        bottom_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        bottom_w.setStyleSheet('background: transparent;')
-        bottom_lo = QHBoxLayout(bottom_w)
-        bottom_lo.setContentsMargins(0, 0, 0, 0)
-        bottom_lo.setSpacing(10)
-        bottom_lo.addWidget(self._album_card, 1, Qt.AlignmentFlag.AlignTop)
-        bottom_lo.addWidget(self._tour_card,  1, Qt.AlignmentFlag.AlignTop)
-        root.addWidget(bottom_w)
+        left_col_w  = QWidget()
+        left_col_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        left_col_w.setStyleSheet('background: transparent;')
+        left_col_lo = QVBoxLayout(left_col_w)
+        left_col_lo.setContentsMargins(0, 0, 0, 0)
+        left_col_lo.setSpacing(10)
+        left_col_lo.addWidget(self._album_card)
+        left_col_lo.addWidget(self._top_card)
+        left_col_lo.addStretch(1)
+
+        right_col_w  = QWidget()
+        right_col_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        right_col_w.setStyleSheet('background: transparent;')
+        right_col_lo = QVBoxLayout(right_col_w)
+        right_col_lo.setContentsMargins(0, 0, 0, 0)
+        right_col_lo.setSpacing(10)
+        right_col_lo.addWidget(self._artist_card)
+        right_col_lo.addWidget(self._tour_card)
+        right_col_lo.addStretch(1)
+
+        cols_w  = QWidget()
+        cols_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        cols_w.setStyleSheet('background: transparent;')
+        cols_lo = QHBoxLayout(cols_w)
+        cols_lo.setContentsMargins(0, 0, 0, 0)
+        cols_lo.setSpacing(10)
+        cols_lo.addWidget(left_col_w,  1)
+        cols_lo.addWidget(right_col_w, 1)
+        root.addWidget(cols_w)
 
         root.addStretch(1)
 
@@ -752,10 +830,11 @@ class NowPlayingInfoTab(QWidget):
     def apply_theme(self, theme):
         if theme is None:
             return
-        self._accent       = getattr(theme, 'accent', self._accent)
-        self._fg           = getattr(theme, 'font_color_primary', self._fg)
-        self._fg2          = getattr(theme, 'font_color_secondary', self._fg2)
-        self._border_color = getattr(theme, 'border_color', self._border_color)
+        self._accent              = getattr(theme, 'accent', self._accent)
+        self._fg                  = getattr(theme, 'font_color_primary', self._fg)
+        self._fg2                 = getattr(theme, 'font_color_secondary', self._fg2)
+        self._font_size_secondary = getattr(theme, 'font_size_secondary', self._font_size_secondary)
+        self._border_color        = getattr(theme, 'border_color', self._border_color)
         self._card_bg      = getattr(theme, 'now_playing_card_bg', self._card_bg)
         raw_bg = getattr(theme, 'main_panel_bg', self._bg)
         self._bg = str(raw_bg)
@@ -765,8 +844,7 @@ class NowPlayingInfoTab(QWidget):
             card.set_border(self._border_color)
             card.set_bg(self._card_bg)
         hover_str = resolve_menu_hover(theme)
-        c = QColor(hover_str)
-        self._hover_color = c if c.isValid() else QColor(255, 255, 255, 25)
+        self._hover_color = _parse_qcolor(hover_str)
 
     def set_bg_color(self, color: str):
         self._bg = color
@@ -1126,7 +1204,7 @@ class NowPlayingInfoTab(QWidget):
         namerow_lo.setContentsMargins(0, 0, 0, 0)
         namerow_lo.setSpacing(10)
 
-        photo = _RoundedPixmapLabel(44, 44, radius=22)
+        photo = _RoundedPixmapLabel(88, 88, radius=44)
         self._artist_photo_lbl = photo
         namerow_lo.addWidget(photo)
 
@@ -1146,14 +1224,26 @@ class NowPlayingInfoTab(QWidget):
 
         bio_lbl = QLabel(bio)
         bio_lbl.setWordWrap(True)
+        bio_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         bio_lbl.setStyleSheet(
-            f'color: {self._fg2}; font-size: 12px; background: transparent; line-height: 150%;'
+            f'color: {self._fg2}; font-size: {self._font_size_secondary}px;'
+            f' background: transparent; line-height: 150%;'
         )
         bio_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        fm     = bio_lbl.fontMetrics()
-        max_h  = fm.height() * BIO_LINES + 4
+        _mf   = QFont()
+        _mf.setPixelSize(self._font_size_secondary)
+        fm    = QFontMetrics(_mf)
+        max_h = fm.lineSpacing() * BIO_LINES + fm.leading()
         bio_lbl.setMaximumHeight(max_h)
         self._artist_card_lo.addWidget(bio_lbl)
+
+        # Placeholder inserted here so the toggle button sits above similar artists
+        toggle_slot_w  = QWidget()
+        toggle_slot_w.setStyleSheet('background: transparent;')
+        toggle_slot_lo = QVBoxLayout(toggle_slot_w)
+        toggle_slot_lo.setContentsMargins(0, 0, 0, 0)
+        toggle_slot_lo.setSpacing(0)
+        self._artist_card_lo.addWidget(toggle_slot_w)
 
         expanded = [False]
         accent   = self._accent
@@ -1184,7 +1274,7 @@ class NowPlayingInfoTab(QWidget):
 
             toggle.clicked.connect(_do_toggle)
             try:
-                self._artist_card_lo.addWidget(toggle)
+                toggle_slot_lo.addWidget(toggle)
             except RuntimeError:
                 toggle.deleteLater()
 
@@ -1199,7 +1289,12 @@ class NowPlayingInfoTab(QWidget):
             for item in (similar or [])[:6]:
                 name = item.get('name', '') if isinstance(item, dict) else str(item)
                 if name:
-                    sim_lo.addWidget(self._chip(name))
+                    chip = _HoverChip(
+                        name, self._fg2, self._border_color,
+                        self._font_size_secondary, self._hover_color,
+                    )
+                    chip.clicked.connect(lambda _name=name: self.artist_clicked.emit(_name))
+                    sim_lo.addWidget(chip)
             sim_lo.addStretch(1)
             self._artist_card_lo.addWidget(sim_w)
 
@@ -1303,11 +1398,11 @@ class NowPlayingInfoTab(QWidget):
 
     # ── Utilities ──────────────────────────────────────────────────────
 
-    def _chip(self, text: str) -> QLabel:
+    def _chip(self, text: str, font_size: int = 10) -> QLabel:
         lbl = QLabel(text)
         lbl.setStyleSheet(
             f'color: {self._fg2}; background: rgba(255,255,255,0.08); border-radius: 4px;'
-            ' font-size: 10px; padding: 2px 8px;'
+            f' font-size: {font_size}px; padding: 2px 8px;'
         )
         return lbl
 
