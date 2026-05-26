@@ -195,6 +195,7 @@ class ArtistInfoPanel(QScrollArea):
         self._font_color_primary   = "#eeeeee"
         self._font_color_secondary = "#888888"
         self._font_size_secondary  = 12
+        self._main_panel_bg        = "14,14,14"
         self._current_id   = None
         self._current_name = None
         self._show_all_tours = False
@@ -266,6 +267,7 @@ class ArtistInfoPanel(QScrollArea):
         self._font_color_secondary = getattr(theme, 'font_color_secondary', '#888888')
         self._font_size_secondary  = getattr(theme, 'font_size_secondary',  12)
         self._border_color         = getattr(theme, 'border_color',         'rgba(255,255,255,0.08)')
+        self._main_panel_bg        = str(getattr(theme, 'main_panel_bg',    '14,14,14'))
         if self._all_events:
             self._rebuild_tour_section()
 
@@ -654,10 +656,11 @@ class ArtistInfoPanel(QScrollArea):
             month, day = "", ""
 
         date_w = QWidget()
-        date_w.setFixedWidth(32)
-        date_w.setStyleSheet("background: transparent;")
+        date_w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        date_w.setFixedSize(38, 42)
+        date_w.setStyleSheet(f"background: rgb({self._main_panel_bg}); border-radius: 6px;")
         dv = QVBoxLayout(date_w)
-        dv.setContentsMargins(0, 0, 0, 0)
+        dv.setContentsMargins(0, 3, 0, 3)
         dv.setSpacing(0)
         dv.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -685,14 +688,15 @@ class ArtistInfoPanel(QScrollArea):
         country = venue.get("country", "") if isinstance(venue, dict) else ""
         place   = ", ".join(p for p in [city, region, country] if p)
 
+        fs = self._font_size_secondary
         v_lbl = QLabel(venue_name or place)
-        v_lbl.setStyleSheet(f"color: {self._font_color_secondary}; font-size: 11px; font-weight: bold; background: transparent;")
+        v_lbl.setStyleSheet(f"color: {self._font_color_primary}; font-size: {fs}px; background: transparent;")
         v_lbl.setWordWrap(True)
         mv.addWidget(v_lbl)
 
         if place and venue_name:
             p_lbl = QLabel(place)
-            p_lbl.setStyleSheet(f"color: {self._font_color_secondary}; font-size: 10px; background: transparent;")
+            p_lbl.setStyleSheet(f"color: {self._font_color_secondary}; font-size: {fs - 2}px; background: transparent;")
             mv.addWidget(p_lbl)
 
         hbox.addWidget(meta_w, 1)

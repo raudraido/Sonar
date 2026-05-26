@@ -15,12 +15,12 @@ _ARTIST_SEP = re.compile(r'\s*(?:///|•|feat\.|Feat\.|vs\.)\s*')
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QPushButton, QSizePolicy, QFrame,
+    QPushButton, QSizePolicy, QFrame, QGraphicsDropShadowEffect,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics, QIcon
 
-from player.mixins.visuals import resolve_menu_hover
+from player.mixins.visuals import resolve_menu_hover, install_scroll_reveal, scrollbar_css
 
 # ── Caches ────────────────────────────────────────────────────────────────────
 _artist_info_cache:  dict = {}
@@ -297,15 +297,46 @@ class _Card(QWidget):
 
 # ── Rounded pixmap widget ─────────────────────────────────────────────────────
 
+def _extract_vibrant_color(pix: QPixmap) -> QColor:
+    """Sample pixmap at 8x8 and return the most saturated pixel."""
+    small = pix.scaled(8, 8, Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+    img = small.toImage()
+    best_sat = -1.0
+    best = QColor(80, 80, 80)
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = QColor(img.pixel(x, y))
+            _, s, l, _ = c.getHslF()
+            if s > best_sat and 0.1 < l < 0.9:
+                best_sat = s
+                best = c
+    return best
+
+
 class _RoundedPixmapLabel(QWidget):
-    def __init__(self, w: int, h: int, radius: int = 8, parent=None):
+    def __init__(self, w: int, h: int, radius: int = 8, show_glow: bool = False, parent=None):
         super().__init__(parent)
-        self._pix    = None
-        self._radius = radius
+        self._pix        = None
+        self._radius     = radius
+        self._show_glow  = show_glow
+        self._glow_eff   = None
         self.setFixedSize(w, h)
+        if show_glow:
+            eff = QGraphicsDropShadowEffect(self)
+            eff.setOffset(0, 10)
+            eff.setBlurRadius(38)
+            eff.setColor(QColor(0, 0, 0, 0))
+            self.setGraphicsEffect(eff)
+            self._glow_eff = eff
 
     def set_pixmap(self, pix: QPixmap):
         self._pix = pix
+        if self._show_glow and self._glow_eff and pix and not pix.isNull():
+            c = _extract_vibrant_color(pix)
+            # Dark shadow tinted with album color → depth (floating) not blur
+            shadow = QColor(c.red() // 3, c.green() // 3, c.blue() // 3, 210)
+            self._glow_eff.setColor(shadow)
         self.update()
 
     def paintEvent(self, _):
@@ -388,7 +419,7 @@ class _TrackRow(QWidget):
 
     def __init__(self, track: dict, index: int, accent: str,
                  fg: str, fg2: str, is_current: bool = False,
-                 hover_color: QColor = None, parent=None):
+                 hover_color: QColor = None, font_size: int = 12, parent=None):
         super().__init__(parent)
         self._track       = track
         self._hovered     = False
@@ -406,26 +437,26 @@ class _TrackRow(QWidget):
         num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         num_lbl.setStyleSheet(
             f"color: {accent if is_current else fg2};"
-            f" font-size: 11px; font-weight: {'bold' if is_current else 'normal'};"
+            f" font-size: {font_size}px; font-weight: {'bold' if is_current else 'normal'};"
             " background: transparent;"
         )
         lo.addWidget(num_lbl)
 
         title_lbl = QLabel(track.get('title', 'Unknown'))
         title_lbl.setStyleSheet(
-            f"color: {accent if is_current else fg};"
-            f" font-size: 12px; font-weight: {'bold' if is_current else 'normal'};"
+            f"color: {accent if is_current else fg2};"
+            f" font-size: {font_size}px; font-weight: {'bold' if is_current else 'normal'};"
             " background: transparent;"
         )
         title_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         lo.addWidget(title_lbl, 1)
 
-        dur = _fmt_dur(track.get('duration', ''))
+        dur = _fmt_dur(_parse_dur(track.get('duration', 0)))
         if dur:
             dur_lbl = QLabel(dur)
             dur_lbl.setFixedWidth(38)
             dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            dur_lbl.setStyleSheet(f"color: {fg2}; font-size: 11px; background: transparent;")
+            dur_lbl.setStyleSheet(f"color: {fg2}; font-size: {font_size}px; background: transparent;")
             lo.addWidget(dur_lbl)
 
     def mousePressEvent(self, event):
@@ -461,7 +492,7 @@ class _TopSongRow(QWidget):
 
     def __init__(self, track: dict, index: int, accent: str,
                  fg: str, fg2: str, is_current: bool = False,
-                 hover_color: QColor = None, parent=None):
+                 hover_color: QColor = None, font_size: int = 12, parent=None):
         super().__init__(parent)
         self._track       = track
         self._hovered     = False
@@ -479,7 +510,7 @@ class _TopSongRow(QWidget):
         num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         num_lbl.setStyleSheet(
             f"color: {accent if is_current else fg2};"
-            f" font-size: 11px; font-weight: {'bold' if is_current else 'normal'};"
+            f" font-size: {font_size}px; font-weight: {'bold' if is_current else 'normal'};"
             " background: transparent;"
         )
         lo.addWidget(num_lbl)
@@ -493,7 +524,7 @@ class _TopSongRow(QWidget):
         title_lbl = QLabel(track.get('title', 'Unknown'))
         title_lbl.setStyleSheet(
             f"color: {accent if is_current else fg};"
-            f" font-size: 12px; font-weight: {'bold' if is_current else 'normal'};"
+            f" font-size: {font_size}px; font-weight: {'bold' if is_current else 'normal'};"
             " background: transparent;"
         )
         text_lo.addWidget(title_lbl)
@@ -502,7 +533,7 @@ class _TopSongRow(QWidget):
         if album:
             album_lbl = QLabel(album)
             album_lbl.setStyleSheet(
-                f"color: {fg2}; font-size: 10px; background: transparent;"
+                f"color: {fg2}; font-size: {font_size - 2}px; background: transparent;"
             )
             text_lo.addWidget(album_lbl)
 
@@ -513,7 +544,7 @@ class _TopSongRow(QWidget):
             dur_lbl = QLabel(dur)
             dur_lbl.setFixedWidth(38)
             dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            dur_lbl.setStyleSheet(f"color: {fg2}; font-size: 11px; background: transparent;")
+            dur_lbl.setStyleSheet(f"color: {fg2}; font-size: {font_size - 2}px; background: transparent;")
             lo.addWidget(dur_lbl)
 
     def mousePressEvent(self, event):
@@ -546,7 +577,8 @@ class _TopSongRow(QWidget):
 
 class _TourRow(QWidget):
     def __init__(self, event: dict, accent: str, fg: str, fg2: str,
-                 hover_color: QColor = None, parent=None):
+                 hover_color: QColor = None, bg: str = '30,30,30',
+                 font_size: int = 12, parent=None):
         super().__init__(parent)
         self._url         = event.get('url', '')
         self._hovered     = False
@@ -574,7 +606,7 @@ class _TourRow(QWidget):
         cal = QWidget()
         cal.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         cal.setFixedSize(38, 42)
-        cal.setStyleSheet('background: rgba(255,255,255,0.07); border-radius: 6px;')
+        cal.setStyleSheet(f'background: rgb({bg}); border-radius: 6px;')
         cal_lo = QVBoxLayout(cal)
         cal_lo.setContentsMargins(0, 3, 0, 3)
         cal_lo.setSpacing(0)
@@ -598,7 +630,7 @@ class _TourRow(QWidget):
         meta_lo.setContentsMargins(0, 0, 0, 0)
         meta_lo.setSpacing(1)
         venue_lbl = QLabel(event.get('venueName', '') or 'TBA')
-        venue_lbl.setStyleSheet(f'color: {fg}; font-size: 12px; background: transparent;')
+        venue_lbl.setStyleSheet(f'color: {fg}; font-size: {font_size}px; background: transparent;')
         meta_lo.addWidget(venue_lbl)
         place = ', '.join(
             p for p in [
@@ -606,19 +638,22 @@ class _TourRow(QWidget):
             ] if p
         )
         place_lbl = QLabel(place)
-        place_lbl.setStyleSheet(f'color: {fg2}; font-size: 10px; background: transparent;')
+        place_lbl.setStyleSheet(f'color: {fg2}; font-size: {font_size - 2}px; background: transparent;')
         meta_lo.addWidget(place_lbl)
         lo.addWidget(meta_w, 1)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._url:
             try:
-                import subprocess, sys
+                import sys
                 if sys.platform == 'win32':
-                    subprocess.Popen(['start', self._url], shell=True)
+                    import os
+                    os.startfile(self._url)
                 elif sys.platform == 'darwin':
+                    import subprocess
                     subprocess.Popen(['open', self._url])
                 else:
+                    import subprocess
                     subprocess.Popen(['xdg-open', self._url])
             except Exception:
                 pass
@@ -703,7 +738,7 @@ class NowPlayingInfoTab(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._scroll.setStyleSheet('QScrollArea { background: transparent; border: none; }')
         outer.addWidget(self._scroll)
 
@@ -712,15 +747,15 @@ class NowPlayingInfoTab(QWidget):
         self._content.setObjectName('NPContent')
         self._content.setStyleSheet('QWidget#NPContent { background: transparent; }')
         root = QVBoxLayout(self._content)
-        root.setContentsMargins(12, 12, 12, 24)
+        root.setContentsMargins(12, 12, 6, 24)
         root.setSpacing(10)
         self._scroll.setWidget(self._content)
 
         # ── Track card (full width) ───────────────────────────────────
         self._track_card    = _Card()
         self._track_card_lo = QHBoxLayout(self._track_card)
-        self._track_card_lo.setContentsMargins(14, 14, 14, 14)
-        self._track_card_lo.setSpacing(14)
+        self._track_card_lo.setContentsMargins(28, 28, 28, 28)
+        self._track_card_lo.setSpacing(28)
         root.addWidget(self._track_card)
 
         # ── Two-column layout ─────────────────────────────────────────
@@ -875,11 +910,15 @@ class NowPlayingInfoTab(QWidget):
 
     def set_accent_color(self, color: str):
         self._accent = color
-        self._scroll.verticalScrollBar().setStyleSheet(
-            'QScrollBar:vertical { border: none; background: transparent; width: 4px; margin: 0; }'
-            f'QScrollBar::handle:vertical {{ background: {color}; border-radius: 2px; min-height: 20px; }}'
-            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+        self._scroll.setStyleSheet(
+            'QScrollArea { background: transparent; border: none; }'
+            + scrollbar_css(color, hide_horizontal=True)
         )
+        if not hasattr(self, '_scroll_reveal'):
+            self._scroll_reveal = install_scroll_reveal(
+                self._scroll.viewport(), self._scroll.verticalScrollBar()
+            )
+        self._scroll_reveal.color = color
 
     def apply_theme(self, theme):
         if theme is None:
@@ -900,6 +939,38 @@ class NowPlayingInfoTab(QWidget):
             card.set_bg(self._card_bg)
         hover_str = resolve_menu_hover(theme)
         self._hover_color = _parse_qcolor(hover_str)
+        if self._current_track:
+            self._rebuild_cards()
+
+    def _rebuild_cards(self):
+        """Rebuild all card content using cached data (called after theme change)."""
+        track = self._current_track
+        self._build_track_card(track)
+
+        album_id = track.get('albumId') or track.get('album_id', '')
+        if album_id and album_id in _album_tracks_cache:
+            self._build_album_card(_album_tracks_cache[album_id], track.get('id'))
+        else:
+            self._build_album_card([], None)
+
+        top_name = self._top_artists[self._top_page_idx] if self._top_artists else ''
+        top_key  = top_name.strip().lower()
+        if top_key in _top_songs_cache:
+            self._build_top_card(_top_songs_cache[top_key])
+        else:
+            self._build_top_card([])
+
+        artist_key = f'name:{self._top_artists[self._artist_page_idx].strip().lower()}' if self._top_artists else ''
+        if artist_key and artist_key in _artist_info_cache:
+            self._on_artist_info(_artist_info_cache[artist_key])
+        else:
+            self._build_artist_card({})
+
+        bit_key = self._top_artists[self._artist_page_idx].strip().lower() if self._top_artists else ''
+        if bit_key and bit_key in _bit_cache:
+            self._build_tour_card(_bit_cache[bit_key])
+        else:
+            self._build_tour_card([])
 
     def set_bg_color(self, color: str):
         self._bg = color
@@ -1000,12 +1071,14 @@ class NowPlayingInfoTab(QWidget):
         self._clear_layout(self._track_card_lo)
         self._cover_art_lbl = None
 
-        art = _RoundedPixmapLabel(176, 176, radius=10)
+        art = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True)
         self._cover_art_lbl = art
         self._track_card_lo.addWidget(art)
 
         right_w = QWidget()
         right_w.setStyleSheet('background: transparent;')
+        right_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        right_w.setMinimumWidth(0)
         right_lo = QVBoxLayout(right_w)
         right_lo.setContentsMargins(0, 0, 0, 0)
         right_lo.setSpacing(4)
@@ -1013,8 +1086,11 @@ class NowPlayingInfoTab(QWidget):
 
         title = track.get('title', 'Unknown')
         t_lbl = QLabel(title)
+        t_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        t_lbl.setWordWrap(True)
+        t_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         t_lbl.setStyleSheet(
-            f'color: {self._fg}; font-size: {self._font_size_primary + 15}px; font-weight: bold; background: transparent;'
+            f'color: {self._fg}; font-size: {self._font_size_primary + 15}px; font-weight: bold; background: transparent; margin: 0; padding: 0;'
         )
         right_lo.addWidget(t_lbl)
 
@@ -1026,6 +1102,7 @@ class NowPlayingInfoTab(QWidget):
 
         meta_w  = QWidget()
         meta_w.setStyleSheet('background: transparent;')
+        meta_w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         meta_lo = QHBoxLayout(meta_w)
         meta_lo.setContentsMargins(0, 0, 0, 0)
         meta_lo.setSpacing(0)
@@ -1044,7 +1121,7 @@ class NowPlayingInfoTab(QWidget):
                     sep = QLabel(' • ')
                     sep.setStyleSheet(_sep_style)
                     meta_lo.addWidget(sep)
-                btn = QPushButton(a_name)
+                btn = QPushButton(a_name.replace('&', '&&'))
                 btn.setFlat(True)
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn.setStyleSheet(_lnk_style)
@@ -1055,7 +1132,7 @@ class NowPlayingInfoTab(QWidget):
             sep = QLabel(' • ')
             sep.setStyleSheet(_sep_style)
             meta_lo.addWidget(sep)
-            btn = QPushButton(album)
+            btn = QPushButton(album.replace('&', '&&'))
             btn.setFlat(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(_lnk_style)
@@ -1193,16 +1270,59 @@ class NowPlayingInfoTab(QWidget):
         hrow_lo.setContentsMargins(0, 0, 0, 0)
         hrow_lo.setSpacing(4)
 
+        album_id  = self._current_track.get('albumId') or self._current_track.get('album_id', '')
+        album_name = self._current_track.get('album', '')
+
+        # compute meta line early so it can live inside hrow's left column
+        meta_line = ''
+        if tracks:
+            sorted_tracks = sorted(
+                tracks,
+                key=lambda t: (int(t.get('discNumber', 1) or 1),
+                               int(t.get('trackNumber', 0) or 0)),
+            )
+            _album_name = sorted_tracks[0].get('album', '') or album_name
+            current_num = 0
+            total_secs  = 0
+            for tr in sorted_tracks:
+                total_secs += _parse_dur(tr.get('duration', 0))
+                if tr.get('id') == current_id:
+                    current_num = int(tr.get('trackNumber', 0) or 0)
+            stats_parts = []
+            if current_num:
+                stats_parts.append(f'Track {current_num} of {len(sorted_tracks)}')
+            else:
+                stats_parts.append(f'{len(sorted_tracks)} tracks')
+            if total_secs:
+                stats_parts.append(_fmt_total(total_secs))
+            meta_line = _album_name
+            if stats_parts:
+                meta_line += ('  ·  ' if _album_name else '') + '  ·  '.join(stats_parts)
+
+        # left column: header + meta on same left edge
+        left_w = QWidget()
+        left_w.setStyleSheet('background: transparent;')
+        left_lo = QVBoxLayout(left_w)
+        left_lo.setContentsMargins(0, 0, 0, 0)
+        left_lo.setSpacing(1)
+
         hdr = QLabel('FROM THIS ALBUM')
         hdr.setStyleSheet(
             f'color: {self._accent}; font-size: {self._font_size_secondary}px; font-weight: bold;'
-            ' letter-spacing: 1.5px; background: transparent;'
+            ' letter-spacing: 1.5px; background: transparent; margin: 0; padding: 0;'
         )
-        hrow_lo.addWidget(hdr)
-        hrow_lo.addStretch(1)
+        left_lo.addWidget(hdr)
 
-        album_id  = self._current_track.get('albumId') or self._current_track.get('album_id', '')
-        album_name = self._current_track.get('album', '')
+        if meta_line:
+            meta_lbl = QLabel(meta_line)
+            meta_lbl.setStyleSheet(
+                f'color: {self._fg2}; font-size: {self._font_size_secondary}px;'
+                ' background: transparent; margin: 0; padding: 0;'
+            )
+            left_lo.addWidget(meta_lbl)
+
+        hrow_lo.addWidget(left_w, 1)
+
         if album_id or album_name:
             go_btn = QPushButton('Go to Album ↗')
             go_btn.setFlat(True)
@@ -1225,40 +1345,7 @@ class NowPlayingInfoTab(QWidget):
             self._album_card_lo.addWidget(ph)
             return
 
-        tracks = sorted(
-            tracks,
-            key=lambda t: (int(t.get('discNumber', 1) or 1),
-                           int(t.get('trackNumber', 0) or 0)),
-        )
-
-        album_name = tracks[0].get('album', '') if tracks else ''
-        if album_name:
-            alb_lbl = QLabel(album_name)
-            alb_lbl.setStyleSheet(
-                f'color: {self._fg}; font-size: 12px; font-weight: bold; background: transparent;'
-            )
-            self._album_card_lo.addWidget(alb_lbl)
-
-        current_num = 0
-        total_secs  = 0
-        for tr in tracks:
-            total_secs += _parse_dur(tr.get('duration', 0))
-            if tr.get('id') == current_id:
-                current_num = int(tr.get('trackNumber', 0) or 0)
-
-        stats_parts = []
-        if current_num:
-            stats_parts.append(f'Track {current_num} of {len(tracks)}')
-        else:
-            stats_parts.append(f'{len(tracks)} tracks')
-        if total_secs:
-            stats_parts.append(_fmt_total(total_secs))
-
-        stats_lbl = QLabel(' · '.join(stats_parts))
-        stats_lbl.setStyleSheet(
-            f'color: {self._fg2}; font-size: 11px; background: transparent; padding-bottom: 2px;'
-        )
-        self._album_card_lo.addWidget(stats_lbl)
+        tracks = sorted_tracks
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -1292,6 +1379,7 @@ class NowPlayingInfoTab(QWidget):
                 accent=self._accent, fg=self._fg, fg2=self._fg2,
                 is_current=(tr.get('id') == current_id),
                 hover_color=self._hover_color,
+                font_size=self._font_size_secondary,
             )
             row.play_requested.connect(self.play_requested)
             if not (start <= i < end):
@@ -1411,6 +1499,7 @@ class NowPlayingInfoTab(QWidget):
                 accent=self._accent, fg=self._fg, fg2=self._fg2,
                 is_current=(tr.get('id') == current_id),
                 hover_color=self._hover_color,
+                font_size=self._font_size_secondary,
             )
             row.play_requested.connect(self.play_requested)
             self._top_card_lo.addWidget(row)
@@ -1639,13 +1728,15 @@ class NowPlayingInfoTab(QWidget):
         for ev in visible:
             self._tour_card_lo.addWidget(
                 _TourRow(ev, accent=self._accent, fg=self._fg, fg2=self._fg2,
-                         hover_color=self._hover_color)
+                         hover_color=self._hover_color, bg=self._bg,
+                         font_size=self._font_size_secondary)
             )
 
         hidden_rows = []
         for ev in hidden_ev:
             row = _TourRow(ev, accent=self._accent, fg=self._fg, fg2=self._fg2,
-                           hover_color=self._hover_color)
+                           hover_color=self._hover_color, bg=self._bg,
+                           font_size=self._font_size_secondary)
             row.hide()
             self._tour_card_lo.addWidget(row)
             hidden_rows.append(row)
