@@ -1179,7 +1179,7 @@ class NowPlayingInfoTab(QWidget):
         self._clear_layout(self._track_card_lo)
         self._cover_art_lbl = None
 
-        art = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True)
+        art = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True, zoomable=True)
         self._cover_art_lbl = art
         self._track_card_lo.addWidget(art)
 
