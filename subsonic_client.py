@@ -871,6 +871,16 @@ class SubsonicClient:
             print(f"Error getting total track count: {e}")
         return 0
     
+    def scrobble(self, track_id: str, submission: bool = False) -> None:
+        """Report now-playing (submission=False) or a completed play (submission=True)."""
+        try:
+            params = self._get_auth_params()
+            params['id'] = track_id
+            params['submission'] = 'true' if submission else 'false'
+            requests.get(f"{self.base_url}/rest/scrobble", params=params, timeout=5)
+        except Exception:
+            pass
+
     def start_scan(self):
         """Trigger a library scan on the server."""
         try:

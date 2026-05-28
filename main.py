@@ -13,9 +13,10 @@ import platform
 import threading
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
-os.environ.setdefault("QSG_RHI_BACKEND", "opengl")  # HiDPI-correct QQuickWidget rendering on Windows
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
-if platform.system() == "Linux":
+if platform.system() == "Windows":
+    os.environ.setdefault("QSG_RHI_BACKEND", "opengl")  # HiDPI-correct QQuickWidget rendering on Windows
+elif platform.system() == "Linux":
     os.environ["QT_QPA_PLATFORMTHEME"] = ""  # Disable GTK/KDE theme override
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # Use XWayland so Qt stylesheets apply to tooltips
 
@@ -71,13 +72,21 @@ if __name__ == '__main__':
     # Kick off background preloading immediately — runs in parallel with login UI
     threading.Thread(target=_background_preload, daemon=True).start()
 
-    _fmt = QSurfaceFormat()
-    _fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
-    _fmt.setVersion(3, 3)
-    _fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
-    QSurfaceFormat.setDefaultFormat(_fmt)
+    if platform.system() == "Windows":
+        _fmt = QSurfaceFormat()
+        _fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+        _fmt.setVersion(3, 3)
+        _fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+        QSurfaceFormat.setDefaultFormat(_fmt)
 
     app = QApplication(sys.argv)
+
+    # Match QML animation driver to the screen refresh rate (default is 60 Hz).
+    # Must be set before any QQuickWidget/QML engine is created.
+    _screen_hz = (app.primaryScreen().refreshRate() if app.primaryScreen() else 60.0)
+    os.environ.setdefault("QML_ANIMATION_DRIVER_TARGET_ELAPSED_MS",
+                          str(max(1, round(1000 / _screen_hz))))
+
     app.setStyle("Fusion")
     _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     QFontDatabase.addApplicationFont(os.path.join(_base, "fonts", "InterVariable.ttf"))

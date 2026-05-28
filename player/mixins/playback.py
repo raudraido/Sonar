@@ -295,8 +295,15 @@ class PlaybackMixin:
 
             self.visual_update_timer.start(350)
 
-            # Silently refresh metadata from Navidrome in case ID3 tags were updated since last load
+            # Report now-playing to Navidrome so it appears in active sessions
             track_id = track.get('id')
+            if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
+                try:
+                    self.navidrome_client.scrobble(track_id, submission=False)
+                except Exception:
+                    pass
+
+            # Silently refresh metadata from Navidrome in case ID3 tags were updated since last load
             if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
                 from player.workers import SongRefreshWorker
                 old = getattr(self, '_song_refresh_worker', None)

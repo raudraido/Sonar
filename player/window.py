@@ -372,7 +372,9 @@ class SonarPlayer(
         self.ignore_updates_until = 0    
         
         self.smooth_timer = QTimer(self)
-        self.smooth_timer.setInterval(33)
+        _screen = QApplication.primaryScreen()
+        _hz = _screen.refreshRate() if _screen else 60.0
+        self.smooth_timer.setInterval(max(1, round(1000 / _hz)))
         self.smooth_timer.timeout.connect(self.run_smooth_interpolator)
         
         self.audio_engine = AudioEngine()
