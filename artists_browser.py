@@ -6,13 +6,14 @@ import math
 import re
 from collections import OrderedDict
 import time
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QListWidgetItem, QPushButton, QStackedWidget, QApplication,
                              QLabel, QScrollArea, QSizePolicy, QFrame, QGridLayout,
                              QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QComboBox,
-                             QLineEdit, QToolButton, QMenu, QStyledItemDelegate, QStyle, QAbstractButton)
+                             QLineEdit, QToolButton, QMenu, QStyledItemDelegate, QStyle, QAbstractButton,
+                             QGraphicsDropShadowEffect)
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QEvent, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QEvent, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QAction, QBrush, QPainterPath, QPen, QFontMetrics, QPolygon
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
@@ -278,12 +279,19 @@ class LiveArtistDetailWorker(QThread):
                     except Exception as e:
                         print(f"[TIMING]   get_artist_info_native FAILED: {e}")
 
-                if native_result.get('biography') or native_result.get('similarArtist'):
-                    return native_result
-
-                # Native had nothing — wait for subsonic
+                # Always wait for subsonic so we can merge similar artists
                 sub_done.wait()
-                return sub_result[0]
+                sub = sub_result[0]
+
+                # Merge: prefer native for bio (faster), prefer whichever has similar artists
+                merged = {}
+                merged['biography'] = (native_result.get('biography') or
+                                       sub.get('biography') or '')
+                merged['similarArtist'] = (native_result.get('similarArtist') or
+                                           sub.get('similarArtist') or [])
+                for key in ('largeImageUrl', 'mediumImageUrl', 'smallImageUrl'):
+                    merged[key] = native_result.get(key) or sub.get(key) or ''
+                return merged
 
             _t_parallel = time.time()
             with ThreadPoolExecutor(max_workers=3) as pool:
@@ -379,11 +387,16 @@ class LiveArtistDetailWorker(QThread):
                                 similar = [similar]
                             if similar:
                                 info['similar_artists'] = similar
-                            if bio or similar:
-                                print(f"[TIMING]   → albums_ready emit 2 (bio/similar) at {_ms(_t0)}  has_bio={bool(bio)}  similar={len(similar)}")
+                            img_url = (extra.get('largeImageUrl') or
+                                       extra.get('mediumImageUrl') or
+                                       extra.get('smallImageUrl') or '')
+                            if img_url:
+                                info['artistImageUrl'] = img_url
+                            if bio or similar or img_url:
+                                print(f"[TIMING]   → albums_ready emit 2 (bio/similar/img) at {_ms(_t0)}  has_bio={bool(bio)}  similar={len(similar)}  has_img={bool(img_url)}")
                                 self.albums_ready.emit(info, main_albums, singles)
                             else:
-                                print(f"[TIMING]   → no bio/similar at {_ms(_t0)}")
+                                print(f"[TIMING]   → no bio/similar/img at {_ms(_t0)}")
 
                 # Appears on — slowest, emit last
                 appears_on = f_appears.result() or []
@@ -832,6 +845,7 @@ class SectionGridBridge(QObject):
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
     skeletonBaseColorChanged  = pyqtSignal(str)
+    explicitWidthChanged      = pyqtSignal(int)
 
     def __init__(self, model):
         super().__init__()
@@ -898,10 +912,10 @@ class QMLAlbumSectionWidget(QWidget):
 
         self.album_model = AlbumModel()
         self.bridge = SectionGridBridge(self.album_model)
+
         self.bridge.itemClicked.connect(self._on_item_clicked)
         self.bridge.playClicked.connect(self._on_play_clicked)
         self.bridge.artistNameClicked.connect(self.artist_name_clicked)
-        self.bridge.contentHeightChanged.connect(self._on_content_height)
 
         engine = self.qml_widget.engine()
         self._cover_provider = SectionCoverProvider()
@@ -947,8 +961,28 @@ class QMLAlbumSectionWidget(QWidget):
     def add_action_widget(self, widget):
         self.title_layout.insertWidget(2, widget)
 
-    def _on_content_height(self, h):
-        self.qml_widget.setFixedHeight(h)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = event.size().width()
+        if w != event.oldSize().width() and w > 0:
+            self.bridge.explicitWidthChanged.emit(w)
+            self._set_height(w)
+
+    def _set_height(self, w=None):
+        if w is None:
+            w = self.qml_widget.width()
+        if w <= 0:
+            return
+        n = self.album_model.rowCount()
+        if n == 0:
+            return
+        avail     = max(1, w - 4 - 4)          # leftMargin + rightMargin
+        per_row   = max(1, int(avail // 200))   # baseItemSize(180) + itemGap*2(20)
+        cell_w    = int(avail // per_row)
+        cell_h    = cell_w + 70                 # matches QML cellHeight: widthPerItem + 70
+        n_rows    = (n + per_row - 1) // per_row
+        h         = n_rows * cell_h + 4 + 4    # topMargin + bottomMargin
+        self.qml_widget.setFixedHeight(max(10, h))
 
     def _on_item_clicked(self, idx):
         if 0 <= idx < len(self.album_model.albums):
@@ -987,6 +1021,8 @@ class QMLAlbumSectionWidget(QWidget):
         self.album_model.beginResetModel()
         self.album_model.albums = normalised
         self.album_model.endResetModel()
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._set_height)
 
     def apply_cover(self, cover_id, image_data):
         SectionCoverProvider._cache[cover_id] = image_data
@@ -1467,6 +1503,130 @@ class RelatedArtistRowWidget(QWidget):
             return True
         return super().eventFilter(source, event)
 
+class _ArtistPhotoOverlay(QWidget):
+    """Full-screen tinted overlay showing the artist photo large and centered."""
+    def __init__(self, pixmap, parent):
+        super().__init__(parent)
+        self._pixmap = pixmap
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setGeometry(parent.rect())
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.raise_()
+        self.setFocus()
+        self.show()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 175))
+        if self._pixmap and not self._pixmap.isNull():
+            max_dim = min(int(self.width() * 0.55), int(self.height() * 0.65))
+            scaled = self._pixmap.scaled(max_dim, max_dim,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation)
+            x = (self.width() - scaled.width()) // 2
+            y = int(self.height() * 0.08)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(x, y, scaled.width(), scaled.height()), 18, 18)
+            p.setClipPath(path)
+            p.drawPixmap(x, y, scaled)
+        p.end()
+
+    def mousePressEvent(self, _):
+        self.close()
+        self.deleteLater()
+
+    def keyPressEvent(self, event):
+        self.close()
+        self.deleteLater()
+
+
+class _ArtistPhotoWidget(QWidget):
+    """Circular artist photo with hover-zoom and click-to-expand."""
+    def __init__(self, size=286, parent=None):
+        super().__init__(parent)
+        self._pix  = None
+        self._zoom = 1.0
+        self.setFixedSize(size, size)
+
+        try:
+            cur_pix = QPixmap(resource_path('img/search.png')).scaled(
+                24, 24, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            self.setCursor(QCursor(cur_pix, 12, 12))
+        except Exception:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._glow = QGraphicsDropShadowEffect(self)
+        self._glow.setOffset(0, 10)
+        self._glow.setBlurRadius(38)
+        self._glow.setColor(QColor(0, 0, 0, 0))
+        self.setGraphicsEffect(self._glow)
+
+        self._anim = QPropertyAnimation(self, b'zoom_prop')
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    @pyqtProperty(float)
+    def zoom_prop(self):
+        return self._zoom
+
+    @zoom_prop.setter
+    def zoom_prop(self, v):
+        self._zoom = v
+        self.update()
+
+    def set_pixmap(self, pix):
+        self._pix = pix if (pix and not pix.isNull()) else None
+        if self._pix:
+            from now_playing_info import _extract_vibrant_color
+            c = _extract_vibrant_color(self._pix)
+            self._glow.setColor(QColor(c.red() // 3, c.green() // 3, c.blue() // 3, 210))
+        else:
+            self._glow.setColor(QColor(0, 0, 0, 0))
+        self.update()
+
+    def enterEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._zoom)
+        self._anim.setEndValue(1.12)
+        self._anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._zoom)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._pix:
+            overlay = _ArtistPhotoOverlay(self._pix, self.window())
+        super().mousePressEvent(event)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        r = self.rect()
+        path = QPainterPath()
+        path.addEllipse(QRectF(r))
+        p.setClipPath(path)
+        if self._pix:
+            zs = int(r.width() * self._zoom)
+            scaled = self._pix.scaled(QSize(zs, zs),
+                                      Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                      Qt.TransformationMode.SmoothTransformation)
+            ox = (scaled.width() - r.width()) // 2
+            oy = (scaled.height() - r.height()) // 2
+            p.drawPixmap(0, 0, scaled, ox, oy, r.width(), r.height())
+        else:
+            p.fillRect(r, QColor(45, 45, 45))
+        p.end()
+
+
 class ArtistRichDetailView(QWidget):
     album_clicked = pyqtSignal(dict)
     play_album = pyqtSignal(dict)
@@ -1491,66 +1651,81 @@ class ArtistRichDetailView(QWidget):
         
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; } QWidget { background: transparent; }")
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.omni_scroller = MiddleClickScroller(self.scroll)
-        
+
         self.content_widget = QWidget()
+        self.content_widget.setObjectName('_ac')
+        self.content_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.content_widget.setStyleSheet('#_ac { background: transparent; }')
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 10, 0, 50)
+        self.content_layout.setContentsMargins(0, 0, 0, 50)
         self.content_layout.setSpacing(20)
-        
-        # HEADER
-        self.header = QWidget()
-        header_layout = QHBoxLayout(self.header)
-        header_layout.setSpacing(30)
-        
-        self.img_label = QLabel()
-        self.img_label.setFixedSize(220, 220)
-        self.img_label.setStyleSheet("background: #282828; border-radius: 110px;")
-        self.img_label.setScaledContents(True)
-        
+
+        # HEADER CARD
+        from now_playing_info import _Card
+        _header_wrapper = QWidget()
+        _header_wrapper.setObjectName('_hw')
+        _header_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _header_wrapper.setStyleSheet('#_hw { background: transparent; }')
+        _hw_lo = QVBoxLayout(_header_wrapper)
+        _hw_lo.setContentsMargins(12, 12, 6, 0)
+        _hw_lo.setSpacing(0)
+
+        self.header_container = _Card()
+        _hw_lo.addWidget(self.header_container)
+
+        header_lo = QHBoxLayout(self.header_container)
+        header_lo.setContentsMargins(28, 28, 28, 28)
+        header_lo.setSpacing(28)
+
+        self.img_label = _ArtistPhotoWidget(286)
+
         info_col = QWidget()
+        info_col.setStyleSheet('background: transparent;')
         info_layout = QVBoxLayout(info_col)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        
+
         self.lbl_type = QLabel("ARTIST")
-        self.lbl_type.setStyleSheet("font-weight: bold; color: #aaa; font-size: 12px; letter-spacing: 1px;")
-        
+        self.lbl_type.setStyleSheet("font-weight: bold; color: #aaa; font-size: 12px; letter-spacing: 1px; background: transparent;")
+
         self.lbl_name = QLabel("Artist Name")
-        self.lbl_name.setStyleSheet("font-weight: 900; color: white; font-size: 48px;")
-        
+        self.lbl_name.setStyleSheet("font-weight: 900; color: white; font-size: 48px; background: transparent;")
+
         self.lbl_stats = QLabel("Loading...")
-        self.lbl_stats.setStyleSheet("color: #ddd; font-size: 14px;")
-        
+        self.lbl_stats.setStyleSheet("color: #ddd; font-size: 14px; background: transparent;")
+
         btn_bar = QWidget()
+        btn_bar.setStyleSheet('background: transparent;')
         btn_layout = QHBoxLayout(btn_bar)
         btn_layout.setContentsMargins(0, 20, 0, 0)
         btn_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        
+
         # --- ARTIST VIEW PLAY BUTTON ---
         from albums_browser import resource_path
         self.btn_play = QPushButton()
-        self.btn_play.setFixedSize(60, 60) 
+        self.btn_play.setFixedSize(60, 60)
         self.btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_play.setIcon(QIcon(resource_path("img/play.png")))
-        self.btn_play.setIconSize(QSize(15, 15)) 
+        self.btn_play.setIconSize(QSize(15, 15))
         self.btn_play.clicked.connect(self.play_current_artist_tracks)
         btn_layout.addWidget(self.btn_play)
         self.btn_play.setToolTip("Play All Tracks (Ctrl+↵)")
-        
+
         info_layout.addWidget(self.lbl_type)
         info_layout.addWidget(self.lbl_name)
         info_layout.addWidget(self.lbl_stats)
         info_layout.addWidget(btn_bar)
-        
-        header_layout.addWidget(self.img_label)
-        header_layout.addWidget(info_col)
-        header_layout.addStretch()
-        
+
+        header_lo.addWidget(self.img_label)
+        header_lo.addWidget(info_col, 1)
+
+        self.header = _header_wrapper
         self.content_layout.addWidget(self.header)
 
         # ABOUT SECTION (bio from Last.fm / getArtistInfo2) — first after header
@@ -2006,11 +2181,16 @@ class ArtistRichDetailView(QWidget):
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
         
         scrollbar_style = f"""
-            QScrollArea {{ border: none; background: transparent; }} 
-            QWidget {{ background: transparent; }}
+            QScrollArea {{ border: none; background: transparent; }}
             {scrollbar_css(color)}
         """
         self.scroll.setStyleSheet(scrollbar_style)
+        if hasattr(self, 'header_container') and hasattr(self.header_container, 'set_border'):
+            theme = getattr(self.window(), 'theme', None)
+            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
+            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
+            self.header_container.set_border(border)
+            self.header_container.set_bg(card_bg)
         
         play_btn_style = f"""
             QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
@@ -2026,8 +2206,6 @@ class ArtistRichDetailView(QWidget):
         sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
         sk_color  = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
-        if hasattr(self, 'img_label') and not self.img_label.pixmap():
-            self.img_label.setStyleSheet(f"background: {sk_color}; border-radius: 110px;")
         if hasattr(self, 'lbl_type'):
             self.lbl_type.setStyleSheet(f"font-weight: bold; color: {sec_color}; font-size: 12px; letter-spacing: 1px;")
         if hasattr(self, 'lbl_name'):
@@ -2072,28 +2250,8 @@ class ArtistRichDetailView(QWidget):
         self.song_list.update_style(color)
 
     def set_header_image(self, pixmap):
-        size = 220
-        circle_pix = QPixmap(size, size)
-        circle_pix.fill(QColor(0, 0, 0, 0))
-
-        painter = QPainter(circle_pix)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addEllipse(0, 0, size, size)
-        painter.setClipPath(path)
-
-        if pixmap and not pixmap.isNull():
-            scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            x = (scaled.width() - size) // 2
-            y = (scaled.height() - size) // 2
-            painter.drawPixmap(-x, -y, scaled)
-        else:
-            painter.setBrush(QColor("#333333"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(0, 0, size, size)
-
-        painter.end()
-        self.img_label.setPixmap(circle_pix)
+        from PyQt6.QtGui import QPixmap as _QPixmap
+        self.img_label.set_pixmap(pixmap if (pixmap and not pixmap.isNull()) else _QPixmap())
 
     def set_bio(self, text):
         w = getattr(self, '_skeleton_bio', None)
@@ -2439,7 +2597,6 @@ class ArtistRichDetailView(QWidget):
 
         if not getattr(self, '_header_already_loaded', False):
             sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
-            self.img_label.setStyleSheet(f"background: {sk_color}; border-radius: 110px;")
             self.set_header_image(None)
         self._header_already_loaded = False  
         self._exact_artist_image = False     
@@ -2482,6 +2639,19 @@ class ArtistRichDetailView(QWidget):
         self._remove_section("_skeleton")
         # Cover image
         if info:
+            # Prefer high-res Last.fm/MusicBrainz URL from getArtistInfo2 over getCoverArt thumb
+            artist_img_url = info.get('artistImageUrl', '')
+            if artist_img_url:
+                self._exact_artist_image = True
+                from artist_info_panel import _ImageWorker
+                prev = getattr(self, '_header_img_worker', None)
+                if prev and prev.isRunning():
+                    try: prev.done.disconnect()
+                    except: pass
+                self._header_img_worker = _ImageWorker(artist_img_url)
+                self._header_img_worker.done.connect(self.set_header_image)
+                self._header_img_worker.start()
+
             cover_src = info.get('coverArt') or info.get('id')
             if cover_src:
                 self.current_header_cover_id = str(cover_src)
@@ -2627,6 +2797,28 @@ class ArtistRichDetailView(QWidget):
 
         if is_header and not pixmap.isNull():
             self.set_header_image(pixmap)
+            cid = str(cover_id)
+            import threading
+            def _fetch_full(cid=cid):
+                if not getattr(self, 'client', None):
+                    return
+                try:
+                    from cover_cache import CoverCache
+                    data = CoverCache.instance().get_full(cid)
+                    if not data:
+                        data = self.client.get_cover_art(cid, size=None)
+                        if data:
+                            CoverCache.instance().save_full(cid, data)
+                    if data and getattr(self, 'current_header_cover_id', None) == cid:
+                        from PyQt6.QtGui import QPixmap as _QP
+                        from PyQt6.QtCore import QTimer
+                        full_pix = _QP()
+                        full_pix.loadFromData(data)
+                        if not full_pix.isNull():
+                            QTimer.singleShot(0, lambda p=full_pix: self.set_header_image(p))
+                except Exception:
+                    pass
+            threading.Thread(target=_fetch_full, daemon=True).start()
 
 class ArtistModel(QAbstractListModel):
     NAME_ROLE        = Qt.ItemDataRole.UserRole + 1

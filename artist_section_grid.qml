@@ -12,6 +12,7 @@ Item {
     property string fontColorPrimary:   "#eeeeee"
     property string fontColorSecondary: "#cccccc"
     property string skeletonBaseColor:  "#282828"
+    property int    explicitWidth:      0
 
     Connections {
         target: sectionBridge
@@ -27,6 +28,7 @@ Item {
             }
             grid.forceActiveFocus()
         }
+        function onExplicitWidthChanged(w) { root.explicitWidth = w }
     }
 
     GridView {
@@ -66,7 +68,7 @@ Item {
         property real itemGap: 10
         property real baseItemSize: 180
 
-        property real availableWidth: Math.max(1, width - leftMargin - rightMargin)
+        property real availableWidth: Math.max(1, (root.explicitWidth > 0 ? root.explicitWidth : width) - leftMargin - rightMargin)
         property int itemsPerRow: Math.max(1, Math.floor(availableWidth / (baseItemSize + itemGap * 2)))
         property real widthPerItem: Math.floor(availableWidth / itemsPerRow)
 
@@ -74,16 +76,6 @@ Item {
         cellHeight: widthPerItem + 70
 
         model: sectionAlbumModel
-
-        Timer { interval: 200; running: true; repeat: false; onTriggered: grid.forceLayout() }
-
-        onContentHeightChanged: {
-            if (sectionBridge) sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
-        }
-
-        onHeightChanged: {
-            if (sectionBridge) sectionBridge.reportContentHeight(grid.contentHeight + grid.topMargin + grid.bottomMargin)
-        }
 
         delegate: Item {
             width: grid.cellWidth
