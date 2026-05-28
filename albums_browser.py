@@ -1167,7 +1167,7 @@ class AlbumDetailView(QWidget):
         header_lo.setContentsMargins(28, 28, 28, 28)
         header_lo.setSpacing(28)
 
-        self.cover_label = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True)
+        self.cover_label = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True, zoomable=True)
         header_lo.addWidget(self.cover_label)
 
         meta_container = QWidget()

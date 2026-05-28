@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QPushButton, QSizePolicy, QFrame, QGraphicsDropShadowEffect,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics, QIcon
 
 from player.mixins.visuals import resolve_menu_hover, install_scroll_reveal, scrollbar_css
@@ -330,13 +330,53 @@ def _extract_vibrant_color(pix: QPixmap) -> QColor:
     return best
 
 
+class _CoverOverlay(QWidget):
+    """Full-window dimmed overlay showing album art large on click."""
+    def __init__(self, pixmap, parent):
+        super().__init__(parent)
+        self._pixmap = pixmap
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setGeometry(parent.rect())
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.raise_()
+        self.setFocus()
+        self.show()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 175))
+        if self._pixmap and not self._pixmap.isNull():
+            max_dim = min(int(self.width() * 0.55), int(self.height() * 0.65))
+            scaled = self._pixmap.scaled(max_dim, max_dim,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation)
+            x = (self.width()  - scaled.width())  // 2
+            y = (self.height() - scaled.height()) // 2
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(x, y, scaled.width(), scaled.height()), 14, 14)
+            p.setClipPath(path)
+            p.drawPixmap(x, y, scaled)
+        p.end()
+
+    def mousePressEvent(self, _):
+        self.close(); self.deleteLater()
+
+    def keyPressEvent(self, _):
+        self.close(); self.deleteLater()
+
+
 class _RoundedPixmapLabel(QWidget):
-    def __init__(self, w: int, h: int, radius: int = 8, show_glow: bool = False, parent=None):
+    def __init__(self, w: int, h: int, radius: int = 8, show_glow: bool = False,
+                 zoomable: bool = False, parent=None):
         super().__init__(parent)
         self._pix        = None
         self._radius     = radius
         self._show_glow  = show_glow
+        self._zoomable   = zoomable
         self._glow_eff   = None
+        self._zoom       = 1.0
         self.setFixedSize(w, h)
         if show_glow:
             eff = QGraphicsDropShadowEffect(self)
@@ -345,15 +385,49 @@ class _RoundedPixmapLabel(QWidget):
             eff.setColor(QColor(0, 0, 0, 0))
             self.setGraphicsEffect(eff)
             self._glow_eff = eff
+        if zoomable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._anim = QPropertyAnimation(self, b'zoom_prop')
+            self._anim.setDuration(200)
+            self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    @pyqtProperty(float)
+    def zoom_prop(self):
+        return self._zoom
+
+    @zoom_prop.setter
+    def zoom_prop(self, v):
+        self._zoom = v
+        self.update()
 
     def set_pixmap(self, pix: QPixmap):
         self._pix = pix
         if self._show_glow and self._glow_eff and pix and not pix.isNull():
             c = _extract_vibrant_color(pix)
-            # Dark shadow tinted with album color → depth (floating) not blur
             shadow = QColor(c.red() // 3, c.green() // 3, c.blue() // 3, 210)
             self._glow_eff.setColor(shadow)
         self.update()
+
+    def enterEvent(self, event):
+        if self._zoomable:
+            self._anim.stop()
+            self._anim.setStartValue(self._zoom)
+            self._anim.setEndValue(1.08)
+            self._anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self._zoomable:
+            self._anim.stop()
+            self._anim.setStartValue(self._zoom)
+            self._anim.setEndValue(1.0)
+            self._anim.start()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if self._zoomable and event.button() == Qt.MouseButton.LeftButton and self._pix:
+            _CoverOverlay(self._pix, self.window())
+        super().mousePressEvent(event)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -364,12 +438,13 @@ class _RoundedPixmapLabel(QWidget):
         path.addRoundedRect(QRectF(r), self._radius, self._radius)
         p.setClipPath(path)
         if self._pix and not self._pix.isNull():
+            zs = QSize(int(r.width() * self._zoom), int(r.height() * self._zoom))
             scaled = self._pix.scaled(
-                self.size(),
+                zs,
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            ox = (scaled.width() - r.width()) // 2
+            ox = (scaled.width()  - r.width())  // 2
             oy = (scaled.height() - r.height()) // 2
             p.drawPixmap(0, 0, scaled, ox, oy, r.width(), r.height())
         else:

@@ -1525,8 +1525,8 @@ class _ArtistPhotoOverlay(QWidget):
             scaled = self._pixmap.scaled(max_dim, max_dim,
                                          Qt.AspectRatioMode.KeepAspectRatio,
                                          Qt.TransformationMode.SmoothTransformation)
-            x = (self.width() - scaled.width()) // 2
-            y = int(self.height() * 0.08)
+            x = (self.width()  - scaled.width())  // 2
+            y = (self.height() - scaled.height()) // 2
             path = QPainterPath()
             path.addRoundedRect(QRectF(x, y, scaled.width(), scaled.height()), 18, 18)
             p.setClipPath(path)
@@ -1663,7 +1663,7 @@ class ArtistRichDetailView(QWidget):
         self.content_widget.setStyleSheet('#_ac { background: transparent; }')
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(0, 0, 0, 50)
-        self.content_layout.setSpacing(20)
+        self.content_layout.setSpacing(10)
 
         # HEADER CARD
         from now_playing_info import _Card
@@ -1728,33 +1728,49 @@ class ArtistRichDetailView(QWidget):
         self.header = _header_wrapper
         self.content_layout.addWidget(self.header)
 
-        # ABOUT SECTION (bio from Last.fm / getArtistInfo2) — first after header
-        self.lbl_about_header = QLabel()
-        self.lbl_about_header.setStyleSheet("color: white; font-size: 20px; font-weight: bold; padding-left: 8px; margin-top: 10px;")
-        self.lbl_about_header.hide()
-        self.content_layout.addWidget(self.lbl_about_header)
+        # ABOUT SECTION — wrapped in a card
+        from now_playing_info import _Card
+        self.bio_card = _Card()
+        _bio_lo = QVBoxLayout(self.bio_card)
+        _bio_lo.setContentsMargins(16, 16, 16, 16)
+        _bio_lo.setSpacing(8)
 
+        self.lbl_about_header = QLabel()
+        self.lbl_about_header.setStyleSheet("color: white; font-size: 20px; font-weight: bold;")
         self._bio_collapsed = True
         self._bio_full_text = ""
 
         self.lbl_bio = QLabel()
         self.lbl_bio.setWordWrap(True)
-        self.lbl_bio.setStyleSheet("color: #bbb; font-size: 14px; line-height: 1.4; padding-left: 8px;")
+        self.lbl_bio.setStyleSheet("color: #bbb; font-size: 14px; line-height: 1.4;")
         self.lbl_bio.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lbl_bio.mousePressEvent = lambda e: self._toggle_bio()
-        self.lbl_bio.hide()
-        self.content_layout.addWidget(self.lbl_bio)
 
         self.lbl_bio_toggle = QLabel("Show more")
-        self.lbl_bio_toggle.setStyleSheet("color: #888; font-size: 13px; padding-left: 8px; padding-top: 2px;")
+        self.lbl_bio_toggle.setStyleSheet("color: #888; font-size: 13px; padding-top: 2px;")
         self.lbl_bio_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lbl_bio_toggle.mousePressEvent = lambda e: self._toggle_bio()
         self.lbl_bio_toggle.hide()
-        self.content_layout.addWidget(self.lbl_bio_toggle)
+
+        _bio_lo.addWidget(self.lbl_about_header)
+        _bio_lo.addWidget(self.lbl_bio)
+        _bio_lo.addWidget(self.lbl_bio_toggle)
+
+        _bio_wrap = QWidget()
+        _bio_wrap.setObjectName('_biow')
+        _bio_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _bio_wrap.setStyleSheet('#_biow { background: transparent; }')
+        _biow_lo = QVBoxLayout(_bio_wrap)
+        _biow_lo.setContentsMargins(12, 0, 6, 0)
+        _biow_lo.setSpacing(0)
+        _biow_lo.addWidget(self.bio_card)
+        self._bio_wrapper = _bio_wrap
+        self._bio_wrapper.hide()
+        self.content_layout.addWidget(self._bio_wrapper)
 
         # POPULAR TRACKS
-        self.lbl_top_tracks = QLabel(" Popular")
-        self.lbl_top_tracks.setStyleSheet("color: white; font-weight: bold; font-size: 20px; margin-top: 10px;")
+        self.lbl_top_tracks = QLabel("Popular")
+        self.lbl_top_tracks.setStyleSheet("color: white; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
         self.lbl_top_tracks.hide()
         self.content_layout.addWidget(self.lbl_top_tracks)
 
@@ -2211,15 +2227,20 @@ class ArtistRichDetailView(QWidget):
         if hasattr(self, 'lbl_name'):
             self.lbl_name.setStyleSheet(f"font-weight: 900; color: {pri_color}; font-size: 48px;")
         if hasattr(self, 'lbl_about_header'):
-            self.lbl_about_header.setStyleSheet(f"color: {pri_color}; font-size: 20px; font-weight: bold; padding-left: 8px; margin-top: 10px;")
+            self.lbl_about_header.setStyleSheet(f"color: {pri_color}; font-size: 20px; font-weight: bold;")
         if hasattr(self, 'lbl_top_tracks'):
-            self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-top: 10px;")
+            self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
         if hasattr(self, 'lbl_stats'):
             self.lbl_stats.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px;")
         if hasattr(self, 'lbl_bio'):
-            self.lbl_bio.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; line-height: 1.4; padding-left: 8px;")
+            self.lbl_bio.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; line-height: 1.4;")
         if hasattr(self, 'lbl_bio_toggle'):
-            self.lbl_bio_toggle.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; padding-left: 8px; padding-top: 2px;")
+            self.lbl_bio_toggle.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; padding-top: 2px;")
+        border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
+        card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
+        if hasattr(self, 'bio_card'):
+            self.bio_card.set_border(border)
+            self.bio_card.set_bg(card_bg)
 
         if hasattr(self, 'btn_shuffle'):
             import os
@@ -2273,12 +2294,12 @@ class ArtistRichDetailView(QWidget):
                 self._render_bio()
                 artist = getattr(self, 'current_artist_name', '')
                 self.lbl_about_header.setText(f'About {artist}')
-                self.lbl_about_header.show()
+                self._bio_wrapper.show()
                 return
         self._bio_full_text = ""
         self.lbl_bio.hide()
         self.lbl_bio_toggle.hide()
-        self.lbl_about_header.hide()
+        self._bio_wrapper.hide()
 
     def _render_bio(self):
         text = self._bio_full_text
