@@ -847,13 +847,13 @@ class NowPlayingInfoTab(QWidget):
             self.load_track(track)
 
     def load_track(self, track: dict):
+        tid = track.get('id')
+        if tid and tid == self._current_track.get('id'):
+            return
         if not self.isVisible():
             self._pending_track = track
             return
         self._pending_track = None
-        tid = track.get('id')
-        if tid and tid == self._current_track.get('id'):
-            return
         self._current_track = track
         self._cover_pixmap  = None
         self._cancel_workers()
@@ -1348,6 +1348,7 @@ class NowPlayingInfoTab(QWidget):
 
         if meta_line:
             meta_lbl = QLabel(meta_line)
+            meta_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             meta_lbl.setStyleSheet(
                 f'color: {self._fg2}; font-size: {self._font_size_secondary}px;'
                 ' background: transparent; margin: 0; padding: 0;'

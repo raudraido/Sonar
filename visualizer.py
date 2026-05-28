@@ -2,7 +2,7 @@ import os
 import sys
 import math
 
-from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect
+from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect, QLabel, QHBoxLayout
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QLinearGradient, QRadialGradient,
     QPen, QGradient, QPainterPath,
@@ -187,16 +187,35 @@ class AudioVisualizer(QWidget):
         self._init_opacity_effect()
         self.btn_toggle_vis.hide()  # Hidden until mouse enters the widget
 
-        # 5. REF LEVEL PILL BUTTON
-        self.btn_ref_level = QPushButton(f"{self._vu_ref_level} dBFS", self)
-        self.btn_ref_level.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ref_level.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_ref_level.setFixedSize(76, 22)
-        self.btn_ref_level.clicked.connect(self._reset_ref_level)
-        self.btn_ref_level.installEventFilter(self)
-        self.ref_opacity = None
-        self.ref_anim = None
-        self.btn_ref_level.hide()
+        # 5. REF LEVEL PILL CONTROL — always visible in VU mode
+        self._ref_container = QWidget(self)
+        self._ref_container.setFixedSize(110, 22)
+        self._ref_container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        _ref_lay = QHBoxLayout(self._ref_container)
+        _ref_lay.setContentsMargins(0, 0, 0, 0)
+        _ref_lay.setSpacing(0)
+
+        self.btn_ref_minus = QPushButton("−", self._ref_container)
+        self.btn_ref_minus.setFixedSize(22, 22)
+        self.btn_ref_minus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_ref_minus.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ref_minus.clicked.connect(self._dec_ref_level)
+
+        self.lbl_ref_level = QLabel(f"{self._vu_ref_level} dBFS", self._ref_container)
+        self.lbl_ref_level.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_ref_level.setFixedHeight(22)
+
+        self.btn_ref_plus = QPushButton("+", self._ref_container)
+        self.btn_ref_plus.setFixedSize(22, 22)
+        self.btn_ref_plus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_ref_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ref_plus.clicked.connect(self._inc_ref_level)
+
+        _ref_lay.addWidget(self.btn_ref_minus)
+        _ref_lay.addWidget(self.lbl_ref_level, 1)
+        _ref_lay.addWidget(self.btn_ref_plus)
+
+        self._ref_container.setVisible(self.vis_mode == 1)
 
         # Apply initial button style with default color
         self.set_master_color(self.master_color.name())
@@ -260,21 +279,51 @@ class AudioVisualizer(QWidget):
             }}
         """)
 
-        self.btn_ref_level.setStyleSheet(f"""
+        self.btn_ref_minus.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(0, 0, 0, 80);
                 border: 1px solid rgb({dim_r}, {dim_g}, {dim_b});
-                border-radius: 11px;
+                border-right: none;
+                border-top-left-radius: 11px;
+                border-bottom-left-radius: 11px;
                 color: rgba(220, 220, 220, 180);
-                font-size: 10px;
+                font-size: 13px;
+                font-weight: bold;
             }}
             QPushButton:hover {{
                 background-color: rgba({r}, {g}, {b}, 40);
                 border: 1px solid rgb({r}, {g}, {b});
+                border-right: none;
                 color: rgb(255, 255, 255);
             }}
-            QPushButton:pressed {{
-                background-color: rgba({r}, {g}, {b}, 20);
+            QPushButton:pressed {{ background-color: rgba({r}, {g}, {b}, 20); }}
+        """)
+        self.btn_ref_plus.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(0, 0, 0, 80);
+                border: 1px solid rgb({dim_r}, {dim_g}, {dim_b});
+                border-left: none;
+                border-top-right-radius: 11px;
+                border-bottom-right-radius: 11px;
+                color: rgba(220, 220, 220, 180);
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: rgba({r}, {g}, {b}, 40);
+                border: 1px solid rgb({r}, {g}, {b});
+                border-left: none;
+                color: rgb(255, 255, 255);
+            }}
+            QPushButton:pressed {{ background-color: rgba({r}, {g}, {b}, 20); }}
+        """)
+        self.lbl_ref_level.setStyleSheet(f"""
+            QLabel {{
+                background-color: rgba(0, 0, 0, 80);
+                border-top: 1px solid rgb({dim_r}, {dim_g}, {dim_b});
+                border-bottom: 1px solid rgb({dim_r}, {dim_g}, {dim_b});
+                color: rgba(220, 220, 220, 180);
+                font-size: 10px;
             }}
         """)
 
@@ -286,21 +335,11 @@ class AudioVisualizer(QWidget):
             elif event.type() == QEvent.Type.Leave:
                 if hasattr(self, 'dim_icon'):
                     self.btn_toggle_vis.setIcon(self.dim_icon)
-        elif obj == self.btn_ref_level:
-            if event.type() == QEvent.Type.Wheel:
-                self.wheelEvent(event)
-                return True
         return super().eventFilter(obj, event)
 
     def toggle_mode(self):
         self.vis_mode = (self.vis_mode + 1) % 2
-        if self.vis_mode == 0 and self.ref_opacity is not None:
-            self.ref_anim.stop()
-            self.ref_opacity.setOpacity(0.0)
-            self.btn_ref_level.setGraphicsEffect(None)
-            self.btn_ref_level.hide()
-            self.ref_opacity = None
-            self.ref_anim = None
+        self._ref_container.setVisible(self.vis_mode == 1)
         self.update()
 
     def resizeEvent(self, event):
@@ -328,8 +367,8 @@ class AudioVisualizer(QWidget):
         if self.btn_toggle_vis.parent() is self:
             self.btn_toggle_vis.move(cx + cw - self.btn_toggle_vis.width() - 8, cy + 8)
         btn_bottom = cy + ch - 4
-        self.btn_ref_level.move(cx + (cw - self.btn_ref_level.width()) // 2,
-                                btn_bottom - self.btn_ref_level.height())
+        self._ref_container.move(cx + (cw - self._ref_container.width()) // 2,
+                                 btn_bottom - self._ref_container.height())
 
     def enterEvent(self, event):
         # Toggle button — only when it hasn't been re-parented to _SectionWidget
@@ -339,13 +378,6 @@ class AudioVisualizer(QWidget):
             self.hover_anim.stop()
             self.hover_anim.setEndValue(1.0)
             self.hover_anim.start()
-        # Ref level pill — always managed here regardless of re-parenting
-        if self.vis_mode == 1:
-            if self.ref_opacity is None:
-                self._init_ref_opacity_effect()
-            self.ref_anim.stop()
-            self.ref_anim.setEndValue(1.0)
-            self.ref_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -353,10 +385,6 @@ class AudioVisualizer(QWidget):
             self.hover_anim.stop()
             self.hover_anim.setEndValue(0.0)
             self.hover_anim.start()
-        if self.ref_opacity is not None:
-            self.ref_anim.stop()
-            self.ref_anim.setEndValue(0.0)
-            self.ref_anim.start()
         super().leaveEvent(event)
 
 
@@ -372,29 +400,22 @@ class AudioVisualizer(QWidget):
             QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
         event.accept()
 
-    def _init_ref_opacity_effect(self):
-        self.btn_ref_level.show()
-        self.ref_opacity = QGraphicsOpacityEffect(self.btn_ref_level)
-        self.ref_opacity.setOpacity(0.0)
-        self.btn_ref_level.setGraphicsEffect(self.ref_opacity)
-        self.ref_anim = QPropertyAnimation(self.ref_opacity, b"opacity")
-        self.ref_anim.setDuration(250)
-        self.ref_anim.finished.connect(self._on_ref_anim_finished)
-
-    def _on_ref_anim_finished(self):
-        if self.ref_opacity and self.ref_opacity.opacity() == 0.0:
-            self.btn_ref_level.setGraphicsEffect(None)
-            self.btn_ref_level.hide()
-            self.ref_opacity = None
-            self.ref_anim = None
-
     def _update_ref_btn_text(self):
-        self.btn_ref_level.setText(f"{self._vu_ref_level} dBFS")
+        self.lbl_ref_level.setText(f"{self._vu_ref_level} dBFS")
 
-    def _reset_ref_level(self):
-        self._vu_ref_level = -10
-        self._update_ref_btn_text()
-        QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+    def _inc_ref_level(self):
+        new_val = min(0, self._vu_ref_level + 1)
+        if new_val != self._vu_ref_level:
+            self._vu_ref_level = new_val
+            self._update_ref_btn_text()
+            QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+
+    def _dec_ref_level(self):
+        new_val = max(-18, self._vu_ref_level - 1)
+        if new_val != self._vu_ref_level:
+            self._vu_ref_level = new_val
+            self._update_ref_btn_text()
+            QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
 
     # ── Data processing ───────────────────────────────────────────────────────
 
