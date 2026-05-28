@@ -22,8 +22,7 @@ from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer,
                           QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation, QSettings)
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics,
                          QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
-                         QTextDocument, QAbstractTextDocumentLayout, QPalette,
-                         QLinearGradient)
+                         QTextDocument, QAbstractTextDocumentLayout, QPalette)
 
 def resource_path(relative_path):
     try:
@@ -1145,40 +1144,39 @@ class AlbumDetailView(QWidget):
         self.setObjectName("DetailBackground")
         self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
-        # Background label — sits behind everything, shows blurred album art
-        self._bg_label = QLabel(self)
-        self._bg_label.setGeometry(0, 0, 1, 1)
-        self._bg_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._bg_cover = None
-        self._accent_color = QColor(12, 12, 12)
+        from now_playing_info import _Card, _RoundedPixmapLabel
 
         # 1. MASTER LAYOUT
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ─── HEADER ────────────────────────────────────────────────────────────
-        self.header_container = QWidget()
-        self.header_container.setMinimumHeight(280)
-        self.header_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        header_container = self.header_container
+        # ─── HEADER CARD ───────────────────────────────────────────────────────
+        _header_wrapper = QWidget()
+        _header_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _header_wrapper.setStyleSheet('background: transparent;')
+        _hw_lo = QVBoxLayout(_header_wrapper)
+        _hw_lo.setContentsMargins(12, 12, 12, 0)
+        _hw_lo.setSpacing(0)
 
-        # Cover art — anchored to bottom-left corner of the header via resizeEvent
-        self.cover_label = QLabel(header_container)
-        self.cover_label.setFixedSize(220, 220)
-        self.cover_label.setStyleSheet("background-color: transparent; border-radius: 12px;")
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.move(8, 8)
+        self.header_container = _Card()
+        _hw_lo.addWidget(self.header_container)
 
-        # Meta sits to the right of the cover with matching padding
-        meta_container = QWidget(header_container)
-        header_layout = QHBoxLayout(header_container)
-        header_layout.setContentsMargins(220 + 16, 8, 8, 8)
-        header_layout.setSpacing(0)
-        header_layout.addWidget(meta_container, 0, Qt.AlignmentFlag.AlignTop)
+        header_lo = QHBoxLayout(self.header_container)
+        header_lo.setContentsMargins(28, 28, 28, 28)
+        header_lo.setSpacing(28)
+
+        self.cover_label = _RoundedPixmapLabel(264, 264, radius=10, show_glow=True)
+        header_lo.addWidget(self.cover_label)
+
+        meta_container = QWidget()
+        meta_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        meta_container.setStyleSheet('background: transparent;')
+        meta_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        header_lo.addWidget(meta_container, 1, Qt.AlignmentFlag.AlignTop)
 
         meta_layout = QVBoxLayout(meta_container)
-        meta_layout.setContentsMargins(0, 8, 0, 8)
+        meta_layout.setContentsMargins(0, 0, 0, 0)
         meta_layout.setSpacing(5)
 
         self.lbl_type = QLabel("")
@@ -1186,7 +1184,7 @@ class AlbumDetailView(QWidget):
         self.lbl_type.setStyleSheet("color: #ddd; font-weight: bold; font-size: 11px;")
 
         self.lbl_title = QLabel("Album Title")
-        self.lbl_title.setStyleSheet("color: white; font-weight: 900; font-size: 36px;")
+        self.lbl_title.setStyleSheet("color: #dddddd; font-weight: bold; font-size: 32px; background: transparent; margin: 0; padding: 0;")
         self.lbl_title.setWordWrap(True)
 
         self.lbl_meta = QLabel("Loading...")
@@ -1238,7 +1236,7 @@ class AlbumDetailView(QWidget):
         meta_layout.addWidget(self.lbl_meta)
         meta_layout.addWidget(btn_row)
         
-        main_layout.addWidget(header_container)
+        main_layout.addWidget(_header_wrapper)
 
         # ─── TRACK LIST (scrollable) ────────────────────────────────────────────
         self.scroll_area = QScrollArea()
@@ -1795,79 +1793,6 @@ class AlbumDetailView(QWidget):
 
     # ── Blurred background ────────────────────────────────────────────────────
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._bg_label.setGeometry(0, 0, self.width(), self.height())
-        self._update_bg()
-        self.cover_label.move(8, 8)
-
-    def _set_bg_cover(self, pix: QPixmap):
-        self._bg_cover = pix
-        self._update_bg()
-
-    def _update_bg(self):
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
-        bg = QPixmap(w, h)
-        bg.fill(Qt.GlobalColor.transparent)
-        if self._bg_cover and not self._bg_cover.isNull():
-            zone_h = min(420, h)
-
-            art = self._bg_cover.scaled(w, zone_h,
-                                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                        Qt.TransformationMode.SmoothTransformation)
-            # Centre-crop to exactly (w, zone_h)
-            x_off = (art.width()  - w)      // 2
-            y_off = (art.height() - zone_h) // 2
-            art   = art.copy(x_off, y_off, w, zone_h)
-
-            mc = getattr(self, '_accent_color', QColor(14, 14, 14))
-            tr = int(mc.red()   * 0.15)
-            tg = int(mc.green() * 0.15)
-            tb = int(mc.blue()  * 0.15)
-            _bg_parts = [int(x) for x in getattr(self, '_bg_color', '14,14,14').split(',')]
-            pr, pg, pb = _bg_parts[0], _bg_parts[1], _bg_parts[2]
-            p = QPainter(bg)
-            p.setOpacity(0.55)
-            p.drawPixmap(0, 0, art)
-            p.setOpacity(1.0)
-            # Gradient: transparent at top (art shows through) → accent tint in middle
-            # → fully opaque panel bg at bottom so the art zone edge is invisible
-            fade_opaque = QColor(pr, pg, pb, 255)
-            fade_clear  = QColor(pr, pg, pb, 0)
-
-            # Bottom fade
-            grad_b = QLinearGradient(0, 0, 0, float(zone_h))
-            grad_b.setColorAt(0.0,  QColor(tr, tg, tb, 0))
-            grad_b.setColorAt(0.4,  QColor(tr, tg, tb, 140))
-            grad_b.setColorAt(0.75, QColor(pr, pg, pb, 210))
-            grad_b.setColorAt(1.0,  fade_opaque)
-            p.fillRect(0, 0, w, zone_h, grad_b)
-
-            fade_w = min(w // 3, 160)
-            fade_top = min(zone_h // 4, 80)
-
-            # Left fade
-            grad_l = QLinearGradient(0, 0, float(fade_w), 0)
-            grad_l.setColorAt(0.0, fade_opaque)
-            grad_l.setColorAt(1.0, fade_clear)
-            p.fillRect(0, 0, fade_w, zone_h, grad_l)
-
-            # Right fade
-            grad_r = QLinearGradient(float(w - fade_w), 0, float(w), 0)
-            grad_r.setColorAt(0.0, fade_clear)
-            grad_r.setColorAt(1.0, fade_opaque)
-            p.fillRect(w - fade_w, 0, fade_w, zone_h, grad_r)
-
-            # Top fade
-            grad_t = QLinearGradient(0, 0, 0, float(fade_top))
-            grad_t.setColorAt(0.0, fade_opaque)
-            grad_t.setColorAt(1.0, fade_clear)
-            p.fillRect(0, 0, w, fade_top, grad_t)
-
-            p.end()
-        self._bg_label.setPixmap(bg)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -1922,19 +1847,18 @@ class AlbumDetailView(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
-        self._update_bg()
 
     def set_accent_color(self, color):
-        self._accent_color = QColor(color)
-        self._update_bg()
         if hasattr(self, 'lbl_artist'):
             self.lbl_artist.set_color(color)
         if hasattr(self, '_track_header'):
             self._track_header.set_accent(color)
-        if hasattr(self, 'cover_label'):
+        if hasattr(self, 'header_container') and hasattr(self.header_container, 'set_border'):
             theme = getattr(self.window(), 'theme', None)
-            sk = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
-            self.cover_label.setStyleSheet(f"background-color: {sk}; border-radius: 12px;")
+            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
+            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
+            self.header_container.set_border(border)
+            self.header_container.set_bg(card_bg)
         if hasattr(self, '_track_delegate'):
             theme = getattr(self.window(), 'theme', None)
             if theme:
@@ -1945,14 +1869,11 @@ class AlbumDetailView(QWidget):
             sec_size  = getattr(theme, 'font_size_secondary', 12)        if theme else 12
             sec_color = getattr(theme, 'font_color_secondary','#aaaaaa') if theme else '#aaaaaa'
             if hasattr(self, 'lbl_title'):
-                self.lbl_title.setStyleSheet(f"color: {pri_color}; font-weight: 900; font-size: 36px;")
+                pri_size = getattr(theme, 'font_size_primary', 17) if theme else 17
+                self.lbl_title.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: {pri_size + 15}px; background: transparent; margin: 0; padding: 0;")
             if hasattr(self, 'lbl_meta'):
                 self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
-        if hasattr(self, 'header_container'):
-            self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border: none; }"
-            )
 
         # Dynamically style the Album play button with the Master Color!
         play_btn_style = f"""
@@ -2137,9 +2058,7 @@ class AlbumDetailView(QWidget):
         
         # 3. FAST COVER ART
         from PyQt6.QtGui import QPixmap
-        self.cover_label.setPixmap(QPixmap())
-        self._bg_cover = None
-        self._update_bg()
+        self.cover_label.set_pixmap(QPixmap())
         cid = album_data.get('cover_id') or album_data.get('coverArt') or album_data.get('id')
         if cid:
             from cover_cache import CoverCache
@@ -2147,13 +2066,12 @@ class AlbumDetailView(QWidget):
             if data:
                 pix = QPixmap()
                 pix.loadFromData(data)
-                self.cover_label.setPixmap(_square_cover(pix))
-                self._set_bg_cover(pix)
+                self.cover_label.set_pixmap(pix)
             import threading
             def fetch():
                 if not getattr(self, 'client', None): return
                 try:
-                    d = self.client.get_cover_art(cid, size=None)  # original resolution
+                    d = self.client.get_cover_art(cid, size=None)
                     if d:
                         CoverCache.instance().save_full(cid, d)
                         from PyQt6.QtCore import QTimer
@@ -2166,8 +2084,7 @@ class AlbumDetailView(QWidget):
         from PyQt6.QtGui import QPixmap
         pix = QPixmap()
         pix.loadFromData(data)
-        self.cover_label.setPixmap(_square_cover(pix))
-        self._set_bg_cover(pix)
+        self.cover_label.set_pixmap(pix)
 
 class DummyScrollBar:
     def value(self): return 0

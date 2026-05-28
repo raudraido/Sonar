@@ -2,13 +2,11 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QScrollArea, QPushButton,
                              QListWidget, QListWidgetItem, QAbstractItemView,
                              QAbstractButton, QFrame, QGraphicsOpacityEffect,
-                             QApplication)
+                             QApplication, QStyledItemDelegate, QStyleOptionViewItem)
 from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
                           QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
                           QEasingCurve, QPoint)
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
-from PyQt6.QtWidgets import QStyledItemDelegate
-
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
 from tracks_browser import MiddleClickScroller
@@ -74,6 +72,25 @@ class _ShimmerDelegate(QStyledItemDelegate):
 
     def stop(self):
         self._timer.stop()
+
+
+class _HomeGridDelegate(GridItemDelegate):
+    """
+    GridItemDelegate for the Home panel's always-on 6-px QScrollArea scrollbar.
+
+    The scrollbar consumes 6 px on the right of the viewport. Without adjustment,
+    the right visual gap = 6 (icon pad) + 6 (scrollbar) = 12 px vs 10 px on the left.
+
+    Fix: expand the painting rect 2 px to the right so the effective right icon-pad
+    is 4 px → right gap = 4 + 6 (scrollbar) = 10 px = left gap.
+    """
+    _SB_W = 6   # must match scrollbar_css() width
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        opt.rect = option.rect.adjusted(0, 0, self._SB_W - 4, 0)
+        super().paint(painter, opt, index)
+
 
 class HomeLoaderWorker(QThread):
     # Each section emits independently as soon as its fetch completes
@@ -335,13 +352,13 @@ class HomeAlbumRowWidget(QWidget):
         self._offset       = 0
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6) # space for title row shadow and gap to carousel below
 
         # ── Title row ────────────────────────────────────────────────────
         title_row = QWidget()
         title_layout = QHBoxLayout(title_row)
-        title_layout.setContentsMargins(6, 0, 6, 0)
+        title_layout.setContentsMargins(6, 0, 4, 0)
         title_layout.setSpacing(8)
 
         self._grip = _GripHandle()
@@ -400,7 +417,7 @@ class HomeAlbumRowWidget(QWidget):
             QListWidget::item { background: transparent; }
             QListWidget::item:selected { background: transparent; }
         """)
-        self.delegate = GridItemDelegate(self.list_widget)
+        self.delegate = _HomeGridDelegate(self.list_widget)
         self.list_widget.setItemDelegate(self.delegate)
         self.list_widget.itemDoubleClicked.connect(self._on_activated)
         self.list_widget.installEventFilter(self)
@@ -834,7 +851,7 @@ class HomeView(QWidget):
         self.setObjectName("HomePanel")
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(4, 0, 0, 0)
         main_layout.setSpacing(0)
 
 

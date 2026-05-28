@@ -354,15 +354,6 @@ class VisualsMixin:
         self._last_theme_key = theme_key
 
         if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
-        if hasattr(self, '_vis_icon_pix') and not self._vis_icon_pix.isNull():
-            out = QPixmap(self._vis_icon_pix.size())
-            out.fill(Qt.GlobalColor.transparent)
-            p = QPainter(out)
-            p.drawPixmap(0, 0, self._vis_icon_pix)
-            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(out.rect(), QColor(mc))
-            p.end()
-            self.tabs.tabBar().setTabIcon(self._vis_tab_idx, QIcon(out))
         if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
@@ -376,6 +367,8 @@ class VisualsMixin:
         for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None)]:
             if _sec: _sec.set_master_color(mc)
         if hasattr(self, '_left_panel'): self._left_panel.set_master_color(mc)
+        if hasattr(self, '_left_handle'):  self._left_handle.update_color(mc)
+        if hasattr(self, '_queue_handle'): self._queue_handle.update_color(mc)
 
         self.btn_shuffle.master_color = mc; self.btn_repeat.master_color = mc
         self.btn_shuffle.setIcon(get_cached_icon("img/shuffle.png", mc)); self.btn_repeat.setIcon(get_cached_icon("img/repeat.png", mc))
@@ -493,14 +486,15 @@ class VisualsMixin:
             if hasattr(self, 'tab_bar'):
                 from PyQt6.QtCore import QSize
                 self.tab_bar.setIconSize(QSize(16, 16))
+                self.tab_bar.set_master_color(mc)
                 icon_map = {
                     'home_tab':           'img/home.png',
-                    '_now_playing_panel': 'img/now_playing.png',  # NowPlayingInfoTab
-
+                    '_now_playing_panel': 'img/now_playing.png',
                     'album_browser':      'img/albums.png',
                     'artist_browser':     'img/artists.png',
                     'tracks_browser':     'img/tracks.png',
                     'playlists_browser':  'img/playlists.png',
+                    '_vis_container':     'img/visualizer.png',
                 }
                 for attr, img in icon_map.items():
                     widget = getattr(self, attr, None)

@@ -1113,7 +1113,7 @@ class NowPlayingInfoTab(QWidget):
         right_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         right_w.setMinimumWidth(0)
         right_lo = QVBoxLayout(right_w)
-        right_lo.setContentsMargins(0, 0, 0, 0)
+        right_lo.setContentsMargins(0, 16, 0, 0)
         right_lo.setSpacing(4)
         self._track_card_lo.addWidget(right_w, 1)
 

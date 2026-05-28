@@ -7,7 +7,12 @@
       "Bash(git clone *)",
       "Bash(dir C:\\\\Users\\\\raido\\\\Desktop\\\\psysonic_ref)",
       "PowerShell(git clone https://github.com/Psychotoxical/psysonic.git \"$env:USERPROFILE\\\\Desktop\\\\psysonic_ref\" 2>&1 | Select-Object -Last 5)",
-      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\Desktop\\\\psysonic_ref\" -Recurse -Name | Select-Object -First 30)"
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\Desktop\\\\psysonic_ref\" -Recurse -Name | Select-Object -First 30)",
+      "Bash(Get-ChildItem -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)",
+      "PowerShell(git stash push -m \"handle update_color in set_master_color\" -- player/mixins/visuals.py)",
+      "PowerShell(git pull)",
+      "PowerShell(git stash pop)"
     ]
   }
 }
