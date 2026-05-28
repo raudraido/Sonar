@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QColor, QMouseEvent, QAction, QIcon,
-    QFontMetrics, QCursor, QPainter,
+    QFontMetrics, QCursor, QPainter, QLinearGradient,
     QPolygon, QFont, QPen, QBrush, QPainterPath, QPixmapCache,
     QMovie
 )
@@ -70,12 +70,36 @@ from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
 
 class _TabBar(QTabBar):
     """QTabBar that skips CE_TabBarBase so no gray baseline is drawn."""
+
+    _accent: str = '#888888'
+
+    def set_master_color(self, color: str):
+        self._accent = color
+        self.update()
+
     def paintEvent(self, event):
         painter = QStylePainter(self)
         opt = QStyleOptionTab()
         for i in range(self.count()):
             self.initStyleOption(opt, i)
             painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+
+        # ── Accent glow line under the selected tab ───────────────────────
+        sel = self.currentIndex()
+        if sel >= 0:
+            r   = self.tabRect(sel)
+            c   = QColor(self._accent)
+            h   = self.height()
+            pad = 4   # horizontal inset inside the tab rect
+
+            # soft gradient bloom fading upward (9 px tall)
+            bloom = QLinearGradient(0, h - 9, 0, h)
+            bloom.setColorAt(0.0, QColor(c.red(), c.green(), c.blue(), 0))
+            bloom.setColorAt(1.0, QColor(c.red(), c.green(), c.blue(), 55))
+            painter.fillRect(r.x() + pad, h - 9, r.width() - pad * 2, 9, bloom)
+
+            # solid 2 px accent bar at the very bottom
+            painter.fillRect(r.x() + pad, h - 2, r.width() - pad * 2, 2, c)
 
 
 class _TabsCompat(_QObject):
@@ -231,57 +255,40 @@ class _ResizeHandle(QWidget):
 
         self.setFixedWidth(12)
         self.setCursor(Qt.CursorShape.SizeHorCursor)
-        # Transparent overlay: no background paint, only the icon
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAutoFillBackground(False)
 
-        raw = QPixmap(resource_path('img/drag.png'))
-        self._pix_dim    = self._tint(raw, '#888888')
-        self._pix_bright = self._tint(raw, '#ffffff')
-        self._pix        = self._pix_dim
-
+        self._hovered = False
         self._eff  = QGraphicsOpacityEffect(self)
         self._eff.setOpacity(self._DEFAULT_OPACITY)
         self.setGraphicsEffect(self._eff)
         self._anim = QPropertyAnimation(self._eff, b'opacity')
         self._anim.setDuration(180)
 
-    @staticmethod
-    def _tint(raw: QPixmap, color: str) -> QPixmap:
-        if raw.isNull():
-            return raw
-        out = QPixmap(raw.size())
-        out.fill(Qt.GlobalColor.transparent)
-        p = QPainter(out)
-        p.drawPixmap(0, 0, raw)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(out.rect(), QColor(color))
-        p.end()
-        return out
-
     def update_color(self, color: str):
-        raw = QPixmap(resource_path('img/drag.png'))
-        if not raw.isNull():
-            self._pix_bright = self._tint(raw, color)
-            self.update()
+        self._dot_color = QColor(color)
+        self.update()
 
     def paintEvent(self, event):
-        if self._pix.isNull():
-            return
         p = QPainter(self)
-        x = (self.width()  - self._pix.width())  // 2
-        y = (self.height() - self._pix.height()) // 2
-        p.drawPixmap(x, y, self._pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = getattr(self, '_dot_color', QColor('#ffffff' if self._hovered else '#888888'))
+        p.setBrush(color)
+        p.setPen(Qt.PenStyle.NoPen)
+        cx = self.width() // 2
+        mid = self.height() // 2
+        for dy in (-5, 0, 5):
+            p.drawEllipse(cx - 2, mid + dy - 2, 4, 4)
         p.end()
 
     def enterEvent(self, event):
-        self._pix = self._pix_bright
+        self._hovered = True
         self._anim.stop(); self._anim.setEndValue(1.0); self._anim.start()
         self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._pix = self._pix_dim
+        self._hovered = False
         self._anim.stop(); self._anim.setEndValue(self._DEFAULT_OPACITY); self._anim.start()
         self.update()
         super().leaveEvent(event)
@@ -650,6 +657,7 @@ class SonarPlayer(
         self.tab_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.tab_bar.setExpanding(False)
+        self.tab_bar.currentChanged.connect(self.tab_bar.update)
 
         self.tab_stack = QStackedWidget()
         self.tab_stack.setObjectName('TabStack')
@@ -760,7 +768,6 @@ class SonarPlayer(
         _vis_lo.addWidget(self._coming_soon_lbl)
         _vis_lo.addWidget(self.visualizer, 1)
         self._vis_container = _vis_container
-        self._vis_icon_pix = QPixmap(resource_path('img/visualizer.png'))
         self.tabs.addTab(_vis_container, "Visualizer")
         self._vis_tab_idx = self.tabs.count() - 1
 
