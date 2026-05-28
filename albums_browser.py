@@ -31,7 +31,7 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-from components import PaginationFooter, SmartSearchContainer, AutoCollapseInput
+from components import PaginationFooter, SmartSearchContainer
 from tracks_browser import TracksBrowser, MiddleClickScroller
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
@@ -921,14 +921,14 @@ class _TrackHeader(QHeaderView):
         f = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
         painter.setFont(f)
         painter.setPen(QColor(self._secondary_color()))
-        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 4) else Qt.AlignmentFlag.AlignLeft
+        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 5) else Qt.AlignmentFlag.AlignLeft
         painter.drawText(rect.adjusted(4, 0, -4, -8),
                          h_align | Qt.AlignmentFlag.AlignBottom, text)
 
         painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
         painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
 
-        if 0 < logical_index < self.count() - 1:
+        if logical_index > 0:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             pen = QPen(self._border_qcolor(), 2)
             pen.setCosmetic(True)
@@ -1153,10 +1153,11 @@ class AlbumDetailView(QWidget):
 
         # ─── HEADER CARD ───────────────────────────────────────────────────────
         _header_wrapper = QWidget()
+        _header_wrapper.setObjectName('_hw')
         _header_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _header_wrapper.setStyleSheet('background: transparent;')
+        _header_wrapper.setStyleSheet('#_hw { background: transparent; }')
         _hw_lo = QVBoxLayout(_header_wrapper)
-        _hw_lo.setContentsMargins(12, 12, 12, 0)
+        _hw_lo.setContentsMargins(12, 12, 6, 0)
         _hw_lo.setSpacing(0)
 
         self.header_container = _Card()
@@ -1236,19 +1237,10 @@ class AlbumDetailView(QWidget):
         meta_layout.addWidget(self.lbl_meta)
         meta_layout.addWidget(btn_row)
         
-        main_layout.addWidget(_header_wrapper)
-
-        # ─── TRACK LIST (scrollable) ────────────────────────────────────────────
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self.scroll_area.viewport().setAutoFillBackground(False)
-        self.omni_scroller = MiddleClickScroller(self.scroll_area)
+        # ─── TRACK LIST ─────────────────────────────────────────────────────────
         self.track_tree = QTreeWidget()
         self.track_tree.setColumnCount(6)
-        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'FAVORITE', 'DURATION', 'GENRE'])
+        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'FAVORITE', 'GENRE', 'DURATION'])
         self.track_tree.setRootIsDecorated(False)
         self.track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self.track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1291,8 +1283,8 @@ class AlbumDetailView(QWidget):
         hdr.resizeSection(0, 50)
         hdr.resizeSection(2, 180)
         hdr.resizeSection(3, 76)
-        hdr.resizeSection(4, 76)
-        hdr.resizeSection(5, 130)
+        hdr.resizeSection(4, 130)
+        hdr.resizeSection(5, 76)
         hdr.setStretchLastSection(False)
         hdr.setMinimumSectionSize(30)
         self._col_save_timer = QTimer(self)
@@ -1317,78 +1309,76 @@ class AlbumDetailView(QWidget):
         self._tc_layout.setContentsMargins(16, 0, 16, 0)
         self._tc_layout.setSpacing(0)
         self._tc_layout.addWidget(self.track_tree)
-        self._tc_layout.addStretch()
-        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._update_track_right_margin)
 
-        self.scroll_area.setWidget(_track_container)
-
-        # ── Search bar (collapsible — icon click reveals input) ──────────────────
+        # ── Search bar ───────────────────────────────────────────────────────────
         _sb_container = QWidget()
-        _sb_container.setStyleSheet("background: transparent;")
+        _sb_container.setObjectName('_sb')
+        _sb_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _sb_container.setStyleSheet('#_sb { background: transparent; }')
         _sbl = QHBoxLayout(_sb_container)
-        _sbl.setContentsMargins(16, 4, 16, 4)
-        _sbl.setSpacing(4)
-
-        self._search_bar = AutoCollapseInput()
-        self._search_bar.setPlaceholderText("Search tracks…")
-        self._search_bar.setMinimumWidth(0)
-        self._search_bar.setMaximumWidth(0)
-        self._search_bar.setFixedHeight(28)
-        self._search_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._search_bar.setStyleSheet(
-            "QLineEdit { background-color: #0e0e0e; color: #dddddd;"
-            " border: 1px solid #2a2a2a; border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
-            " QLineEdit::placeholder { color: #888888; }"
-        )
-        self._search_bar.textChanged.connect(self._filter_tracks)
-        self._search_bar.focus_lost.connect(self._collapse_track_search)
-
-        self._search_toggle_btn = QPushButton()
-        self._search_toggle_btn.setIcon(QIcon(resource_path("img/search.png")))
-        self._search_toggle_btn.setIconSize(QSize(18, 18))
-        self._search_toggle_btn.setFixedSize(32, 32)
-        self._search_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._search_toggle_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; border-radius: 4px; }"
-            " QPushButton:hover { background: rgba(255,255,255,0.1); }"
-        )
-        self._search_toggle_btn.clicked.connect(self._toggle_track_search)
-
+        _sbl.setContentsMargins(16, 8, 16, 8)
+        _sbl.setSpacing(0)
         _sbl.addStretch(1)
-        _sbl.addWidget(self._search_bar)
-        _sbl.addSpacing(4)
-        _sbl.addWidget(self._search_toggle_btn)
-        main_layout.addWidget(_sb_container)
+        self.search_container = SmartSearchContainer(placeholder="Search tracks…")
+        self.search_container.hide_burger()
+        self.search_container.text_changed.connect(self._filter_tracks)
+        self.search_container.search_input.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.search_container.search_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        _sbl.addWidget(self.search_container)
+
+        # ── Track card ───────────────────────────────────────────────────────────
+        self.track_card = _Card()
+        _track_card_lo = QVBoxLayout(self.track_card)
+        _track_card_lo.setContentsMargins(0, 0, 0, 0)
+        _track_card_lo.setSpacing(0)
+        _track_card_lo.addWidget(_sb_container)
+        _track_card_lo.addWidget(_track_container)
+
+        _track_wrapper = QWidget()
+        _track_wrapper.setObjectName('_tw')
+        _track_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _track_wrapper.setStyleSheet('#_tw { background: transparent; }')
+        _tw_lo = QVBoxLayout(_track_wrapper)
+        _tw_lo.setContentsMargins(12, 10, 6, 12)
+        _tw_lo.setSpacing(0)
+        _tw_lo.addWidget(self.track_card)
+
+        # ── Single outer scroll area (scrolls header + tracks together) ──────────
+        _scroll_content = QWidget()
+        _scroll_content.setObjectName('_sc')
+        _scroll_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _scroll_content.setStyleSheet('#_sc { background: transparent; }')
+        _sc_lo = QVBoxLayout(_scroll_content)
+        _sc_lo.setContentsMargins(0, 0, 0, 0)
+        _sc_lo.setSpacing(0)
+        _sc_lo.addWidget(_header_wrapper)
+        _sc_lo.addWidget(_track_wrapper)
+        _sc_lo.addStretch(1)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scroll_area.viewport().setAutoFillBackground(False)
+        self.scroll_area.setWidget(_scroll_content)
+        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._update_track_right_margin)
+        self.omni_scroller = MiddleClickScroller(self.scroll_area)
+
         main_layout.addWidget(self.scroll_area, 1)
 
     # ── Track search ──────────────────────────────────────────────────────────
 
     def _toggle_track_search(self):
-        if getattr(self, '_track_search_animating', False):
-            return
-        self._track_search_animating = True
-        anim = QPropertyAnimation(self._search_bar, b"animWidth")
-        anim.setDuration(250)
-        anim.setEasingCurve(QEasingCurve.Type.InOutQuart)
-        anim.finished.connect(lambda: setattr(self, '_track_search_animating', False))
-        if self._search_bar.maximumWidth() == 0:
-            self._search_bar.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            anim.setStartValue(0)
-            anim.setEndValue(220)
-            anim.start()
-            self._search_bar.setFocus()
-        else:
-            anim.setStartValue(self._search_bar.maximumWidth())
-            anim.setEndValue(0)
-            anim.start()
-            self._search_bar.clearFocus()
-            self._search_bar.clear()
-            self._search_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._track_search_anim = anim
-
-    def _collapse_track_search(self):
-        if self._search_bar.maximumWidth() > 0 and not self._search_bar.text():
-            self._toggle_track_search()
+        si = self.search_container.search_input
+        opening = si.maximumWidth() == 0
+        if opening:
+            si.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.search_container.toggle_search()
+        if not opening:
+            si.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     # ── Track list ────────────────────────────────────────────────────────────
 
@@ -1458,11 +1448,11 @@ class AlbumDetailView(QWidget):
     def _load_tracks(self, tracks: list):
         self._tracks = tracks
         # Collapse search bar when loading a new album
-        if self._search_bar.maximumWidth() > 0:
-            self._search_bar.setMinimumWidth(0)
-            self._search_bar.setMaximumWidth(0)
-            self._search_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self._search_bar.clear()
+        si = self.search_container.search_input
+        if si.maximumWidth() > 0:
+            si.setMinimumWidth(0)
+            si.setMaximumWidth(0)
+            si.clear()
         self.track_tree.setUpdatesEnabled(False)
         self.track_tree.clear()
 
@@ -1499,12 +1489,12 @@ class AlbumDetailView(QWidget):
                 secs     = dur_ms // 1000
                 duration = f"{secs // 60}:{secs % 60:02d}"
                 genre    = t.get('genre', '') or ''
-                item = QTreeWidgetItem([num, title, artist, heart, duration, genre])
+                item = QTreeWidgetItem([num, title, artist, heart, genre, duration])
                 item.setData(0, Qt.ItemDataRole.UserRole, {'_track_idx': track_idx, 'id': str(t.get('id', ''))})
                 item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                item.setTextAlignment(4, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                item.setTextAlignment(5, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(4, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 for col in range(6):
                     item.setForeground(col, _pri_color if col == 1 else _sec_color)
                 self.track_tree.addTopLevelItem(item)
@@ -1859,6 +1849,12 @@ class AlbumDetailView(QWidget):
             card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
             self.header_container.set_border(border)
             self.header_container.set_bg(card_bg)
+        if hasattr(self, 'track_card') and hasattr(self.track_card, 'set_border'):
+            theme = getattr(self.window(), 'theme', None)
+            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
+            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
+            self.track_card.set_border(border)
+            self.track_card.set_bg(card_bg)
         if hasattr(self, '_track_delegate'):
             theme = getattr(self.window(), 'theme', None)
             if theme:
@@ -1899,25 +1895,8 @@ class AlbumDetailView(QWidget):
             self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
         self._scroll_reveal.color = color
 
-        if hasattr(self, '_search_bar'):
-            _theme = getattr(self.window(), 'theme', None)
-            _bg   = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14'
-            _bc   = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a'
-            _bw   = getattr(_theme, 'border_width',         1)          if _theme else 1
-            _fg   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd'
-            _fgs  = getattr(_theme, 'font_color_secondary', '#888888')  if _theme else '#888888'
-            _fsize = getattr(_theme, 'font_size_secondary', 12)         if _theme else 12
-            self._search_bar.setStyleSheet(f"""
-                QLineEdit {{
-                    background-color: rgb({_bg});
-                    color: {_fg};
-                    border: {_bw}px solid {_bc};
-                    border-radius: 4px;
-                    padding: 4px 8px;
-                    font-size: {_fsize}px;
-                }}
-                QLineEdit::placeholder {{ color: {_fgs}; }}
-            """)
+        if hasattr(self, 'search_container'):
+            self.search_container.set_accent_color(color)
 
         icon_path = resource_path("img/shuffle.png")
         if os.path.exists(icon_path):
@@ -1936,19 +1915,6 @@ class AlbumDetailView(QWidget):
             self.btn_shuffle.setIcon(QIcon(colored))
             self.btn_shuffle.setIconSize(QSize(22, 22))
 
-        search_icon_path = resource_path("img/search.png")
-        if os.path.exists(search_icon_path):
-            pixmap = QPixmap(search_icon_path)
-            colored = QPixmap(pixmap.size())
-            colored.fill(QColor(0, 0, 0, 0))
-            painter = QPainter(colored)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-            painter.fillRect(colored.rect(), QColor(color))
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-            painter.drawPixmap(0, 0, pixmap)
-            painter.end()
-            self._search_toggle_btn.setIcon(QIcon(colored))
-            self._search_toggle_btn.setIconSize(QSize(18, 18))
 
     def load_album(self, album_data):
         self.current_album_id = album_data.get('id')
