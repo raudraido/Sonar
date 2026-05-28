@@ -346,6 +346,15 @@ class VisualsMixin:
         cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
         self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
 
+        try:
+            _r, _g, _b = (int(x) for x in getattr(self.theme, 'main_panel_bg', '14,14,14').split(','))
+            _is_dark_bg = (_r * 299 + _g * 587 + _b * 114) / 1000 < 128
+        except Exception:
+            _is_dark_bg = True
+        if getattr(self, '_last_title_bar_dark', None) != _is_dark_bg:
+            self._last_title_bar_dark = _is_dark_bg
+            self.enable_dark_title_bar(_is_dark_bg)
+
         theme_key = (mc, resolve_menu_hover(self.theme))
 
         if getattr(self, '_last_theme_key', None) == theme_key:
@@ -896,10 +905,10 @@ class VisualsMixin:
         if index == 1 and new_size < MIN_WIDTH:
             self.tree.header().resizeSection(1, MIN_WIDTH)
     
-    def enable_dark_title_bar(self):
+    def enable_dark_title_bar(self, is_dark=True):
         if sys.platform == "win32":
             try:
-                import ctypes; hwnd = int(self.winId()); val = ctypes.c_int(1)
+                import ctypes; hwnd = int(self.winId()); val = ctypes.c_int(1 if is_dark else 0)
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4); ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(val), 4)
             except: pass
        
