@@ -290,12 +290,7 @@ class AudioVisualizer(QWidget):
                 font-size: 13px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{
-                background-color: rgba({r}, {g}, {b}, 40);
-                border: 1px solid rgb({r}, {g}, {b});
-                border-right: none;
-                color: rgb(255, 255, 255);
-            }}
+            QPushButton:hover {{ color: rgb(255, 255, 255); }}
             QPushButton:pressed {{ background-color: rgba({r}, {g}, {b}, 20); }}
         """)
         self.btn_ref_plus.setStyleSheet(f"""
@@ -309,12 +304,7 @@ class AudioVisualizer(QWidget):
                 font-size: 13px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{
-                background-color: rgba({r}, {g}, {b}, 40);
-                border: 1px solid rgb({r}, {g}, {b});
-                border-left: none;
-                color: rgb(255, 255, 255);
-            }}
+            QPushButton:hover {{ color: rgb(255, 255, 255); }}
             QPushButton:pressed {{ background-color: rgba({r}, {g}, {b}, 20); }}
         """)
         self.lbl_ref_level.setStyleSheet(f"""
