@@ -99,6 +99,11 @@ class NavigationMixin:
                     
             elif view == 'tracks_list':
                 pass
+
+            elif view == 'genre_filter':
+                if hasattr(self, 'tracks_browser') and data and data.get('genre'):
+                    self.tracks_browser._col_filters = {}
+                    self.tracks_browser._apply_col_filter(6, {data['genre']})
             
             elif view == 'playlists_browser':
                 if hasattr(self, 'playlists_browser'): 
@@ -276,11 +281,13 @@ class NavigationMixin:
     def navigate_to_genre(self, genre_name):
         if not genre_name:
             return
+        tracks_idx = self.tabs.indexOf(self.tracks_browser)
         self.programmatic_nav = True
-        self.tabs.setCurrentIndex(self.tabs.indexOf(self.tracks_browser))
+        self.tabs.setCurrentIndex(tracks_idx)
         self.programmatic_nav = False
-        self.tracks_browser._col_filters = {}  # clear any stale filters before applying genre
+        self.tracks_browser._col_filters = {}
         self.tracks_browser._apply_col_filter(6, {genre_name})
+        self.add_global_nav(tracks_idx, 'genre_filter', {'genre': genre_name})
 
     def navigate_to_album(self, album_data):
         self.add_global_nav(self.global_album_tab_idx, 'album', album_data)
