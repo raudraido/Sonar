@@ -1634,6 +1634,7 @@ class ArtistRichDetailView(QWidget):
     play_track = pyqtSignal(dict)
     play_artist = pyqtSignal()
     artist_clicked = pyqtSignal(dict)
+    artist_favorite_toggled = pyqtSignal(bool)
     
     def __init__(self):
         super().__init__()
@@ -1703,10 +1704,27 @@ class ArtistRichDetailView(QWidget):
         btn_bar.setStyleSheet('background: transparent;')
         btn_layout = QHBoxLayout(btn_bar)
         btn_layout.setContentsMargins(0, 20, 0, 0)
+        btn_layout.setSpacing(2)
         btn_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # --- ARTIST VIEW PLAY BUTTON ---
         from albums_browser import resource_path
+
+        def _tint_icon(path, color, size=24):
+            p = QPixmap(resource_path(path))
+            if p.isNull():
+                return QIcon()
+            p = p.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+            out = QPixmap(p.size())
+            out.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(out)
+            painter.drawPixmap(0, 0, p)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            painter.fillRect(out.rect(), QColor(color))
+            painter.end()
+            return QIcon(out)
+
         self.btn_play = QPushButton()
         self.btn_play.setFixedSize(60, 60)
         self.btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1716,6 +1734,48 @@ class ArtistRichDetailView(QWidget):
         self.btn_play.clicked.connect(self.play_current_artist_tracks)
         btn_layout.addWidget(self.btn_play)
         self.btn_play.setToolTip("Play All Tracks (Ctrl+↵)")
+
+        _icon_btn_style = (
+            'QPushButton { background: transparent; border: none; border-radius: 4px; }'
+            ' QPushButton:hover { background: rgba(255, 255, 255, 0.1); }'
+        )
+
+        self._artist_liked = False
+        self.btn_like = QPushButton()
+        self.btn_like.setFlat(True)
+        self.btn_like.setFixedSize(36, 36)
+        self.btn_like.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_like.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_like.setToolTip('Favorite artist')
+        self.btn_like.setStyleSheet(_icon_btn_style)
+        self.btn_like.setIcon(_tint_icon('img/heart.png', '#666666'))
+        self.btn_like.setIconSize(QSize(22, 22))
+        self.btn_like.clicked.connect(self._toggle_artist_like)
+        btn_layout.addWidget(self.btn_like)
+
+        self.btn_lastfm = QPushButton()
+        self.btn_lastfm.setFlat(True)
+        self.btn_lastfm.setFixedSize(36, 36)
+        self.btn_lastfm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_lastfm.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_lastfm.setToolTip('Open on Last.fm')
+        self.btn_lastfm.setStyleSheet(_icon_btn_style)
+        self.btn_lastfm.setIcon(_tint_icon('img/lastfm.png', '#888888'))
+        self.btn_lastfm.setIconSize(QSize(22, 22))
+        self.btn_lastfm.clicked.connect(lambda: self._open_artist_url('lastfm'))
+        btn_layout.addWidget(self.btn_lastfm)
+
+        self.btn_wikipedia = QPushButton()
+        self.btn_wikipedia.setFlat(True)
+        self.btn_wikipedia.setFixedSize(36, 36)
+        self.btn_wikipedia.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_wikipedia.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_wikipedia.setToolTip('Open on Wikipedia')
+        self.btn_wikipedia.setStyleSheet(_icon_btn_style)
+        self.btn_wikipedia.setIcon(_tint_icon('img/wikipedia.png', '#888888'))
+        self.btn_wikipedia.setIconSize(QSize(22, 22))
+        self.btn_wikipedia.clicked.connect(lambda: self._open_artist_url('wikipedia'))
+        btn_layout.addWidget(self.btn_wikipedia)
 
         info_layout.addWidget(self.lbl_type)
         info_layout.addWidget(self.lbl_name)
@@ -2209,10 +2269,44 @@ class ArtistRichDetailView(QWidget):
             self.header_container.set_bg(card_bg)
         
         play_btn_style = f"""
-            QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
+            QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }}
             QPushButton:hover {{ background-color: white; }}
         """
         self.btn_play.setStyleSheet(play_btn_style)
+
+        if hasattr(self, 'btn_lastfm'):
+            theme = getattr(self.window(), 'theme', None)
+            _hov  = resolve_menu_hover(theme)
+            _icon_btn_style = (
+                f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
+                f' QPushButton:hover {{ background: {_hov}; }}'
+            )
+            sec_color = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
+            self.btn_lastfm.setStyleSheet(_icon_btn_style)
+            self.btn_wikipedia.setStyleSheet(_icon_btn_style)
+            from albums_browser import resource_path as _rp
+            def _tint(path, col, size=24):
+                from PyQt6.QtGui import QPixmap as _QP, QPainter as _QPA, QColor as _QC, QIcon as _QI
+                p = _QP(_rp(path))
+                if p.isNull():
+                    return _QI()
+                p = p.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+                out = _QP(p.size())
+                out.fill(_QC(0, 0, 0, 0))
+                painter = _QPA(out)
+                painter.drawPixmap(0, 0, p)
+                painter.setCompositionMode(_QPA.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(out.rect(), _QC(col))
+                painter.end()
+                return _QI(out)
+            self.btn_lastfm.setIcon(_tint('img/lastfm.png', sec_color))
+            self.btn_lastfm.setIconSize(QSize(22, 22))
+            self.btn_wikipedia.setIcon(_tint('img/wikipedia.png', sec_color))
+            self.btn_wikipedia.setIconSize(QSize(22, 22))
+            if hasattr(self, 'btn_like'):
+                self.btn_like.setStyleSheet(_icon_btn_style)
+                self._update_like_btn()
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color
@@ -2242,26 +2336,6 @@ class ArtistRichDetailView(QWidget):
             self.bio_card.set_border(border)
             self.bio_card.set_bg(card_bg)
 
-        if hasattr(self, 'btn_shuffle'):
-            import os
-            from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
-            from PyQt6.QtCore import QSize
-            from albums_browser import resource_path
-            
-            icon_path = resource_path("img/shuffle.png")
-            if os.path.exists(icon_path):
-                pixmap = QPixmap(icon_path)
-                colored = QPixmap(pixmap.size())
-                colored.fill(QColor(0,0,0,0))
-                painter = QPainter(colored)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-                painter.fillRect(colored.rect(), QColor(color))
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-                painter.drawPixmap(0, 0, pixmap)
-                painter.end()
-                self.btn_shuffle.setIcon(QIcon(colored))
-                self.btn_shuffle.setIconSize(QSize(22, 22))
 
         
         for i in range(self.sections_layout.count()):
@@ -2597,6 +2671,8 @@ class ArtistRichDetailView(QWidget):
         self.pending_qml_sections = {}  # cover_id -> [QMLAlbumSectionWidget]
         self.current_artist_name = artist_data.get('name', 'Unknown')
         self.current_artist_id = artist_data.get('id')
+        self._artist_liked = bool(artist_data.get('starred'))
+        self._update_like_btn()
 
         # 1. INSTANT VISUALS
         self.lbl_name.setText(self.current_artist_name)
@@ -2658,6 +2734,9 @@ class ArtistRichDetailView(QWidget):
     def _on_albums_ready(self, info, main_albums, singles):
         """Phase 2 handler — fires as soon as get_artist returns. Shows albums immediately."""
         self._remove_section("_skeleton")
+        if info:
+            self._artist_liked = bool(info.get('starred'))
+            self._update_like_btn()
         # Cover image
         if info:
             # Prefer high-res Last.fm/MusicBrainz URL from getArtistInfo2 over getCoverArt thumb
@@ -2763,6 +2842,52 @@ class ArtistRichDetailView(QWidget):
     # Legacy handler kept for the details_ready signal (also connected for backwards compat)
     def _on_details_ready(self, info, top_songs, main_albums, singles, appears_on):
         pass  # All work now done by the three progressive handlers above
+
+    def _toggle_artist_like(self):
+        self._artist_liked = not self._artist_liked
+        self._update_like_btn()
+        client = getattr(self, 'client', None)
+        artist_id = getattr(self, 'current_artist_id', None)
+        _liked = self._artist_liked
+        if client and artist_id:
+            import threading
+            threading.Thread(
+                target=lambda: client.set_favorite(artist_id, _liked, id_param='artistId'),
+                daemon=True,
+            ).start()
+        self.artist_favorite_toggled.emit(self._artist_liked)
+
+    def _update_like_btn(self):
+        if not hasattr(self, 'btn_like'):
+            return
+        from albums_browser import resource_path as _rp
+        path  = 'img/heart_filled.png' if self._artist_liked else 'img/heart.png'
+        color = '#E91E63' if self._artist_liked else '#666666'
+        p = QPixmap(_rp(path))
+        if not p.isNull():
+            p = p.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+            out = QPixmap(p.size())
+            out.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(out)
+            painter.drawPixmap(0, 0, p)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            painter.fillRect(out.rect(), QColor(color))
+            painter.end()
+            self.btn_like.setIcon(QIcon(out))
+        self.btn_like.setIconSize(QSize(22, 22))
+
+    def _open_artist_url(self, service: str):
+        import urllib.parse
+        from PyQt6.QtGui import QDesktopServices
+        name = getattr(self, 'current_artist_name', '') or ''
+        if not name or name in ('Loading...', 'Artist Name'):
+            return
+        if service == 'lastfm':
+            url = f'https://www.last.fm/music/{urllib.parse.quote_plus(name)}'
+        else:
+            url = f'https://en.wikipedia.org/wiki/{urllib.parse.quote(name.replace(" ", "_"), safe="_")}'
+        QDesktopServices.openUrl(QUrl(url))
 
     def play_current_artist_tracks(self):
         """Fetches all artist tracks and emits them for playback — no parent relay needed."""
@@ -3102,6 +3227,7 @@ class ArtistGridBrowser(QWidget):
         self.artist_view.play_track.connect(self.play_track_signal.emit)
         self.artist_view.play_artist.connect(self.play_current_artist)
         self.artist_view.artist_clicked.connect(self.show_artist_details)
+        self.artist_view.artist_favorite_toggled.connect(self._on_artist_favorite_toggled)
         self.stack.addWidget(self.artist_view) 
 
       
@@ -3977,8 +4103,18 @@ class ArtistGridBrowser(QWidget):
     def on_shuffle_album_clicked(self):
         if hasattr(self, 'full_track_context'): tracks = list(self.full_track_context); random.shuffle(tracks); self.play_album_signal.emit(tracks)
     
-    def on_album_heart_clicked(self, is_liked): 
+    def on_album_heart_clicked(self, is_liked):
         pass
+
+    def _on_artist_favorite_toggled(self, is_liked: bool):
+        client = getattr(self, 'client', None)
+        artist_id = getattr(self.artist_view, 'current_artist_id', None)
+        if client and artist_id:
+            import threading
+            threading.Thread(
+                target=lambda: client.set_favorite(artist_id, is_liked, id_param='artistId'),
+                daemon=True,
+            ).start()
     
     def on_track_single_clicked(self, index):
         if index.column() == 3: 

@@ -1251,7 +1251,7 @@ class AlbumDetailView(QWidget):
         btn_row = QWidget()
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 15, 0, 0)
-        btn_layout.setSpacing(15)
+        btn_layout.setSpacing(2)
         
         # --- ALBUM VIEW PLAY BUTTON ---
         self.btn_play = QPushButton()
@@ -1262,18 +1262,27 @@ class AlbumDetailView(QWidget):
         self.btn_play.setIconSize(QSize(15, 15)) # Slightly smaller icon to fit the 40px button
         self.btn_play.clicked.connect(self.play_clicked.emit)
         
+        _icon_btn_style = (
+            'QPushButton { background: transparent; border: none; border-radius: 4px; }'
+            ' QPushButton:hover { background: rgba(255, 255, 255, 0.1); }'
+        )
+
         self.btn_shuffle = QPushButton()
-        self.btn_shuffle.setFixedSize(40, 40)
+        self.btn_shuffle.setFlat(True)
+        self.btn_shuffle.setFixedSize(36, 36)
         self.btn_shuffle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_shuffle.setFocusPolicy(Qt.FocusPolicy.NoFocus) 
-        self.btn_shuffle.setStyleSheet("QPushButton { outline: none; background: transparent; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; }")
+        self.btn_shuffle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_shuffle.setStyleSheet(_icon_btn_style)
         self.btn_shuffle.clicked.connect(self.shuffle_clicked.emit)
-        
-        self.btn_like = QPushButton("♡")
-        self.btn_like.setFixedSize(40, 40)
+
+        self.btn_like = QPushButton()
+        self.btn_like.setFlat(True)
+        self.btn_like.setFixedSize(36, 36)
         self.btn_like.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_like.setFocusPolicy(Qt.FocusPolicy.NoFocus) 
-        self.btn_like.setStyleSheet("QPushButton { outline: none; background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
+        self.btn_like.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_like.setStyleSheet(_icon_btn_style)
+        self.btn_like.setIcon(QIcon(self._make_heart_pix(resource_path('img/heart.png'), '#666666', size=22)))
+        self.btn_like.setIconSize(QSize(22, 22))
         self.btn_like.clicked.connect(self.toggle_header_heart)
         
         btn_layout.addWidget(self.btn_play)
@@ -1903,11 +1912,11 @@ class AlbumDetailView(QWidget):
         ).start()
 
     @staticmethod
-    def _make_heart_pix(path: str, color: str) -> QPixmap:
+    def _make_heart_pix(path: str, color: str, size: int = 16) -> QPixmap:
         base = QPixmap(path)
         if base.isNull():
             return QPixmap()
-        base = base.scaled(QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
+        base = base.scaled(QSize(size, size), Qt.AspectRatioMode.KeepAspectRatio,
                            Qt.TransformationMode.SmoothTransformation)
         pix = QPixmap(base.size())
         pix.fill(Qt.GlobalColor.transparent)
@@ -1934,19 +1943,26 @@ class AlbumDetailView(QWidget):
 
 
     def toggle_header_heart(self):
-        is_liked = self.btn_like.text() == "♥"
+        is_liked = getattr(self, '_album_liked', False)
         new_state = not is_liked
         self.set_header_heart_state(new_state)
         self.album_favorite_toggled.emit(new_state)
 
     def set_header_heart_state(self, is_liked):
+        self._album_liked = is_liked
+        theme = getattr(self.window(), 'theme', None)
+        _hov = resolve_menu_hover(theme)
+        _btn_style = (
+            f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
+            f' QPushButton:hover {{ background: {_hov}; }}'
+        )
+        self.btn_like.setStyleSheet(_btn_style)
         if is_liked:
-            self.btn_like.setText("♥")
-            self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #E91E63; font-size: 24px; border: 2px solid #E91E63; border-radius: 20px; } QPushButton:hover { border-color: #ff4081; color: #ff4081; }")
+            self.btn_like.setIcon(QIcon(self._make_heart_pix(resource_path('img/heart_filled.png'), '#E91E63', size=22)))
         else:
-            self.btn_like.setText("♡")
-            self.btn_like.setStyleSheet("QPushButton { background: transparent; color: #aaa; font-size: 24px; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; color: white; }")
-    
+            self.btn_like.setIcon(QIcon(self._make_heart_pix(resource_path('img/heart.png'), '#666666', size=22)))
+        self.btn_like.setIconSize(QSize(22, 22))
+
     def update_playing_status(self, playing_id, is_playing, accent: str):
         self._last_playing_id = playing_id
         self._last_is_playing = is_playing
@@ -2043,22 +2059,34 @@ class AlbumDetailView(QWidget):
         if hasattr(self, 'search_container'):
             self.search_container.set_accent_color(color)
 
-        icon_path = resource_path("img/shuffle.png")
-        if os.path.exists(icon_path):
-            pixmap = QPixmap(icon_path)
-            colored = QPixmap(pixmap.size())
-            colored.fill(QColor(0,0,0,0))
-            painter = QPainter(colored)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-            painter.fillRect(colored.rect(), QColor(color))
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-            painter.drawPixmap(0, 0, pixmap)
-            painter.end()
-            
-            self.btn_shuffle.setIcon(QIcon(colored))
-            self.btn_shuffle.setIconSize(QSize(22, 22))
+        theme = getattr(self.window(), 'theme', None)
+        _hov = resolve_menu_hover(theme)
+        _btn_style = (
+            f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
+            f' QPushButton:hover {{ background: {_hov}; }}'
+        )
+        if hasattr(self, 'btn_shuffle'):
+            self.btn_shuffle.setStyleSheet(_btn_style)
+            sec_color = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
+            icon_path = resource_path("img/shuffle.png")
+            if os.path.exists(icon_path):
+                pixmap = QPixmap(icon_path)
+                colored = QPixmap(pixmap.size())
+                colored.fill(QColor(0, 0, 0, 0))
+                painter = QPainter(colored)
+                painter.drawPixmap(0, 0, pixmap)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(colored.rect(), QColor(sec_color))
+                painter.end()
+                self.btn_shuffle.setIcon(QIcon(colored))
+                self.btn_shuffle.setIconSize(QSize(22, 22))
+        if hasattr(self, 'btn_like'):
+            is_liked = getattr(self, '_album_liked', False)
+            self.btn_like.setStyleSheet(_btn_style)
+            heart_path = 'img/heart_filled.png' if is_liked else 'img/heart.png'
+            heart_color = '#E91E63' if is_liked else '#666666'
+            self.btn_like.setIcon(QIcon(self._make_heart_pix(resource_path(heart_path), heart_color, size=22)))
+            self.btn_like.setIconSize(QSize(22, 22))
 
 
     def load_album(self, album_data):

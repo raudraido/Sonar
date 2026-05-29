@@ -149,6 +149,14 @@ class SubsonicClient:
         except Exception as e:
             print(f"[DiskCache] Write failed for {key}: {e}")
 
+    def _disk_cache_delete(self, key):
+        path = self._disk_cache_path(key)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+
     def authenticate_native(self):
         """Log into Navidrome's native API to get the JWT token."""
         
@@ -390,13 +398,15 @@ class SubsonicClient:
                 name = item.get('name', 'Unknown Artist')
                 if aid and name:
                     self._artist_name_id[name.lower().strip()] = aid
+                starred_at = item.get('starredAt') or item.get('starred')
                 clean_artists.append({
                     'id': aid,
                     'name': name,
                     'coverArt': aid,
                     'albumCount': item.get('albumCount', 0),
                     'songCount': song_count,
-                    'playCount': item.get('playCount', 0)
+                    'playCount': item.get('playCount', 0),
+                    'starred': starred_at or '',
                 })
             return clean_artists, total_count
         except Exception as e:
@@ -739,7 +749,8 @@ class SubsonicClient:
                         'coverArt': artist.get('coverArt'),
                         'albumCount': artist.get('albumCount', 0),
                         'songCount': artist.get('songCount', 0),
-                        'playCount': artist.get('playCount', 0)
+                        'playCount': artist.get('playCount', 0),
+                        'starred': artist.get('starred', ''),
                     })
             print(f"[Client] Found {len(clean_artists)} total artists. Saving to disk cache.")
             self._artists_cache = clean_artists
@@ -910,11 +921,11 @@ class SubsonicClient:
         except:
             return False
 
-    def set_favorite(self, item_id, active):
-        """Toggles the star on the server and checks for errors."""
+    def set_favorite(self, item_id, active, id_param='id'):
+        """Toggles the star on the server. id_param: 'id' (song), 'albumId', or 'artistId'."""
         endpoint = "star" if active else "unstar"
         params = self._get_auth_params()
-        params['id'] = item_id
+        params[id_param] = item_id
         
         print(f"[Client] Attempting to {endpoint} item: {item_id}")
         
@@ -927,6 +938,9 @@ class SubsonicClient:
             
             if response.get('status') == 'ok':
                 print(f"[Client] Success: Item {item_id} {endpoint}red.")
+                if id_param == 'artistId':
+                    self._artist_session_cache.pop(item_id, None)
+                    self._disk_cache_delete(f"artist_{item_id}")
             else:
                 error = response.get('error', {})
                 print(f"[Client] API Error: {error.get('code')} - {error.get('message')}")
