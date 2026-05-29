@@ -391,6 +391,57 @@ class _QueueDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class _SpinnerRing(QWidget):
+    _SIZE = 52
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle = 0
+        self._color = QColor('#cccccc')
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.hide()
+
+    def set_color(self, color: str):
+        self._color = QColor(color)
+        if self.isVisible():
+            self.update()
+
+    def start(self):
+        self._angle = 0
+        self._timer.start()
+        self.raise_()
+        self.show()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def _tick(self):
+        self._angle = (self._angle + 5) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        m = 5
+        rect = QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m)
+        pen = QPen(QColor(255, 255, 255, 35), 3.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawEllipse(rect)
+        arc_color = QColor(self._color)
+        arc_color.setAlpha(210)
+        pen.setColor(arc_color)
+        p.setPen(pen)
+        p.drawArc(rect, int(-self._angle * 16), int(100 * 16))
+        p.end()
+
+
 # ── Main panel widget ─────────────────────────────────────────────────────────
 
 class QueuePanel(QWidget):
@@ -619,6 +670,9 @@ class QueuePanel(QWidget):
         else:
             self._right_handle = None
 
+        # Centered overlay spinner for radio loading
+        self._spinner = _SpinnerRing(self)
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -641,6 +695,24 @@ class QueuePanel(QWidget):
     def set_client(self, client):
         self._navidrome_client = client
         self._lyrics_panel.set_client(client)
+
+    def set_radio_loading(self, loading: bool):
+        if loading:
+            self._center_spinner()
+            self._spinner.start()
+        else:
+            self._spinner.stop()
+
+    def _center_spinner(self):
+        s = _SpinnerRing._SIZE
+        cx = self.width() // 2
+        cy = self.height() // 2
+        self._spinner.move(cx - s // 2, cy - s // 2)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._spinner.isVisible():
+            self._center_spinner()
 
     def load_track(self, artist_id: str, artist_name: str):
         # Wipe stale content immediately if the artist has changed
@@ -691,6 +763,7 @@ class QueuePanel(QWidget):
 
     def set_accent_color(self, color: str):
         self._accent_color = color
+        self._spinner.set_color(color)
         for _btn in (self.btn_queue, self.btn_lyrics, self.btn_info):
             _btn.set_accent(color)
         self._artist_info_panel.set_accent_color(color)

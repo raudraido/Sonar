@@ -163,10 +163,14 @@ class PlaybackMixin:
         self._radio_worker = RadioWorker(self.navidrome_client, artist_id, artist_name, seed_id=seed_id)
         self._radio_worker.finished.connect(self._on_radio_tracks_ready)
         self._radio_worker.start()
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.set_radio_loading(True)
 
     def _on_radio_tracks_ready(self, tracks):
         for t in tracks:
             self.add_track_to_queue(t)
+        if hasattr(self, '_queue_panel'):
+            self._queue_panel.set_radio_loading(False)
 
     _BATCH_CHUNK = 100   # items inserted per frame
 
