@@ -1414,11 +1414,18 @@ class NowPlayingInfoTab(QWidget):
             painter.end()
             return out
 
+        _hc = self._hover_color
+        _hover_css = f'rgba({_hc.red()},{_hc.green()},{_hc.blue()},{_hc.alpha()})'
+        _btn_style = (
+            f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
+            f' QPushButton:hover {{ background: {_hover_css}; }}'
+        )
+
         heart_btn = QPushButton()
         heart_btn.setFlat(True)
         heart_btn.setFixedSize(28, 28)
         heart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        heart_btn.setStyleSheet('QPushButton { background: transparent; border: none; }')
+        heart_btn.setStyleSheet(_btn_style)
         heart_btn.setIcon(QIcon(_tint_pix(
             'img/heart_filled.png' if is_starred else 'img/heart.png',
             '#E91E63' if is_starred else '#555555',
@@ -1444,11 +1451,42 @@ class NowPlayingInfoTab(QWidget):
         lyrics_btn.setFlat(True)
         lyrics_btn.setFixedSize(28, 28)
         lyrics_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        lyrics_btn.setStyleSheet('QPushButton { background: transparent; border: none; }')
+        lyrics_btn.setStyleSheet(_btn_style)
         lyrics_btn.setIcon(QIcon(_tint_pix('img/lyrics.png', '#666666')))
         lyrics_btn.setIconSize(QSize(20, 20))
         lyrics_btn.clicked.connect(self.lyrics_requested.emit)
         btn_row_lo.addWidget(lyrics_btn)
+
+        first_artist = _ARTIST_SEP.split(artist)[0].strip() if artist else ''
+        if first_artist:
+            import urllib.parse
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+
+            lastfm_url = f'https://www.last.fm/music/{urllib.parse.quote_plus(first_artist)}'
+            lastfm_btn = QPushButton()
+            lastfm_btn.setFlat(True)
+            lastfm_btn.setFixedSize(28, 28)
+            lastfm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            lastfm_btn.setToolTip(f'Open on Last.fm')
+            lastfm_btn.setStyleSheet(_btn_style)
+            lastfm_btn.setIcon(QIcon(_tint_pix('img/lastfm.png', '#666666')))
+            lastfm_btn.setIconSize(QSize(20, 20))
+            lastfm_btn.clicked.connect(lambda _, u=lastfm_url: QDesktopServices.openUrl(QUrl(u)))
+            btn_row_lo.addWidget(lastfm_btn)
+
+            wiki_name = urllib.parse.quote(first_artist.replace(' ', '_'), safe='_')
+            wiki_url  = f'https://en.wikipedia.org/wiki/{wiki_name}'
+            wiki_btn  = QPushButton()
+            wiki_btn.setFlat(True)
+            wiki_btn.setFixedSize(28, 28)
+            wiki_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            wiki_btn.setToolTip(f'Open on Wikipedia')
+            wiki_btn.setStyleSheet(_btn_style)
+            wiki_btn.setIcon(QIcon(_tint_pix('img/wikipedia.png', '#666666')))
+            wiki_btn.setIconSize(QSize(20, 20))
+            wiki_btn.clicked.connect(lambda _, u=wiki_url: QDesktopServices.openUrl(QUrl(u)))
+            btn_row_lo.addWidget(wiki_btn)
 
         btn_row_lo.addStretch(1)
         right_lo.addWidget(btn_row_w)
