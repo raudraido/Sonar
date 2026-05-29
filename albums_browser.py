@@ -2172,6 +2172,7 @@ class AlbumDetailView(QWidget):
         self.cover_label.set_pixmap(QPixmap())
         cid = album_data.get('cover_id') or album_data.get('coverArt') or album_data.get('id')
         if cid:
+            self.cover_label.set_cover_meta(cid, self.client)
             from cover_cache import CoverCache
             data = CoverCache.instance().get_full(cid) or CoverCache.instance().get_thumb(cid)
             if data:

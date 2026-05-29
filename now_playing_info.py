@@ -123,6 +123,45 @@ class _ImageWorker(QThread):
         self.done.emit(QPixmap())
 
 
+class _FullResCoverWorker(QThread):
+    done = pyqtSignal(QPixmap)
+
+    def __init__(self, client, cover_id: str):
+        super().__init__()
+        self._client   = client
+        self._cover_id = cover_id
+
+    def run(self):
+        key = f'full_res:{self._cover_id}'
+        if key in _artist_img_cache:
+            self.done.emit(_artist_img_cache[key])
+            return
+        try:
+            from cover_cache import CoverCache
+            data = CoverCache.instance().get_full(self._cover_id)
+            if data:
+                pix = QPixmap()
+                pix.loadFromData(data)
+                if not pix.isNull():
+                    _artist_img_cache[key] = pix
+                    self.done.emit(pix)
+                    return
+        except Exception:
+            pass
+        try:
+            data = self._client.get_cover_art(self._cover_id, size=None)
+            if data:
+                pix = QPixmap()
+                pix.loadFromData(data)
+                if not pix.isNull():
+                    _artist_img_cache[key] = pix
+                    self.done.emit(pix)
+                    return
+        except Exception:
+            pass
+        self.done.emit(QPixmap())
+
+
 class _AlbumTracksWorker(QThread):
     done = pyqtSignal(list)
 
@@ -333,15 +372,25 @@ def _extract_vibrant_color(pix: QPixmap) -> QColor:
 
 class _CoverOverlay(QWidget):
     """Full-window dimmed overlay showing album art large on click."""
-    def __init__(self, pixmap, parent):
+    def __init__(self, pixmap, parent, cover_id=None, client=None):
         super().__init__(parent)
         self._pixmap = pixmap
+        self._worker = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setGeometry(parent.rect())
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.raise_()
         self.setFocus()
         self.show()
+        if cover_id and client:
+            self._worker = _FullResCoverWorker(client, cover_id)
+            self._worker.done.connect(self._on_hires)
+            self._worker.start()
+
+    def _on_hires(self, pix: QPixmap):
+        if not pix.isNull():
+            self._pixmap = pix
+            self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -378,6 +427,8 @@ class _RoundedPixmapLabel(QWidget):
         self._zoomable   = zoomable
         self._glow_eff   = None
         self._zoom       = 1.0
+        self._cover_id   = None
+        self._client     = None
         self.setFixedSize(w, h)
         if show_glow:
             eff = QGraphicsDropShadowEffect(self)
@@ -400,6 +451,10 @@ class _RoundedPixmapLabel(QWidget):
     def zoom_prop(self, v):
         self._zoom = v
         self.update()
+
+    def set_cover_meta(self, cover_id: str, client):
+        self._cover_id = cover_id
+        self._client   = client
 
     def set_pixmap(self, pix: QPixmap):
         self._pix = pix
@@ -427,7 +482,7 @@ class _RoundedPixmapLabel(QWidget):
 
     def mousePressEvent(self, event):
         if self._zoomable and event.button() == Qt.MouseButton.LeftButton and self._pix:
-            _CoverOverlay(self._pix, self.window())
+            _CoverOverlay(self._pix, self.window(), cover_id=self._cover_id, client=self._client)
         super().mousePressEvent(event)
 
     def paintEvent(self, _):
@@ -969,6 +1024,8 @@ class NowPlayingInfoTab(QWidget):
             self._w_album.start()
 
         if cover_id:
+            if self._cover_art_lbl:
+                self._cover_art_lbl.set_cover_meta(cover_id, self._client)
             try:
                 url = self._client.get_cover_art_url(cover_id, 400)
                 if url in _artist_img_cache:
