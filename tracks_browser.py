@@ -3081,19 +3081,33 @@ class TracksBrowser(QWidget):
         return -1
 
     def _on_section_resized(self, logical_index, old_size, new_size):
-        """Enforce column minimums; col 1 is Stretch so Qt handles overflow automatically."""
+        """Enforce column minimums and a right-side wall (col 1 can't shrink below its minimum)."""
         if getattr(self, '_col_resize_guard', False): return
         if getattr(self, 'is_album_mode', False): return
         if logical_index == 1: return  # Stretch col — Qt manages it
         if logical_index not in self.col_min_widths: return
         if self.tree.isColumnHidden(logical_index): return
         min_w = self.col_min_widths[logical_index]
-        if new_size < min_w:
+        clamped = new_size
+        if clamped < min_w:
+            clamped = min_w
+        else:
+            # Right-wall: cap growth so col 1 (Stretch) never drops below its minimum
+            viewport_w = self.tree.viewport().width()
+            if viewport_w > 0:
+                col0_w = self.tree.columnWidth(0)
+                track_min = self.col_min_widths.get(1, 100)
+                available = viewport_w - col0_w - track_min
+                visible_others = [c for c in range(2, 13)
+                                  if not self.tree.isColumnHidden(c) and c != logical_index]
+                sum_others = sum(self.tree.columnWidth(c) for c in visible_others)
+                max_for_col = max(min_w, available - sum_others)
+                clamped = min(clamped, max_for_col)
+        if clamped != new_size:
             self._col_resize_guard = True
-            self.tree.header().resizeSection(logical_index, min_w)
+            self.tree.header().resizeSection(logical_index, clamped)
             self._col_resize_guard = False
-            new_size = min_w
-        self._saved_widths[logical_index] = new_size
+        self._saved_widths[logical_index] = clamped
         self._col_save_timer.start()
 
     def _clamp_columns(self):
