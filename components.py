@@ -569,13 +569,14 @@ class TrackInfoDialog(QDialog):
     _update_signal = pyqtSignal(dict)
 
     def __init__(self, track: dict, client=None, accent_color='#1DB954', parent=None,
-                 on_artist_click=None, on_album_click=None, detected_bpm=None):
+                 on_artist_click=None, on_album_click=None, on_genre_click=None, detected_bpm=None):
         super().__init__(parent)
         self.track = track
         self.client = client
         self.accent_color = accent_color
         self.on_artist_click = on_artist_click
         self.on_album_click = on_album_click
+        self.on_genre_click = on_genre_click
         self.detected_bpm = detected_bpm
         self._value_labels = {}
         self._drag_pos = None
@@ -742,7 +743,7 @@ class TrackInfoDialog(QDialog):
             ('Disc',           str(t.get('discNumber', '') or '')),
             ('Track',          str(t.get('trackNumber', '') or '')),
             ('Release year',   str(t.get('year', '') or '')),
-            ('Genres',         t.get('genre', '')),
+            ('Genres',         '__genre__:' + (t.get('genre', '') or '')),
             ('Duration',       t.get('duration', '')),
             ('Is compilation', '__bool__:' + str(bool(t.get('compilation')))),
             ('Codec',          t.get('suffix', '') or t.get('codec', '')),
@@ -820,6 +821,38 @@ class TrackInfoDialog(QDialog):
                     callback=self.on_album_click,
                     fallback_style=f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;"
                 )
+                lay.addWidget(val_lbl, 1)
+
+            elif value.startswith('__genre__:'):
+                import re as _re
+                genre_text = value[len('__genre__:'):]
+                genre_parts = [p.strip() for p in _re.split(r' /// | • | / |,\s*|;\s*', genre_text.strip()) if p.strip()]
+                g_container = QWidget()
+                g_container.setStyleSheet('background: transparent;')
+                g_lo = QHBoxLayout(g_container)
+                g_lo.setContentsMargins(0, 0, 0, 0)
+                g_lo.setSpacing(0)
+                _g_btn = (
+                    f'QPushButton {{ color: {self._fc_primary}; font-size: {self._fs_primary}px;'
+                    f' background: transparent; border: none; padding: 0; font-weight: bold; }}'
+                    f'QPushButton:hover {{ text-decoration: underline; }}'
+                )
+                _g_sep = f'color: #666; font-size: {self._fs_primary}px; background: transparent;'
+                for i, g in enumerate(genre_parts or ['—']):
+                    if i > 0:
+                        g_lo.addWidget(QLabel(' • ', styleSheet=_g_sep))
+                    if not genre_parts:
+                        g_lo.addWidget(QLabel('—', styleSheet=f"color: {self._fc_primary}; font-size: {self._fs_primary}px; background: transparent;"))
+                        break
+                    btn = QPushButton(g.replace('&', '&&'))
+                    btn.setFlat(True)
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setStyleSheet(_g_btn)
+                    if self.on_genre_click:
+                        btn.clicked.connect(lambda _=False, genre=g: (self.accept(), self.on_genre_click(genre)))
+                    g_lo.addWidget(btn)
+                g_lo.addStretch(1)
+                val_lbl = g_container
                 lay.addWidget(val_lbl, 1)
 
             else:
@@ -1011,7 +1044,6 @@ class TrackInfoDialog(QDialog):
         updates = {
             'Title':           raw.get('title', ''),
             'Release year':    str(raw.get('year', '') or ''),
-            'Genres':          raw.get('genre', ''),
             'Codec':           raw.get('suffix', ''),
             'BPM ID3Tag':      _fmt_bpm(raw.get('bpm')),
             'Bitrate':         (str(raw.get('bitRate', '')) + ' kbps') if raw.get('bitRate') else '',

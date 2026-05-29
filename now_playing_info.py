@@ -12,6 +12,7 @@ Card-based layout:
 import re
 
 _ARTIST_SEP = re.compile(r'\s*(?:///|•|feat\.|Feat\.|vs\.)\s*')
+_GENRE_SEP  = re.compile(r' /// | • | / |,\s*|;\s*')
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
@@ -787,6 +788,7 @@ class NowPlayingInfoTab(QWidget):
 
     artist_clicked    = pyqtSignal(str)
     album_clicked     = pyqtSignal(dict)
+    genre_clicked     = pyqtSignal(str)
     favorite_toggled  = pyqtSignal(str, bool)   # (track_id, new_starred_state)
     lyrics_requested  = pyqtSignal()
     play_requested = pyqtSignal(dict)
@@ -1258,12 +1260,38 @@ class NowPlayingInfoTab(QWidget):
         meta_lo.addStretch(1)
         right_lo.addWidget(meta_w)
 
-        # Info row (plain text)
-        info_parts = []
-
+        # Genre row — each token clickable with hover underline
         genre = track.get('genre', '')
         if genre:
-            info_parts.append(genre)
+            genre_tokens = [p.strip() for p in _GENRE_SEP.split(genre.strip()) if p.strip()]
+            if genre_tokens:
+                g_w  = QWidget()
+                g_w.setStyleSheet('background: transparent;')
+                g_lo = QHBoxLayout(g_w)
+                g_lo.setContentsMargins(0, 0, 0, 0)
+                g_lo.setSpacing(0)
+                _g_lnk_style = (
+                    f'QPushButton {{ color: {self._fg2}; font-size: {self._font_size_secondary}px;'
+                    f' background: transparent; border: none; padding: 0; text-decoration: none; }}'
+                    f'QPushButton:hover {{ color: {self._fg}; text-decoration: underline; }}'
+                )
+                _g_sep_style = f'color: {self._fg2}; font-size: {self._font_size_secondary}px; background: transparent;'
+                for i, token in enumerate(genre_tokens):
+                    if i > 0:
+                        sep = QLabel(' • ')
+                        sep.setStyleSheet(_g_sep_style)
+                        g_lo.addWidget(sep)
+                    btn = QPushButton(token.replace('&', '&&'))
+                    btn.setFlat(True)
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setStyleSheet(_g_lnk_style)
+                    btn.clicked.connect(lambda _=False, g=token: self.genre_clicked.emit(g))
+                    g_lo.addWidget(btn)
+                g_lo.addStretch(1)
+                right_lo.addWidget(g_w)
+
+        # Info row (plain text)
+        info_parts = []
 
         bitrate = track.get('bitRate') or track.get('bit_rate')
         if bitrate:

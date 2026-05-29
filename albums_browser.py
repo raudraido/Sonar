@@ -749,6 +749,18 @@ _DETAIL_ARTIST_SEP_RE = re.compile(
     r'( /// | • | / |,\s+| feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. )'
 )
 
+_GENRE_SEP_RE = re.compile(r' /// | • | / |,\s*|;\s*')
+
+def _split_genres(text):
+    """Return list of (text, is_sep) pairs, splitting on bullet/comma/semicolon/slash."""
+    parts = [p.strip() for p in _GENRE_SEP_RE.split(text.strip()) if p.strip()]
+    result = []
+    for i, p in enumerate(parts):
+        result.append((p, False))
+        if i < len(parts) - 1:
+            result.append((' • ', True))
+    return result
+
 class ClickableArtistLabel(QWidget):
     artist_clicked = pyqtSignal(str)
 
@@ -949,6 +961,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         self._movie = None
         self._is_playing = False
         self._hover_artist = None   # (row, part_text)
+        self._hover_genre  = None   # (row, genre_text)
         self._heart_filled_pix = QPixmap()
         self._heart_empty_pix  = QPixmap()
         self._kbd_row = -1
@@ -1112,6 +1125,38 @@ class _TrackListDelegate(QStyledItemDelegate):
             painter.restore()
             return
 
+        # Col 4 — genre, each part separately clickable with hover underline
+        if index.column() == 4:
+            genre_text = index.data() or ''
+            if genre_text:
+                f = QFont()
+                f.setPixelSize(self._secondary_px())
+                fm = QFontMetrics(f)
+                ax = draw_rect.left() + 4
+                ay = draw_rect.center().y()
+                right_edge = draw_rect.right() - 4
+                row = index.row()
+                painter.save()
+                painter.setFont(f)
+                for part, is_sep in _split_genres(genre_text):
+                    pw = fm.horizontalAdvance(part)
+                    available = right_edge - ax
+                    if ax >= right_edge:
+                        break
+                    if ax + pw > right_edge and available > 0:
+                        elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
+                        painter.setPen(QColor(120, 120, 120) if is_sep else QColor(self._secondary_color()))
+                        painter.drawText(ax, ay + fm.ascent() // 2, elided)
+                        break
+                    hovered = (not is_sep and self._hover_genre == (row, part))
+                    painter.setPen(QColor(120, 120, 120) if is_sep else QColor(self._secondary_color()))
+                    painter.drawText(ax, ay + fm.ascent() // 2, part)
+                    if hovered:
+                        painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
+                    ax += pw
+                painter.restore()
+                return
+
         # All other columns — strip hover/selected so super() doesn't re-draw background
         opt = option.__class__(option)
         opt.rect = draw_rect
@@ -1135,6 +1180,7 @@ class AlbumDetailView(QWidget):
     track_play_signal = pyqtSignal(list, int)
     track_artist_clicked = pyqtSignal(str)
     favorite_toggled = pyqtSignal(str, bool)   # track_id, is_fav
+    genre_clicked = pyqtSignal(str)
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
     def __init__(self, client=None):
@@ -1637,12 +1683,23 @@ class AlbumDetailView(QWidget):
                 if new_hover != self._track_delegate._hover_artist:
                     self._track_delegate._hover_artist = new_hover
                     self.track_tree.viewport().update()
+                genre_part = self._genre_part_at(pos)
+                new_hover_genre = (row, genre_part) if genre_part else None
+                if new_hover_genre != self._track_delegate._hover_genre:
+                    self._track_delegate._hover_genre = new_hover_genre
+                    self.track_tree.viewport().update()
                 self.track_tree.viewport().setCursor(
-                    Qt.CursorShape.PointingHandCursor if part else Qt.CursorShape.ArrowCursor
+                    Qt.CursorShape.PointingHandCursor if (part or genre_part) else Qt.CursorShape.ArrowCursor
                 )
             elif event.type() == QEvent.Type.Leave:
+                changed = False
                 if self._track_delegate._hover_artist is not None:
                     self._track_delegate._hover_artist = None
+                    changed = True
+                if self._track_delegate._hover_genre is not None:
+                    self._track_delegate._hover_genre = None
+                    changed = True
+                if changed:
                     self.track_tree.viewport().update()
             elif event.type() == QEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.LeftButton:
@@ -1654,6 +1711,10 @@ class AlbumDetailView(QWidget):
                         if col3_x <= pos.x() <= col3_x + col3_w:
                             self._toggle_track_fav(item)
                             return True
+                        genre_part = self._genre_part_at(pos)
+                        if genre_part:
+                            self.genre_clicked.emit(genre_part)
+                            return True
                     part = self._artist_part_at(pos)
                     if part:
                         self.track_artist_clicked.emit(part)
@@ -1662,6 +1723,31 @@ class AlbumDetailView(QWidget):
                 self._show_track_context_menu(event.pos())
                 return True
         return super().eventFilter(obj, event)
+
+    def _genre_part_at(self, pos) -> str:
+        """Return the specific genre token under pos, or empty string."""
+        item = self.track_tree.itemAt(pos)
+        if not item:
+            return ''
+        item_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if isinstance(item_data, dict) and item_data.get('_is_disc_header'):
+            return ''
+        col4_x = self.track_tree.columnViewportPosition(4)
+        col4_w = self.track_tree.columnWidth(4)
+        if not (col4_x <= pos.x() <= col4_x + col4_w):
+            return ''
+        genre_text = item.text(4) or ''
+        if not genre_text:
+            return ''
+        f = QFont(); f.setPointSize(10)
+        fm = QFontMetrics(f)
+        ax = col4_x + 4
+        for part, is_sep in _split_genres(genre_text):
+            pw = fm.horizontalAdvance(part)
+            if not is_sep and ax <= pos.x() < ax + pw:
+                return part
+            ax += pw
+        return ''
 
     def _toggle_track_fav(self, item):
         item_data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -2250,6 +2336,7 @@ class LibraryGridBrowser(QWidget):
     queue_track_signal = pyqtSignal(dict)
     play_next_signal = pyqtSignal(dict)
     switch_to_artist_tab = pyqtSignal(str)
+    genre_filter_requested = pyqtSignal(str)
     album_clicked = pyqtSignal(dict)
     
     def __init__(self, client):
@@ -2408,6 +2495,7 @@ class LibraryGridBrowser(QWidget):
         self.detail_view.album_favorite_toggled.connect(self.on_album_heart_clicked)
         self.detail_view.artist_clicked.connect(self.switch_to_artist_tab)
         self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab)
+        self.detail_view.genre_clicked.connect(self.genre_filter_requested)
         self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)

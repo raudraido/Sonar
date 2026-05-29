@@ -273,6 +273,15 @@ class NavigationMixin:
         finally:
             self._tab_move_in_progress = False
 
+    def navigate_to_genre(self, genre_name):
+        if not genre_name:
+            return
+        self.programmatic_nav = True
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.tracks_browser))
+        self.programmatic_nav = False
+        self.tracks_browser._col_filters = {}  # clear any stale filters before applying genre
+        self.tracks_browser._apply_col_filter(6, {genre_name})
+
     def navigate_to_album(self, album_data):
         self.add_global_nav(self.global_album_tab_idx, 'album', album_data)
         
@@ -718,6 +727,7 @@ class NavigationMixin:
             track, client=client, accent_color=accent, parent=self,
             on_artist_click=lambda name: self.navigate_to_artist(name),
             on_album_click=lambda _: self.navigate_to_album(album_data),
+            on_genre_click=lambda g: self.navigate_to_genre(g),
             detected_bpm=detected_bpm,
         )
         self.show_dim()

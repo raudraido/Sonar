@@ -3906,6 +3906,7 @@ class TracksBrowser(QWidget):
             track, client=client, accent_color=accent, parent=self,
             on_artist_click=lambda name: self.switch_to_artist_tab.emit(name),
             on_album_click=lambda _: self.switch_to_album_tab.emit(album_data),
+            on_genre_click=lambda g: win.navigate_to_genre(g) if win and hasattr(win, 'navigate_to_genre') else self._apply_col_filter(6, {g}),
             detected_bpm=detected_bpm,
         )
         if hasattr(win, 'show_dim'):

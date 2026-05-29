@@ -784,6 +784,7 @@ class NowPlayingPanel(QWidget):
                     first_track, client=client, accent_color=accent, parent=self,
                     on_artist_click=lambda name: mw.navigate_to_artist(name) if mw and hasattr(mw, 'navigate_to_artist') else None,
                     on_album_click=lambda _: mw.navigate_to_album(album_data) if mw and hasattr(mw, 'navigate_to_album') else None,
+                    on_genre_click=lambda g: mw.navigate_to_genre(g) if mw and hasattr(mw, 'navigate_to_genre') else None,
                 ).exec()
             info_action.triggered.connect(_open_info)
             menu.addAction(info_action)

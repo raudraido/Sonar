@@ -693,6 +693,7 @@ class SonarPlayer(
         self._now_playing_panel.set_client(self.navidrome_client)
         self._now_playing_panel.artist_clicked.connect(self.navigate_to_artist)
         self._now_playing_panel.album_clicked.connect(self.navigate_to_album)
+        self._now_playing_panel.genre_clicked.connect(self.navigate_to_genre)
         self._now_playing_panel.play_requested.connect(self._play_track_from_info)
         self._now_playing_panel.favorite_toggled.connect(
             lambda tid, state: (
@@ -789,6 +790,7 @@ class SonarPlayer(
         self.global_album_view.album_favorite_toggled.connect(self.toggle_global_fav)
         self.global_album_view.artist_clicked.connect(self.navigate_to_artist)
         self.global_album_view.track_artist_clicked.connect(self.navigate_to_artist)
+        self.global_album_view.genre_clicked.connect(self.navigate_to_genre)
         self.global_album_view.track_play_signal.connect(lambda tracks, idx: self.play_whole_album([tracks[idx]]))
         
         self.tabs.addTab(self.global_album_view, "")
@@ -834,6 +836,7 @@ class SonarPlayer(
         # --- SIGNAL CONNECTIONS ---
         self.home_tab.album_clicked.connect(lambda data: self.navigate_to_album(data))
         self.album_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
+        self.album_browser.genre_filter_requested.connect(self.navigate_to_genre)
         self.artist_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         # artist_clicked / album_clicked already connected above during NowPlayingInfoTab init
         self.tabs.currentChanged.connect(self.on_tab_changed_global)
