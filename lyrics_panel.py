@@ -565,18 +565,18 @@ class _LyricsToolbar(QWidget):
         super().__init__(parent)
         self._offset_ms = 0
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedHeight(40)
+        self.setFixedHeight(64)
 
-        lo = QHBoxLayout(self)
+        lo = QVBoxLayout(self)
         lo.setContentsMargins(8, 4, 8, 4)
-        lo.setSpacing(4)
+        lo.setSpacing(2)
 
         def _btn(text, tip=''):
             b = QPushButton(text)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setToolTip(tip)
-            b.setFixedHeight(28)
+            b.setFixedHeight(26)
             return b
 
         self._search_btn  = _btn('Search', 'Search lyrics')
@@ -594,14 +594,25 @@ class _LyricsToolbar(QWidget):
         self._minus_btn.clicked.connect(lambda: self._change_offset(-50))
         self._plus_btn.clicked.connect(lambda:  self._change_offset(+50))
 
-        lo.addWidget(self._search_btn)
-        lo.addWidget(self._save_btn)
-        lo.addStretch()
-        lo.addWidget(self._minus_btn)
-        lo.addWidget(self._offset_lbl)
-        lo.addWidget(self._plus_btn)
-        lo.addStretch()
-        lo.addWidget(self._refresh_btn)
+        # Row 1: offset controls centered
+        offset_row = QHBoxLayout()
+        offset_row.setSpacing(4)
+        offset_row.addStretch()
+        offset_row.addWidget(self._minus_btn)
+        offset_row.addWidget(self._offset_lbl)
+        offset_row.addWidget(self._plus_btn)
+        offset_row.addStretch()
+        lo.addLayout(offset_row)
+
+        # Row 2: action buttons centered
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+        btn_row.addStretch()
+        btn_row.addWidget(self._search_btn)
+        btn_row.addWidget(self._save_btn)
+        btn_row.addWidget(self._refresh_btn)
+        btn_row.addStretch()
+        lo.addLayout(btn_row)
 
         self.apply_theme()
 
