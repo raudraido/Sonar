@@ -951,6 +951,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         self._hover_artist = None   # (row, part_text)
         self._heart_filled_pix = QPixmap()
         self._heart_empty_pix  = QPixmap()
+        self._kbd_row = -1
 
     def set_font_size(self, size: int):
         self.font_size = size
@@ -1001,7 +1002,7 @@ class _TrackListDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         from PyQt6.QtWidgets import QStyle
-        draw_rect = option.rect.adjusted(0, 8, 0, 0) if index.row() == 0 else option.rect
+        draw_rect = option.rect
         is_playing_row = (index.row() == self.playing_row)
 
         # Disc separator rows — draw label in col 1 only, skip everything else
@@ -1025,14 +1026,17 @@ class _TrackListDelegate(QStyledItemDelegate):
 
         # Draw background once per row (col 0 only) spanning full width
         if index.column() == 0:
+            is_kbd = (index.row() == self._kbd_row)
             if option.state & QStyle.StateFlag.State_MouseOver:
                 color = self._hover_qcolor()
+            elif is_kbd:
+                color = QColor(self.accent.red(), self.accent.green(), self.accent.blue(), 45)
             else:
                 color = None
             if color:
                 view = option.widget
-                full_w = view.viewport().width() if view else draw_rect.width()
-                row_rect = draw_rect.__class__(0, draw_rect.y(), full_w, draw_rect.height())
+                full_w = view.viewport().width() if view else option.rect.width()
+                row_rect = option.rect.__class__(0, option.rect.y(), full_w, option.rect.height())
                 painter.save()
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -1245,7 +1249,7 @@ class AlbumDetailView(QWidget):
         self.track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self.track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.track_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.track_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.track_tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._track_delegate = _TrackListDelegate(self.track_tree)
         from PyQt6.QtGui import QMovie
         from PyQt6.QtCore import QSize as _QSize
@@ -1299,6 +1303,7 @@ class AlbumDetailView(QWidget):
         self.track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
         self._tracks: list = []
         self._tracks_ready.connect(self._load_tracks)
+        self.track_tree.installEventFilter(self)
         self.track_tree.viewport().installEventFilter(self)
         self.track_tree.setMouseTracking(True)
         self.track_tree.viewport().setMouseTracking(True)
@@ -1568,8 +1573,60 @@ class AlbumDetailView(QWidget):
             ax += pw
         return ''
 
+    def _move_kbd_selection(self, delta: int):
+        count = self.track_tree.topLevelItemCount()
+        if not count:
+            return
+        row = self._track_delegate._kbd_row + delta
+        while 0 <= row < count:
+            data = self.track_tree.topLevelItem(row).data(0, Qt.ItemDataRole.UserRole)
+            if not (isinstance(data, dict) and data.get('_is_disc_header')):
+                break
+            row += delta
+        if 0 <= row < count:
+            self._track_delegate._kbd_row = row
+            self.track_tree.viewport().update()
+            # Scroll the outer QScrollArea so the row stays in view
+            item = self.track_tree.topLevelItem(row)
+            item_rect = self.track_tree.visualItemRect(item)
+            item_pos  = self.track_tree.viewport().mapTo(self.scroll_area.widget(), item_rect.topLeft())
+            self.scroll_area.ensureVisible(item_pos.x(), item_pos.y(), 0, item_rect.height())
+        else:
+            # At boundary — scroll the view to top or bottom
+            sb = self.scroll_area.verticalScrollBar()
+            sb.setValue(sb.minimum() if delta < 0 else sb.maximum())
+
+    def _play_kbd_selected(self):
+        row = self._track_delegate._kbd_row
+        if 0 <= row < self.track_tree.topLevelItemCount():
+            item = self.track_tree.topLevelItem(row)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and not data.get('_is_disc_header'):
+                track_idx = data.get('_track_idx', -1)
+                if 0 <= track_idx < len(self._tracks):
+                    self.track_play_signal.emit(self._tracks, track_idx)
+
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
+        if obj is self.track_tree and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            mods = event.modifiers()
+            if key == Qt.Key.Key_Up:
+                self._move_kbd_selection(-1); return True
+            if key == Qt.Key.Key_Down:
+                self._move_kbd_selection(1); return True
+            if key == Qt.Key.Key_PageUp:
+                row_h = self.track_tree.sizeHintForRow(0) or 1
+                page  = max(1, self.scroll_area.viewport().height() // row_h)
+                self._move_kbd_selection(-page); return True
+            if key == Qt.Key.Key_PageDown:
+                row_h = self.track_tree.sizeHintForRow(0) or 1
+                page  = max(1, self.scroll_area.viewport().height() // row_h)
+                self._move_kbd_selection(page); return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    self.play_clicked.emit(); return True
+                self._play_kbd_selected(); return True
         if obj is self.track_tree.viewport():
             if event.type() == QEvent.Type.MouseMove:
                 pos  = event.position().toPoint()
@@ -1666,6 +1723,7 @@ class AlbumDetailView(QWidget):
         act_play  = menu.addAction("Play Now")
         act_next  = menu.addAction("Play Next")
         act_queue = menu.addAction("Add to Queue")
+        act_radio = menu.addAction("Start Radio")
         menu.addSeparator()
 
         raw_star = track.get('starred', False)
@@ -1721,6 +1779,7 @@ class AlbumDetailView(QWidget):
         act_play.triggered.connect(lambda: self.track_play_signal.emit([track], 0))
         act_next.triggered.connect(lambda: main.play_track_next(track) if main and hasattr(main, 'play_track_next') else None)
         act_queue.triggered.connect(lambda: main.add_track_to_queue(track) if main and hasattr(main, 'add_track_to_queue') else None)
+        act_radio.triggered.connect(lambda: main.start_radio(track) if main and hasattr(main, 'start_radio') else None)
         act_fav.triggered.connect(lambda: self._toggle_track_fav(item))
 
         menu.exec(self.track_tree.viewport().mapToGlobal(pos))

@@ -639,6 +639,7 @@ class NavigationMixin:
             )
         menu.addAction("Play Next").triggered.connect(lambda: self.play_track_next(track))
         menu.addAction("Add to Queue").triggered.connect(lambda: self.add_track_to_queue(track))
+        menu.addAction("Start Radio").triggered.connect(lambda: self.start_radio(track))
         menu.addSeparator()
 
         is_fav = bool(track.get('starred'))

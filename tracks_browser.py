@@ -2018,6 +2018,7 @@ class TracksBrowser(QWidget):
     _scan_done = pyqtSignal()
     queue_track = pyqtSignal(dict)
     play_next = pyqtSignal(dict)
+    start_radio = pyqtSignal(dict)
     switch_to_artist_tab = pyqtSignal(str)
     switch_to_album_tab = pyqtSignal(dict)
 
@@ -3699,6 +3700,7 @@ class TracksBrowser(QWidget):
         
         action_next = menu.addAction(f"Play Next ({count})" if is_multi else "Play Next")
         action_queue = menu.addAction(f"Add to Queue ({count})" if is_multi else "Add to Queue")
+        action_radio = menu.addAction("Start Radio") if not is_multi else None
         menu.addSeparator()
         action_fav = menu.addAction(f"Toggle Favorite ({count})" if is_multi else ("Unlove (♥)" if first_track.get('starred') else "Love (♡)"))
         menu.addSeparator()
@@ -3837,6 +3839,8 @@ class TracksBrowser(QWidget):
              action_next.triggered.connect(lambda: self.play_next.emit(first_track))
              action_queue.triggered.connect(lambda: self.queue_track.emit(first_track))
              action_fav.triggered.connect(lambda: self.toggle_track_favorite(first_track, selected_items[0]))
+             if action_radio:
+                 action_radio.triggered.connect(lambda: self.start_radio.emit(first_track))
         menu.exec(self.tree.mapToGlobal(pos))
 
     def _apply_bpm(self, track, new_bpm):

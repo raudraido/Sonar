@@ -1469,6 +1469,23 @@ class SubsonicClient:
             print(f"Error getting top songs: {e}")
         return []
 
+    def get_similar_songs2(self, artist_id, count=50):
+        """Fetch similar songs for an artist via getSimilarSongs2 (requires AudioMuse/Last.fm)."""
+        params = self._get_auth_params()
+        params['id'] = artist_id
+        params['count'] = count
+        try:
+            r = requests.get(f"{self.base_url}/rest/getSimilarSongs2", params=params, timeout=15)
+            data = r.json()
+            sr = data.get('subsonic-response', {})
+            if sr.get('status') == 'ok' and 'similarSongs2' in sr:
+                raw = sr['similarSongs2'].get('song', [])
+                if isinstance(raw, dict): raw = [raw]
+                return [self._parse_song_data(s) for s in raw]
+        except Exception as e:
+            print(f"[Client] get_similar_songs2 error: {e}")
+        return []
+
     def search_artist_tracks(self, artist_name):
         """Searches for ALL tracks matching the artist name (includes compilations/features)."""
         key = f"search_artist_tracks_{artist_name}"

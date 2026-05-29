@@ -8,9 +8,11 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QRectF, QPoint, QSettings, QEvent, QTimer
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap, QIcon
+import os
 import re
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
+from player import resource_path
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
@@ -200,6 +202,46 @@ class _TabButton(QPushButton):
             self._icon_lbl.setPixmap(out)
 
 
+# ── Simple icon-only header button (same color/hover as _TabButton) ───────────
+
+class _HeaderIconButton(QPushButton):
+    def __init__(self, icon_path, tooltip='', parent=None):
+        super().__init__(parent)
+        self._icon_path = icon_path
+        self._hovered   = False
+        self.setFixedSize(28, 28)
+        self.setFlat(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip(tooltip)
+        self.setStyleSheet('QPushButton { background: transparent; border: none; border-radius: 4px; }')
+        self._icon_lbl = QLabel(self)
+        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._icon_lbl.setGeometry(0, 0, 28, 28)
+        self._refresh()
+
+    def enterEvent(self, event):
+        self._hovered = True;  self._refresh(); super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False; self._refresh(); super().leaveEvent(event)
+
+    def _refresh(self):
+        color = '#aaaaaa' if self._hovered else '#555555'
+        pix = QPixmap(self._icon_path)
+        if not pix.isNull():
+            pix = pix.scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+            out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
+            p = QPainter(out)
+            p.drawPixmap(0, 0, pix)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(out.rect(), QColor(color))
+            p.end()
+            self._icon_lbl.setPixmap(out)
+
+
 # ── Row delegate ─────────────────────────────────────────────────────────────
 
 class _QueueDelegate(QStyledItemDelegate):
@@ -359,6 +401,8 @@ class QueuePanel(QWidget):
     artist_clicked   = pyqtSignal(str)
     favorite_toggled = pyqtSignal(int)   # playlist index
     reordered        = pyqtSignal(list, int)  # new track list, new current index
+    start_radio      = pyqtSignal(dict)
+    clear_queue      = pyqtSignal()
 
     _MIN_H = 180
     _MAX_H = 900
@@ -442,14 +486,18 @@ class QueuePanel(QWidget):
             'color: #555; font-size: 13px; background: transparent; border: none;'
         )
         hbox.addWidget(self._position_lbl)
-        hbox.addStretch()
+        hbox.addSpacing(6)
 
         self._duration_lbl = QLabel('')
         self._duration_lbl.setStyleSheet(
-            'color: #555; font-size: 13px; background: transparent; border: none;'
+            'color: #555; font-size: 12px; background: transparent; border: none;'
         )
         hbox.addWidget(self._duration_lbl)
-        hbox.addSpacing(8)
+        hbox.addStretch()
+
+        self._clear_btn = _HeaderIconButton(resource_path('img/trash.png'), tooltip='Clear Queue')
+        self._clear_btn.clicked.connect(self.clear_queue)
+        hbox.addWidget(self._clear_btn)
 
         if not embedded:
             close_btn = QPushButton('×')
@@ -651,8 +699,9 @@ class QueuePanel(QWidget):
             self._scroll_reveal = install_scroll_reveal(self._list.viewport(), self._list.verticalScrollBar())
         self._scroll_reveal.color = color
         self._list.viewport().update()
+        _sec_px = getattr(self, '_secondary_px', 12)
         self._duration_lbl.setStyleSheet(
-            f'color: {color}; font-size: 11px; background: transparent; border: none;'
+            f'color: {color}; font-size: {_sec_px}px; background: transparent; border: none;'
         )
 
     def apply_theme(self, theme):
@@ -662,7 +711,10 @@ class QueuePanel(QWidget):
         self._secondary_px    = getattr(theme, 'font_size_secondary',  12) + _offset
         self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
         self._queue_lbl.setStyleSheet(
-            f'color: {self._primary_color}; font-weight: bold; font-size: 16px; background: transparent; border: none;'
+            f'color: {self._primary_color}; font-weight: bold; font-size: {self._primary_px}px; background: transparent; border: none;'
+        )
+        self._position_lbl.setStyleSheet(
+            f'color: {self._secondary_color}; font-size: {self._secondary_px}px; background: transparent; border: none;'
         )
         self._artist_info_panel.apply_theme(theme)
         self._lyrics_panel.apply_theme(theme)
@@ -893,8 +945,9 @@ class QueuePanel(QWidget):
         menu.setStyleSheet(MENU_CSS)
 
         # Play / queue actions
-        act_play = menu.addAction("Play Now")
-        act_next = menu.addAction("Play Next")
+        act_play  = menu.addAction("Play Now")
+        act_next  = menu.addAction("Play Next")
+        act_radio = menu.addAction("Start Radio")
         menu.addSeparator()
 
         # Favorite
@@ -958,6 +1011,7 @@ class QueuePanel(QWidget):
         # Connect actions
         act_play.triggered.connect(lambda: self.play_index.emit(idx))
         act_next.triggered.connect(lambda: self.play_next_index.emit(idx))
+        act_radio.triggered.connect(lambda: self.start_radio.emit(track))
         act_fav.triggered.connect(lambda: (self.toggle_favorite_at(idx), self.favorite_toggled.emit(idx)))
         tb = getattr(main, 'tracks_browser', None) if main else None
         act_info.triggered.connect(lambda: tb and tb._show_track_info(track))

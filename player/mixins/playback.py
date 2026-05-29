@@ -133,6 +133,41 @@ class PlaybackMixin:
             self._queue_tree_panel.update_status()
         self._refresh_queue_panel()
 
+    def start_radio(self, track):
+        """Clear queue, play seed track, then fill queue with similar songs."""
+        from player.workers import RadioWorker
+
+        seed_id = str(track.get('id', ''))
+
+        # Clear everything and play the seed as the only track
+        self.audio_engine.stop()
+        self.playlist_data.clear()
+        self.current_index = -1
+        self.history.clear()
+        self._shuffle_queue.clear()
+        self.tree.clear()
+        self._refresh_queue_panel()
+
+        self.add_and_play_from_browser(track)
+
+        artist_id   = track.get('artistId') or track.get('artist_id', '')
+        artist_name = track.get('artist', '')
+        if not artist_id:
+            print("[Radio] No artist ID — cannot start radio")
+            return
+
+        if hasattr(self, '_radio_worker') and self._radio_worker and self._radio_worker.isRunning():
+            self._radio_worker.quit()
+            self._radio_worker.wait()
+
+        self._radio_worker = RadioWorker(self.navidrome_client, artist_id, artist_name, seed_id=seed_id)
+        self._radio_worker.finished.connect(self._on_radio_tracks_ready)
+        self._radio_worker.start()
+
+    def _on_radio_tracks_ready(self, tracks):
+        for t in tracks:
+            self.add_track_to_queue(t)
+
     _BATCH_CHUNK = 100   # items inserted per frame
 
     def add_batch_to_ui(self, batch):

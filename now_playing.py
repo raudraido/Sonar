@@ -760,6 +760,15 @@ class NowPlayingPanel(QWidget):
 
         if tracks and len(tracks) == 1:
             menu.addSeparator()
+            radio_action = QAction("Start Radio", menu)
+            first_track_radio = tracks[0]
+            mw_radio = self.main_window
+            radio_action.triggered.connect(
+                lambda: mw_radio.start_radio(first_track_radio)
+                if mw_radio and hasattr(mw_radio, 'start_radio') else None
+            )
+            menu.addAction(radio_action)
+            menu.addSeparator()
             info_action = QAction("Get Info", menu)
             first_track = tracks[0]
             mw = self.main_window

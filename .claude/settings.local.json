@@ -12,7 +12,8 @@
       "Bash(Select-Object FullName)",
       "PowerShell(git stash push -m \"handle update_color in set_master_color\" -- player/mixins/visuals.py)",
       "PowerShell(git pull)",
-      "PowerShell(git stash pop)"
+      "PowerShell(git stash pop)",
+      "Bash(dir \"C:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\UsersraidoDesktoppsysonic_ref\")"
     ]
   }
 }

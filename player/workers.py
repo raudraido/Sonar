@@ -576,6 +576,37 @@ class CrossPlatformMediaKeyListener(QThread):
         self.wait()
 
 
+class RadioWorker(QThread):
+    """Fetches similar songs for artist-seeded radio in a background thread."""
+    finished = pyqtSignal(list)
+
+    def __init__(self, client, artist_id, artist_name, seed_id=None):
+        super().__init__()
+        self._client = client
+        self._artist_id = artist_id
+        self._artist_name = artist_name
+        self._seed_id = str(seed_id) if seed_id else None
+
+    def run(self):
+        import random
+        try:
+            similar = self._client.get_similar_songs2(self._artist_id, count=50)
+            top     = self._client.get_top_songs(self._artist_name, count=10)
+            seen    = {self._seed_id} if self._seed_id else set()
+            merged  = []
+            for t in top + similar:
+                tid = str(t.get('id', ''))
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    t['_radio'] = True
+                    merged.append(t)
+            random.shuffle(merged)
+            self.finished.emit(merged)
+        except Exception as e:
+            print(f"[RadioWorker] {e}")
+            self.finished.emit([])
+
+
 class SongRefreshWorker(QThread):
     """Fetches fresh song metadata from Navidrome and emits if anything changed."""
     refreshed = pyqtSignal(int, dict)   # (playlist_index, fresh_data)

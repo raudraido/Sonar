@@ -86,7 +86,7 @@ class _TabBar(QTabBar):
 
         # ── Accent glow line under the selected tab ───────────────────────
         sel = self.currentIndex()
-        if sel >= 0:
+        if sel >= 0 and self.isTabVisible(sel):
             r   = self.tabRect(sel)
             c   = QColor(self._accent)
             h   = self.height()
@@ -896,6 +896,8 @@ class SonarPlayer(
         self._queue_panel.artist_clicked.connect(self.navigate_to_artist)
         self._queue_panel.favorite_toggled.connect(self._queue_toggle_favorite)
         self._queue_panel.reordered.connect(self._queue_reordered)
+        self._queue_panel.start_radio.connect(self.start_radio)
+        self._queue_panel.clear_queue.connect(self._clear_queue)
         _qc_layout.addWidget(self._queue_panel)
         body.addWidget(self._queue_panel_container)
 
@@ -1188,6 +1190,7 @@ class SonarPlayer(
         self.tracks_browser.play_multiple_tracks.connect(self.play_whole_album)
         self.tracks_browser.queue_track.connect(self.add_track_to_queue)
         self.tracks_browser.play_next.connect(self.play_track_next)
+        self.tracks_browser.start_radio.connect(self.start_radio)
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
@@ -1353,6 +1356,17 @@ class SonarPlayer(
         self.tree.blockSignals(False)
         self.refresh_ui_styles()
         self.update_indicator()
+        if hasattr(self, '_queue_tree_panel'):
+            self._queue_tree_panel.update_status()
+
+    def _clear_queue(self):
+        self.audio_engine.stop()
+        self.playlist_data.clear()
+        self.current_index = -1
+        self.history.clear()
+        self._shuffle_queue.clear()
+        self.tree.clear()
+        self._refresh_queue_panel()
         if hasattr(self, '_queue_tree_panel'):
             self._queue_tree_panel.update_status()
 
