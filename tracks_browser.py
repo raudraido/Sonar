@@ -3097,7 +3097,7 @@ class TracksBrowser(QWidget):
         self._col_save_timer.start()
 
     def _clamp_columns(self):
-        """Scale down cols 2-12 so TRACK (Stretch) never drops below its minimum."""
+        """Fit cols 2-12 to available space using saved widths as the target."""
         if getattr(self, 'is_album_mode', False): return
         viewport_w = self.tree.viewport().width()
         if viewport_w <= 0: return
@@ -3110,17 +3110,18 @@ class TracksBrowser(QWidget):
         available = viewport_w - col0_w - track_min
         if available <= 0: return
 
-        total = sum(self.tree.columnWidth(c) for c in visible)
-        if total <= available: return
+        # Use saved (user-intended) widths as the basis so columns restore when window grows
+        saved = {c: self._saved_widths.get(c, self.tree.columnWidth(c)) for c in visible}
+        total = sum(saved.values())
 
         self._col_resize_guard = True
-        scale = available / total
-        widths = {c: max(self.col_min_widths.get(c, 60), int(self.tree.columnWidth(c) * scale))
-                  for c in visible}
-        if sum(widths.values()) > available:
-            widths = {c: self.col_min_widths.get(c, 60) for c in visible}
-        for col, w in widths.items():
-            self.tree.header().resizeSection(col, w)
+        if total <= available:
+            for col, w in saved.items():
+                self.tree.header().resizeSection(col, w)
+        else:
+            scale = available / total
+            for col, w in saved.items():
+                self.tree.header().resizeSection(col, max(self.col_min_widths.get(col, 60), int(w * scale)))
         self._col_resize_guard = False
 
     def _on_drag_finished(self):
