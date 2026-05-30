@@ -605,13 +605,21 @@ class SonarPlayer(
             if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
                 self._art_close_btn.move(self._art_section.width() - 28, 4)
 
-    _TAB_NARROW_PX = 740
-
     def _update_tab_mode(self):
         if not hasattr(self, 'main_header'):
             return
         bar = self.tab_bar
-        icon_only = self.main_header.width() < self._TAB_NARROW_PX
+
+        # Measure how wide the bar needs to be with all labels showing
+        bar.setIconSize(QSize(16, 16))
+        for i in range(bar.count()):
+            label = bar.tabData(i)
+            if label:
+                bar.setTabText(i, label)
+
+        needed = bar.sizeHint().width()
+        icon_only = needed > self.main_header.width()
+
         bar.setIconSize(QSize(20, 20) if icon_only else QSize(16, 16))
         for i in range(bar.count()):
             label = bar.tabData(i)
@@ -826,7 +834,19 @@ class SonarPlayer(
         if hasattr(self, 'theme'): self.playlists_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.playlists_browser, "Playlists")
 
-        # 7. Visualizer
+        # 7. Favorites
+        self._favorites_tab = QWidget()
+        self._favorites_tab.setObjectName('FavoritesTab')
+        self._favorites_tab.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.tabs.addTab(self._favorites_tab, "Favorites")
+
+        # 8. Mix Builder
+        self._mix_builder_tab = QWidget()
+        self._mix_builder_tab.setObjectName('MixBuilderTab')
+        self._mix_builder_tab.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.tabs.addTab(self._mix_builder_tab, "Mix Builder")
+
+        # 9. Visualizer
         self.visualizer = AudioVisualizer(self.audio_engine)
         _vis_container = QWidget()
         _vis_container.setObjectName('VisContainer')
@@ -908,6 +928,7 @@ class SonarPlayer(
         _TAB_ICON_MAP = {
             'Home': 'home', 'Now Playing': 'now_playing', 'Albums': 'albums',
             'Artists': 'artists', 'Tracks': 'tracks', 'Playlists': 'playlists',
+            'Favorites': 'heart', 'Mix Builder': 'mix',
             'Visualizer': 'visualizer',
         }
         _bar = self.tab_bar
@@ -969,6 +990,15 @@ class SonarPlayer(
         # Nav buttons go in the left panel header's right corner
         self._left_panel.header_layout.addWidget(self.btn_back)
         self._left_panel.header_layout.addWidget(self.btn_fwd)
+
+        # Trigger tab mode check whenever the header is resized (e.g. panels dragged)
+        class _HRF(_QObject):
+            def eventFilter(self_, obj, ev):
+                if ev.type() == QEvent.Type.Resize:
+                    QTimer.singleShot(0, self._update_tab_mode)
+                return False
+        self._header_resize_filter = _HRF(self.main_header)
+        self.main_header.installEventFilter(self._header_resize_filter)
 
         right_panel.addWidget(self.main_header)       # tab bar only — own background
         right_panel.addWidget(self.tab_stack, 1)      # content — browser backgrounds only

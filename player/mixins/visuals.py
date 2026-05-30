@@ -523,6 +523,8 @@ class VisualsMixin:
                     'artist_browser':     'img/artists.png',
                     'tracks_browser':     'img/tracks.png',
                     'playlists_browser':  'img/playlists.png',
+                    '_favorites_tab':     'img/heart.png',
+                    '_mix_builder_tab':   'img/mix.png',
                     '_vis_container':     'img/visualizer.png',
                 }
                 for attr, img in icon_map.items():
@@ -599,6 +601,15 @@ class VisualsMixin:
             self._main_panel.setStyleSheet(
                 f'#MainPanel {{ background: transparent; border: none; }}'
             )
+        _tab_bg = f'rgb({self.theme.main_panel_bg})'
+        for _tab_obj, _obj_name in [
+            (getattr(self, '_favorites_tab',   None), 'FavoritesTab'),
+            (getattr(self, '_mix_builder_tab', None), 'MixBuilderTab'),
+        ]:
+            if _tab_obj:
+                _tab_obj.setStyleSheet(
+                    f'#{_obj_name} {{ background: {_tab_bg}; }}'
+                )
 
               
         from PyQt6.QtCore import QTimer
