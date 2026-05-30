@@ -861,9 +861,13 @@ class SonarPlayer(
         self.tabs.addTab(self.playlists_browser, "Playlists")
 
         # 7. Favorites
-        self._favorites_tab = QWidget()
+        from favorites_view import FavoritesView
+        self._favorites_tab = FavoritesView(self.navidrome_client)
         self._favorites_tab.setObjectName('FavoritesTab')
-        self._favorites_tab.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._favorites_tab.album_clicked.connect(self.navigate_to_album)
+        self._favorites_tab.artist_clicked.connect(self.navigate_to_artist)
+        self._favorites_tab.play_album.connect(self.play_whole_album)
+        self._favorites_tab.play_track.connect(self.add_and_play_from_browser)
         self.tabs.addTab(self._favorites_tab, "Favorites")
 
         # 8. Mix Builder
@@ -1508,6 +1512,7 @@ class SonarPlayer(
         self.update_indicator()
         if hasattr(self, '_queue_tree_panel'):
             self._queue_tree_panel.update_status()
+        self._refresh_queue_panel()  # recalculate _is_past after reorder
 
     def _clear_queue(self):
         self.audio_engine.stop()

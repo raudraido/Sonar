@@ -1438,6 +1438,25 @@ class SubsonicClient:
             print(f"Error fetching starred songs: {e}")
             return []
     
+    def get_starred_all(self):
+        """Return {'songs': [...], 'albums': [...], 'artists': [...]} from getStarred."""
+        params = self._get_auth_params()
+        try:
+            r = requests.get(f"{self.base_url}/rest/getStarred2", params=params)
+            data = r.json()
+            starred = data.get('subsonic-response', {}).get('starred2', {})
+        except Exception:
+            starred = {}
+
+        def _list(key):
+            v = starred.get(key, [])
+            return [v] if isinstance(v, dict) else list(v)
+
+        songs   = [self._parse_song_data(s) for s in _list('song')]
+        albums  = _list('album')
+        artists = _list('artist')
+        return {'songs': songs, 'albums': albums, 'artists': artists}
+
     def get_starred_ids(self):
         """Fetches list of all starred song IDs from the server."""
         params = self._get_auth_params()

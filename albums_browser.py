@@ -953,8 +953,9 @@ class _TrackHeader(QHeaderView):
 
 class _TrackListDelegate(QStyledItemDelegate):
     """Adds 8px top gap on row 0; draws hover/selection/playing backgrounds manually."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, heart_col=3):
         super().__init__(parent)
+        self._heart_col = heart_col   # column index that shows ♥/♡ (-1 = none)
         self.playing_row = -1
         self.accent = QColor('#cccccc')
         self._active_hover = QColor(204, 204, 204, 45)  # updated via set_active_hover
@@ -1073,7 +1074,7 @@ class _TrackListDelegate(QStyledItemDelegate):
                 return  # skip text rendering for col 0 on playing row
 
         # Col 3 — draw heart pixmap centered
-        if index.column() == 3:
+        if self._heart_col >= 0 and index.column() == self._heart_col:
             is_fav = index.data() == '♥'
             pix = self._heart_filled_pix if is_fav else self._heart_empty_pix
             if not pix.isNull():
@@ -1305,8 +1306,8 @@ class AlbumDetailView(QWidget):
         
         # ─── TRACK LIST ─────────────────────────────────────────────────────────
         self.track_tree = QTreeWidget()
-        self.track_tree.setColumnCount(6)
-        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'FAVORITE', 'GENRE', 'DURATION'])
+        self.track_tree.setColumnCount(8)
+        self.track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'FAVORITE', 'GENRE', 'DURATION', 'PLAYS', 'ALBUM'])
         self.track_tree.setRootIsDecorated(False)
         self.track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self.track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1344,13 +1345,16 @@ class AlbumDetailView(QWidget):
         hdr = self._track_header
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in range(2, 6):
+        for col in range(2, 8):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         hdr.resizeSection(0, 50)
         hdr.resizeSection(2, 180)
         hdr.resizeSection(3, 76)
         hdr.resizeSection(4, 130)
         hdr.resizeSection(5, 76)
+        hdr.resizeSection(6, 60)
+        hdr.resizeSection(7, 180)
+        self.track_tree.setColumnHidden(7, True)   # Album hidden in album view
         hdr.setStretchLastSection(False)
         hdr.setMinimumSectionSize(30)
         self._col_save_timer = QTimer(self)
@@ -1556,13 +1560,16 @@ class AlbumDetailView(QWidget):
                 secs     = dur_ms // 1000
                 duration = f"{secs // 60}:{secs % 60:02d}"
                 genre    = t.get('genre', '') or ''
-                item = QTreeWidgetItem([num, title, artist, heart, genre, duration])
+                plays    = str(t.get('play_count', '') or '')
+                album    = t.get('album', '') or ''
+                item = QTreeWidgetItem([num, title, artist, heart, genre, duration, plays, album])
                 item.setData(0, Qt.ItemDataRole.UserRole, {'_track_idx': track_idx, 'id': str(t.get('id', ''))})
                 item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 item.setTextAlignment(4, Qt.AlignmentFlag.AlignLeft   | Qt.AlignmentFlag.AlignVCenter)
                 item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                for col in range(6):
+                item.setTextAlignment(6, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                for col in range(8):
                     item.setForeground(col, _pri_color if col == 1 else _sec_color)
                 self.track_tree.addTopLevelItem(item)
                 total_rows += 1

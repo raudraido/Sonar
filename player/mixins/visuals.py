@@ -606,15 +606,13 @@ class VisualsMixin:
             self._main_panel.setStyleSheet(
                 f'#MainPanel {{ background: transparent; border: none; }}'
             )
+        if hasattr(self, '_favorites_tab') and hasattr(self._favorites_tab, 'set_accent_color'):
+            self._favorites_tab.set_accent_color(mc)
         _tab_bg = f'rgb({self.theme.main_panel_bg})'
-        for _tab_obj, _obj_name in [
-            (getattr(self, '_favorites_tab',   None), 'FavoritesTab'),
-            (getattr(self, '_mix_builder_tab', None), 'MixBuilderTab'),
-        ]:
-            if _tab_obj:
-                _tab_obj.setStyleSheet(
-                    f'#{_obj_name} {{ background: {_tab_bg}; }}'
-                )
+        if hasattr(self, '_mix_builder_tab') and self._mix_builder_tab:
+            self._mix_builder_tab.setStyleSheet(
+                f'#MixBuilderTab {{ background: {_tab_bg}; }}'
+            )
 
               
         from PyQt6.QtCore import QTimer
