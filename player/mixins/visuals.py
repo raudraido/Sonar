@@ -57,6 +57,16 @@ def install_scroll_reveal(viewport, scrollbar):
     return f
 
 
+def resolve_active_hover(theme) -> 'QColor':
+    """Return the active-hover halo colour (tab bar + tracklist keyboard halo)."""
+    if getattr(theme, 'active_hover_auto', True):
+        c = QColor(getattr(theme, 'accent', '#ffffff'))
+    else:
+        c = QColor(getattr(theme, 'active_hover_color', '#ffffff'))
+    c.setAlpha(45)
+    return c
+
+
 def resolve_menu_hover(theme) -> str:
     """Return the effective menu selection highlight colour from the theme."""
     if getattr(theme, 'auto_menu_hover', True):
@@ -392,6 +402,15 @@ class VisualsMixin:
         if hasattr(active_tab, 'set_accent_color'):
             active_tab.set_accent_color(mc)
 
+        _active_hover = resolve_active_hover(self.theme)
+        for _w in [
+            getattr(self, 'global_album_view', None),
+            getattr(getattr(self, 'album_browser', None), 'detail_view', None),
+            getattr(self, 'tracks_browser', None),
+        ]:
+            if _w and hasattr(_w, 'set_active_hover'):
+                _w.set_active_hover(_active_hover)
+
         if not getattr(self, '_tab_hook_set', False):
             self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
             self._tab_hook_set = True
@@ -496,6 +515,7 @@ class VisualsMixin:
                 from PyQt6.QtCore import QSize
                 self.tab_bar.setIconSize(QSize(16, 16))
                 self.tab_bar.set_master_color(mc)
+                self.tab_bar.set_active_hover(resolve_active_hover(self.theme))
                 icon_map = {
                     'home_tab':           'img/home.png',
                     '_now_playing_panel': 'img/now_playing.png',

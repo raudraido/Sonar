@@ -214,6 +214,10 @@ class ThemeBuilderDialog(QDialog):
         self._add_color_row('Manual Border Color', 'manual_border_color', t.manual_border_color, is_rgb=False)
         self._add_spin_row('Border Width', 'border_width', t.border_width, 0, 4)
 
+        self._add_section('Active Hover')
+        self._add_toggle_row('Auto (from accent)', 'active_hover_auto', t.active_hover_auto)
+        self._add_color_row('Hover Color', 'active_hover_color', t.active_hover_color, is_rgb=False)
+
         self._add_section('Menu Hover')
         self._add_toggle_row('Auto hover color', 'auto_menu_hover', t.auto_menu_hover)
         self._add_color_row('Hover Color', 'menu_hover_color', t.menu_hover_color, is_rgb=False)

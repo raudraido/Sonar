@@ -957,6 +957,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.playing_row = -1
         self.accent = QColor('#cccccc')
+        self._active_hover = QColor(204, 204, 204, 45)  # updated via set_active_hover
         self.font_size = 14
         self._movie = None
         self._is_playing = False
@@ -1003,6 +1004,11 @@ class _TrackListDelegate(QStyledItemDelegate):
         self._heart_filled_pix = filled
         self._heart_empty_pix  = empty
 
+    def set_active_hover(self, color: 'QColor'):
+        self._active_hover = color
+        if self.parent():
+            self.parent().viewport().update()
+
     def set_playing(self, row: int, accent: str, is_playing: bool = True):
         self.playing_row = row
         self._is_playing = is_playing
@@ -1043,7 +1049,7 @@ class _TrackListDelegate(QStyledItemDelegate):
             if option.state & QStyle.StateFlag.State_MouseOver:
                 color = self._hover_qcolor()
             elif is_kbd:
-                color = QColor(self.accent.red(), self.accent.green(), self.accent.blue(), 45)
+                color = self._active_hover
             else:
                 color = None
             if color:
@@ -1998,6 +2004,10 @@ class AlbumDetailView(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
+
+    def set_active_hover(self, color: 'QColor'):
+        if hasattr(self, '_track_delegate'):
+            self._track_delegate.set_active_hover(color)
 
     def set_accent_color(self, color):
         if hasattr(self, 'lbl_artist'):

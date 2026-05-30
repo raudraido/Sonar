@@ -76,9 +76,14 @@ class _TabBar(QTabBar):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._overlays: dict = {}   # {tab_index: QLabel}
+        self._active_hover: QColor = QColor(204, 204, 204, 45)
 
     def set_master_color(self, color: str):
         self._accent = color
+        self.update()
+
+    def set_active_hover(self, color: QColor):
+        self._active_hover = color
         self.update()
 
     def tabSizeHint(self, index: int):
@@ -109,6 +114,7 @@ class _TabBar(QTabBar):
                 y  = r.y() + (r.height() - sz.height()) // 2
                 lbl.setGeometry(x, y, sz.width(), sz.height())
                 lbl.setPixmap(self.tabIcon(i).pixmap(sz))
+
                 lbl.show()
                 lbl.raise_()
         for i, lbl in self._overlays.items():
@@ -120,11 +126,35 @@ class _TabBar(QTabBar):
         opt = QStyleOptionTab()
         for i in range(self.count()):
             self.initStyleOption(opt, i)
-            if not opt.text and not opt.icon.isNull():
-                opt.icon = QIcon()   # suppress Qt's off-centre icon rendering
+            is_selected = (i == self.currentIndex())
+            icon_only   = not opt.text and not opt.icon.isNull()
+
+            if is_selected:
+                # Strip Qt's selection/hover so we draw our own accent halo
+                opt.state &= ~(QStyle.StateFlag.State_Selected |
+                               QStyle.StateFlag.State_MouseOver)
+
+            if icon_only:
+                opt.icon = QIcon()
                 painter.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
             else:
-                painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+                if is_selected:
+                    painter.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
+                    self.initStyleOption(opt, i)   # restore full state for label
+                    painter.drawControl(QStyle.ControlElement.CE_TabBarTabLabel, opt)
+                else:
+                    painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+
+            # Active hover halo (theme-controlled, same as track-list keyboard halo)
+            if is_selected:
+                r = self.tabRect(i)
+                painter.save()
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(self._active_hover)
+                painter.drawRoundedRect(r.x(), r.y(), r.width() - 4, r.height(), 6, 6)
+                painter.restore()
+
         self._sync_overlays()
 
 

@@ -39,6 +39,10 @@ class Theme:
     # ── Queue panel font size offset (-5 … +5 relative to global sizes) ──────
     queue_font_size_offset: int = 0
 
+    # ── Active hover (tab bar + tracklist keyboard-focus halo) ───────────────
+    active_hover_auto:  bool = True       # derive from accent at alpha 45
+    active_hover_color: str  = "#ffffff"  # used when auto is off
+
     # ── Menu hover ───────────────────────────────────────────────────────────
     auto_menu_hover:  bool = True
     menu_hover_color: str  = "#555555"
