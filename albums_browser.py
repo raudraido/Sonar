@@ -553,6 +553,7 @@ class GridItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.master_color = QColor("#1db954")
         self.hovered_artist_row = -1
+        self.clickable_artist = True   # set False to disable subtitle hover/underline
 
         # Animation state
         self._hovered_row   = -1
@@ -726,7 +727,7 @@ class GridItemDelegate(QStyledItemDelegate):
 
             current_y += fm.height() + 2
             font.setBold(False); font.setPixelSize(self._secondary_px())
-            artist_hovered = (index.row() == self.hovered_artist_row)
+            artist_hovered = self.clickable_artist and (index.row() == self.hovered_artist_row)
             if artist_hovered:
                 font.setUnderline(True)
                 painter.setPen(QColor(self.master_color))

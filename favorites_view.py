@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter
 
 from home import HomeAlbumRowWidget
 from albums_browser import GridCoverWorker, _TrackListDelegate, _TrackHeader, resource_path
+from now_playing_info import _Card
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal
 
 
@@ -182,13 +183,13 @@ class FavoritesView(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_reveal = None
 
         content = QWidget()
         content.setObjectName('FavContent')
         self._layout = QVBoxLayout(content)
-        self._layout.setContentsMargins(4, 20, 0, 50)
+        self._layout.setContentsMargins(5, 20, 4, 50)
         self._layout.setSpacing(10)
         self.scroll.setWidget(content)
         main.addWidget(self.scroll)
@@ -196,7 +197,7 @@ class FavoritesView(QWidget):
         # ── Artists row ───────────────────────────────────────────────────
         self._artists_row = HomeAlbumRowWidget('Artists')
         self._artists_row.album_clicked.connect(self._on_artist_card_clicked)
-        self._artists_row.artist_clicked.connect(self.artist_clicked)
+        self._artists_row.delegate.clickable_artist = False
         self._layout.addWidget(self._artists_row)
 
         # ── Albums row ────────────────────────────────────────────────────
@@ -209,7 +210,7 @@ class FavoritesView(QWidget):
         # ── Top Artists by Favorites ──────────────────────────────────────
         self._top_row = HomeAlbumRowWidget('Top Artists by Favorites')
         self._top_row.album_clicked.connect(self._on_artist_card_clicked)
-        self._top_row.artist_clicked.connect(self.artist_clicked)
+        self._top_row.delegate.clickable_artist = False
         self._layout.addWidget(self._top_row)
 
         # ── Favorite Songs track list ─────────────────────────────────────
@@ -287,12 +288,17 @@ class FavoritesView(QWidget):
         self._track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
 
-        _tc = QWidget(); _tc.setStyleSheet('background: transparent;')
-        _tcl = QVBoxLayout(_tc)
-        _tcl.setContentsMargins(16, 0, 16, 0)
+        self._track_card = _Card()
+        _tcl = QVBoxLayout(self._track_card)
+        _tcl.setContentsMargins(0, 16, 0, 0)
         _tcl.setSpacing(0)
         _tcl.addWidget(self._track_tree)
-        self._layout.addWidget(_tc)
+        _card_wrap = QWidget(); _card_wrap.setStyleSheet('background: transparent;')
+        _cw_lo = QVBoxLayout(_card_wrap)
+        _cw_lo.setContentsMargins(7, 0, 8, 0)
+        _cw_lo.setSpacing(0)
+        _cw_lo.addWidget(self._track_card)
+        self._layout.addWidget(_card_wrap)
 
         self._layout.addStretch()
 
@@ -326,6 +332,11 @@ class FavoritesView(QWidget):
             row.set_accent_color(color)
         if hasattr(self, '_track_header'):
             self._track_header.set_accent(color)
+        if hasattr(self, '_track_card'):
+            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
+            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
+            self._track_card.set_border(border)
+            self._track_card.set_bg(card_bg)
         if self._scroll_reveal:
             self._scroll_reveal.color = color
 

@@ -851,7 +851,7 @@ class HomeView(QWidget):
         self.setObjectName("HomePanel")
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(4, 0, 0, 0)
+        main_layout.setContentsMargins(5, 0, 0, 0)
         main_layout.setSpacing(0)
 
 
@@ -861,13 +861,13 @@ class HomeView(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.omni_scroller = MiddleClickScroller(self.scroll)
 
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 20, 0, 50)
+        self.content_layout.setContentsMargins(0, 20, 4, 50)
         self.content_layout.setSpacing(10)
         self.scroll.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll)
