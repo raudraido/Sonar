@@ -405,7 +405,7 @@ class VisualsMixin:
             QTabBar::tab {{
                 background: transparent;
                 color: {_fc1};
-                padding: 10px 20px;
+                padding: 10px 5px;
                 border: none;
                 font-family: 'sans-serif', sans-serif;
                 font-weight: bold;

@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QColor, QMouseEvent, QAction, QIcon,
-    QFontMetrics, QCursor, QPainter, QLinearGradient,
+    QFontMetrics, QCursor, QPainter,
     QPolygon, QFont, QPen, QBrush, QPainterPath, QPixmapCache,
     QMovie
 )
@@ -73,33 +73,59 @@ class _TabBar(QTabBar):
 
     _accent: str = '#888888'
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._overlays: dict = {}   # {tab_index: QLabel}
+
     def set_master_color(self, color: str):
         self._accent = color
         self.update()
+
+    def tabSizeHint(self, index: int):
+        hint = super().tabSizeHint(index)
+        if not self.tabText(index):
+            s = hint.height()
+            return QSize(s, s)
+        return hint
+
+    def _sync_overlays(self):
+        from PyQt6.QtWidgets import QLabel as _QL
+        active: set = set()
+        sz = self.iconSize()
+        for i in range(self.count()):
+            if not self.tabText(i) and not self.tabIcon(i).isNull():
+                active.add(i)
+                if i not in self._overlays:
+                    lbl = _QL(self)
+                    lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                    lbl.setStyleSheet('background: transparent;')
+                    self._overlays[i] = lbl
+                lbl = self._overlays[i]
+                r  = self.tabRect(i)
+                # tabRect.width() includes the CSS margin-right: 4px gap;
+                # subtract it so we centre within the visible tab only.
+                visual_w = r.width() - 4
+                x  = r.x() + (visual_w - sz.width())  // 2
+                y  = r.y() + (r.height() - sz.height()) // 2
+                lbl.setGeometry(x, y, sz.width(), sz.height())
+                lbl.setPixmap(self.tabIcon(i).pixmap(sz))
+                lbl.show()
+                lbl.raise_()
+        for i, lbl in self._overlays.items():
+            if i not in active:
+                lbl.hide()
 
     def paintEvent(self, event):
         painter = QStylePainter(self)
         opt = QStyleOptionTab()
         for i in range(self.count()):
             self.initStyleOption(opt, i)
-            painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
-
-        # ── Accent glow line under the selected tab ───────────────────────
-        sel = self.currentIndex()
-        if sel >= 0 and self.isTabVisible(sel):
-            r   = self.tabRect(sel)
-            c   = QColor(self._accent)
-            h   = self.height()
-            pad = 4   # horizontal inset inside the tab rect
-
-            # soft gradient bloom fading upward (9 px tall)
-            bloom = QLinearGradient(0, h - 9, 0, h)
-            bloom.setColorAt(0.0, QColor(c.red(), c.green(), c.blue(), 0))
-            bloom.setColorAt(1.0, QColor(c.red(), c.green(), c.blue(), 55))
-            painter.fillRect(r.x() + pad, h - 9, r.width() - pad * 2, 9, bloom)
-
-            # solid 2 px accent bar at the very bottom
-            painter.fillRect(r.x() + pad, h - 2, r.width() - pad * 2, 2, c)
+            if not opt.text and not opt.icon.isNull():
+                opt.icon = QIcon()   # suppress Qt's off-centre icon rendering
+                painter.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
+            else:
+                painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+        self._sync_overlays()
 
 
 class _TabsCompat(_QObject):
@@ -548,9 +574,23 @@ class SonarPlayer(
             if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
                 self._art_close_btn.move(self._art_section.width() - 28, 4)
 
+    _TAB_NARROW_PX = 740
+
+    def _update_tab_mode(self):
+        if not hasattr(self, 'main_header'):
+            return
+        bar = self.tab_bar
+        icon_only = self.main_header.width() < self._TAB_NARROW_PX
+        bar.setIconSize(QSize(20, 20) if icon_only else QSize(16, 16))
+        for i in range(bar.count()):
+            label = bar.tabData(i)
+            if label:
+                bar.setTabText(i, '' if icon_only else label)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(0, self._reposition_resize_handles)
+        QTimer.singleShot(0, self._update_tab_mode)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -832,7 +872,29 @@ class SonarPlayer(
         self.tabs.addTab(self.global_playlist_view, "")
         self.global_playlist_tab_idx = self.tabs.count() - 1
         self.tabs.tabBar().setTabVisible(self.global_playlist_tab_idx, False)
-        
+
+        # ── Tab icons + narrow-mode label map ────────────────────────────────
+        _TAB_ICON_MAP = {
+            'Home': 'home', 'Now Playing': 'now_playing', 'Albums': 'albums',
+            'Artists': 'artists', 'Tracks': 'tracks', 'Playlists': 'playlists',
+            'Visualizer': 'visualizer',
+        }
+        _bar = self.tab_bar
+        _bar.setIconSize(QSize(16, 16))
+        for _i in range(_bar.count()):
+            _lbl = _bar.tabText(_i)
+            if _lbl and _bar.isTabVisible(_i):
+                # Store label as tab data so it survives reordering
+                _bar.setTabData(_i, _lbl)
+                _img = _TAB_ICON_MAP.get(_lbl)
+                if _img:
+                    _pix = QPixmap(resource_path(f'img/{_img}.png'))
+                    if not _pix.isNull():
+                        _pix = _pix.scaled(QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation)
+                        _bar.setTabIcon(_i, QIcon(_pix))
+        QTimer.singleShot(0, self._update_tab_mode)
+
         # --- SIGNAL CONNECTIONS ---
         self.home_tab.album_clicked.connect(lambda data: self.navigate_to_album(data))
         self.album_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
@@ -865,11 +927,13 @@ class SonarPlayer(
         self.main_header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.main_header.setFixedHeight(62)
         self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        _mh_layout = QVBoxLayout(self.main_header)
-        _mh_layout.setContentsMargins(8, 0, 0, 0)
+        _mh_layout = QHBoxLayout(self.main_header)
+        _mh_layout.setContentsMargins(0, 0, 0, 0)
         _mh_layout.setSpacing(0)
 
+        _mh_layout.addStretch()
         _mh_layout.addWidget(self.tab_bar)
+        _mh_layout.addStretch()
 
         # Nav buttons go in the left panel header's right corner
         self._left_panel.header_layout.addWidget(self.btn_back)
