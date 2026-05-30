@@ -554,6 +554,7 @@ class GridItemDelegate(QStyledItemDelegate):
         self.master_color = QColor("#1db954")
         self.hovered_artist_row = -1
         self.clickable_artist = True   # set False to disable subtitle hover/underline
+        self.show_play_btn   = True    # set False to hide the hover play button
 
         # Animation state
         self._hovered_row   = -1
@@ -678,7 +679,7 @@ class GridItemDelegate(QStyledItemDelegate):
         painter.restore()  # remove clip
 
         # ── Play button: scale 0.8→1.0, opacity 0→0.8 (+0.2 when on btn) ─
-        if hover_p > 0:
+        if hover_p > 0 and self.show_play_btn:
             center    = icon_rect.center()
             play_size = min(60, icon_width // 2)
             scale     = 0.8 + play_p * 0.2          # matches QML scale behaviour

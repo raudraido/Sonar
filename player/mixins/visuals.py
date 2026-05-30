@@ -610,8 +610,12 @@ class VisualsMixin:
             self._favorites_tab.set_accent_color(mc)
         _tab_bg = f'rgb({self.theme.main_panel_bg})'
         if hasattr(self, '_mix_builder_tab') and self._mix_builder_tab:
+            _fc1   = getattr(self.theme, 'font_color_primary', '#dddddd')
+            _fsize = getattr(self.theme, 'font_size_primary',  14)
             self._mix_builder_tab.setStyleSheet(
                 f'#MixBuilderTab {{ background: {_tab_bg}; }}'
+                f' QLabel {{ color: {_fc1}; background: transparent; border: none;'
+                f' font-size: {_fsize}px; letter-spacing: 1px; }}'
             )
 
               

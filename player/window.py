@@ -867,6 +867,8 @@ class SonarPlayer(
         self._favorites_tab.album_clicked.connect(self.navigate_to_album)
         self._favorites_tab.artist_clicked.connect(self.navigate_to_artist)
         self._favorites_tab.play_album.connect(self.play_whole_album)
+        self._favorites_tab.play_all.connect(self.play_whole_album)
+        self._favorites_tab.shuffle_all.connect(self.play_whole_album)
         self._favorites_tab.play_track.connect(self.add_and_play_from_browser)
         self.tabs.addTab(self._favorites_tab, "Favorites")
 
@@ -874,6 +876,14 @@ class SonarPlayer(
         self._mix_builder_tab = QWidget()
         self._mix_builder_tab.setObjectName('MixBuilderTab')
         self._mix_builder_tab.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _mb_lo = QVBoxLayout(self._mix_builder_tab)
+        _mb_lo.setContentsMargins(0, 0, 0, 0)
+        _mb_lo.setSpacing(0)
+        _mb_lbl = QLabel("Coming Soon™")
+        _mb_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        _mb_lbl.setStyleSheet("padding: 10px 0 0 0;")
+        _mb_lo.addWidget(_mb_lbl)
+        _mb_lo.addStretch()
         self.tabs.addTab(self._mix_builder_tab, "Mix Builder")
 
         # 9. Visualizer

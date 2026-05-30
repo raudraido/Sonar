@@ -1,12 +1,159 @@
 """favorites_view.py — Favorites tab: starred artists, albums and top artists."""
 from collections import Counter
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea,
-                              QTreeWidget, QTreeWidgetItem, QHeaderView, QStyle)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                              QScrollArea, QTreeWidget, QTreeWidgetItem,
+                              QHeaderView, QStyle, QPushButton, QCheckBox,
+                              QListWidget, QListWidgetItem, QLineEdit, QFrame,
+                              QApplication)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint
 from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter
 
 from home import HomeAlbumRowWidget
+from tracks_browser import _checkmark_svg_path
+
+
+class _GenrePopup(QFrame):
+    """Genre filter popup styled like the tracks browser ColumnFilterPopup."""
+    selection_changed = pyqtSignal(set)
+
+    def __init__(self, parent=None):
+        super().__init__(parent,
+                         Qt.WindowType.Popup |
+                         Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.setFixedWidth(240)
+        self._genres: list[str] = []
+        self._selected: set[str] = set()
+        self._paint_bg = QColor(20, 20, 20)
+        self._paint_bc = QColor(42, 42, 42)
+
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(8, 8, 8, 8)
+        lo.setSpacing(6)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText('Search genres…')
+        self._search.textChanged.connect(self._rebuild)
+        lo.addWidget(self._search)
+
+        self._list = QListWidget()
+        self._list.setFixedHeight(200)
+        self._list.setMouseTracking(True)
+        self._list.viewport().setMouseTracking(True)
+        self._list.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self._list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self._list.itemChanged.connect(self._on_item_changed)
+        self._list.itemClicked.connect(self._on_item_clicked)
+        lo.addWidget(self._list)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self._ok_btn = QPushButton('Apply')
+        self._ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ok_btn.clicked.connect(self.hide)
+        self._clear_btn = QPushButton('Clear')
+        self._clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_btn.clicked.connect(self._clear)
+        btn_row.addStretch()
+        btn_row.addWidget(self._clear_btn)
+        btn_row.addWidget(self._ok_btn)
+        lo.addLayout(btn_row)
+
+    def apply_theme(self, theme, accent: str, hov: str):
+        bg  = getattr(theme, 'main_panel_bg', '20,20,20') if theme else '20,20,20'
+        bc  = getattr(theme, 'border_color',  '#2a2a2a') if theme else '#2a2a2a'
+        fg  = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
+        fg2 = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
+        try:
+            self._paint_bg = QColor(*[int(x) for x in bg.split(',')])
+        except Exception:
+            self._paint_bg = QColor(20, 20, 20)
+        if theme and not getattr(theme, 'auto_border_from_accent', True):
+            self._paint_bc = QColor(getattr(theme, 'manual_border_color', '#2a2a2a'))
+        else:
+            self._paint_bc = QColor(bc)
+        from player.mixins.visuals import scrollbar_css
+        self.setStyleSheet(f"""
+            QLineEdit {{
+                background: rgb({bg}); color: {fg}; border: 1px solid {bc};
+                border-radius: 4px; padding: 4px 8px; font-size: 13px;
+            }}
+            QListWidget {{
+                background: transparent; border: none; color: {fg}; font-size: 13px;
+            }}
+            QListWidget::item {{ padding: 3px 6px; border-radius: 3px; }}
+            QListWidget::item:hover {{ background: {hov}; }}
+            QListWidget::item:selected {{ background: transparent; color: {fg}; }}
+            QListWidget::indicator {{
+                width: 14px; height: 14px; border-radius: 3px;
+                border: 1px solid {bc}; background: rgb({bg});
+            }}
+            QListWidget::indicator:checked {{
+                background: rgb({bg});
+                image: url("{_checkmark_svg_path(accent)}");
+            }}
+            QPushButton {{
+                background: transparent; color: {fg}; border: 1px solid {bc};
+                border-radius: 4px; padding: 4px 12px; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {hov}; }}
+            {scrollbar_css(accent)}
+        """)
+        from PyQt6.QtGui import QPalette as _Pal
+        pal = self._search.palette()
+        pal.setColor(_Pal.ColorRole.PlaceholderText, QColor(fg2))
+        self._search.setPalette(pal)
+        self.update()
+
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QRectF
+        p = _QPainter(self)
+        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        p.setPen(self._paint_bc)
+        p.setBrush(self._paint_bg)
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.end()
+
+    def set_genres(self, genres: list[str], selected: set[str]):
+        self._genres = sorted(genres)
+        self._selected = set(selected)
+        self._rebuild()
+
+    def _rebuild(self):
+        q = self._search.text().lower()
+        self._list.blockSignals(True)
+        self._list.clear()
+        for g in self._genres:
+            if q and q not in g.lower():
+                continue
+            item = QListWidgetItem(g)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if g in self._selected else Qt.CheckState.Unchecked)
+            self._list.addItem(item)
+        self._list.blockSignals(False)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        # Toggle checkbox when clicking anywhere on the row
+        new_state = (Qt.CheckState.Unchecked
+                     if item.checkState() == Qt.CheckState.Checked
+                     else Qt.CheckState.Checked)
+        item.setCheckState(new_state)
+
+    def _on_item_changed(self, item: QListWidgetItem):
+        g = item.text()
+        if item.checkState() == Qt.CheckState.Checked:
+            self._selected.add(g)
+        else:
+            self._selected.discard(g)
+        self.selection_changed.emit(set(self._selected))
+
+    def _clear(self):
+        self._selected.clear()
+        self._rebuild()
+        self.selection_changed.emit(set())
 from albums_browser import GridCoverWorker, _TrackListDelegate, _TrackHeader, resource_path
 from now_playing_info import _Card
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal
@@ -163,6 +310,8 @@ class FavoritesView(QWidget):
     artist_clicked = pyqtSignal(str)
     play_album     = pyqtSignal(dict)
     play_track     = pyqtSignal(dict)
+    play_all       = pyqtSignal(object)   # emits list[dict] → play_whole_album
+    shuffle_all    = pyqtSignal(object)   # emits list[dict] → play_whole_album shuffled
 
     def __init__(self, client=None, parent=None):
         super().__init__(parent)
@@ -198,6 +347,7 @@ class FavoritesView(QWidget):
         self._artists_row = HomeAlbumRowWidget('Artists')
         self._artists_row.album_clicked.connect(self._on_artist_card_clicked)
         self._artists_row.delegate.clickable_artist = False
+        self._artists_row.delegate.show_play_btn    = False
         self._layout.addWidget(self._artists_row)
 
         # ── Albums row ────────────────────────────────────────────────────
@@ -209,17 +359,94 @@ class FavoritesView(QWidget):
 
         # ── Top Artists by Favorites ──────────────────────────────────────
         self._top_row = HomeAlbumRowWidget('Top Artists by Favorites')
-        self._top_row.album_clicked.connect(self._on_artist_card_clicked)
+        self._top_row.album_clicked.connect(self._on_top_artist_clicked)
         self._top_row.delegate.clickable_artist = False
+        self._top_row.delegate.show_play_btn    = False
         self._layout.addWidget(self._top_row)
 
-        # ── Favorite Songs track list ─────────────────────────────────────
+        # ── Favorite Songs header ─────────────────────────────────────────
+        self._selected_genres: set = set()
+        self._selected_artist: str = ''
+
+        _hdr = QWidget(); _hdr.setObjectName('FavSongsHdr')
+        _hdr.setStyleSheet('QWidget#FavSongsHdr { background: transparent; }')
+        _hdr_lo = QVBoxLayout(_hdr)
+        _hdr_lo.setContentsMargins(6, 12, 6, 4)
+        _hdr_lo.setSpacing(8)
+
+        # Row 1: "Songs" + status
+        _title_row = QHBoxLayout()
+        _title_row.setSpacing(8)
         self._songs_lbl = QLabel('Favorite Songs')
-        self._songs_lbl.setStyleSheet(
-            'color: #eee; font-size: 15px; font-weight: bold;'
-            ' background: transparent; padding: 8px 6px 4px 6px;'
+        self._songs_status_lbl = QLabel('')
+        self._songs_status_lbl.setStyleSheet('color: #666; font-size: 12px; background: transparent;')
+        _title_row.addWidget(self._songs_lbl)
+        _title_row.addWidget(self._songs_status_lbl)
+        _title_row.addStretch()
+        _hdr_lo.addLayout(_title_row)
+
+        # Row 2: action buttons
+        _btn_row = QHBoxLayout()
+        _btn_row.setSpacing(8)
+
+        _icon_btn_style = (
+            'QPushButton { background: transparent; border: none; border-radius: 4px; }'
+            ' QPushButton:hover { background: rgba(255,255,255,0.1); }'
+            ' QPushButton:checked { background: rgba(255,255,255,0.15); }'
         )
-        self._layout.addWidget(self._songs_lbl)
+
+        from player.widgets import PlayButton as _PB
+        self._play_all_btn = _PB()
+        self._play_all_btn.setFixedSize(58, 58)
+        self._play_all_btn.setIconSize(QSize(18, 18))
+        self._play_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._play_all_btn.ensure_glow()
+        self._play_all_btn.clicked.connect(self._on_play_all)
+        _btn_row.addWidget(self._play_all_btn)
+
+        self._shuffle_btn = QPushButton()
+        self._shuffle_btn.setFlat(True)
+        self._shuffle_btn.setFixedSize(36, 36)
+        self._shuffle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._shuffle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._shuffle_btn.setStyleSheet(_icon_btn_style)
+        self._shuffle_btn.setIconSize(QSize(20, 20))
+        self._shuffle_btn.clicked.connect(self._on_shuffle_all)
+        _btn_row.addWidget(self._shuffle_btn)
+
+        self._genre_btn = QPushButton()
+        self._genre_btn.setFlat(True)
+        self._genre_btn.setCheckable(True)
+        self._genre_btn.setFixedSize(36, 36)
+        self._genre_btn.setIconSize(QSize(20, 20))
+        self._genre_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._genre_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._genre_btn.setStyleSheet(_icon_btn_style)
+        self._genre_btn.clicked.connect(self._toggle_genre_popup)
+        _btn_row.addWidget(self._genre_btn)
+
+        self._clear_artist_btn = QPushButton('✕  Clear filters')
+        self._clear_artist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_artist_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._clear_artist_btn.clicked.connect(self._clear_all_filters)
+        self._clear_artist_btn.hide()
+        _btn_row.addWidget(self._clear_artist_btn)
+
+        _btn_row.addStretch()
+        _hdr_lo.addLayout(_btn_row)
+
+        self._layout.addWidget(_hdr)
+
+        self._genre_popup = _GenrePopup(self)
+        self._genre_popup.hide()
+        self._genre_popup.selection_changed.connect(self._on_genres_changed)
+
+        # Sync button checked state when popup closes
+        orig_hide = self._genre_popup.hideEvent
+        def _on_popup_hide(e):
+            orig_hide(e)
+            self._genre_btn.setChecked(bool(self._selected_genres))
+        self._genre_popup.hideEvent = _on_popup_hide
 
         self._track_tree = QTreeWidget()
         self._track_tree.setColumnCount(7)
@@ -339,6 +566,29 @@ class FavoritesView(QWidget):
             self._track_card.set_bg(card_bg)
         if self._scroll_reveal:
             self._scroll_reveal.color = color
+        from player.mixins.visuals import resolve_menu_hover
+        hov = resolve_menu_hover(theme)
+        from player.widgets import tint_icon
+        self._play_all_btn.apply_accent(color, theme)
+        _icon_style = (
+            f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
+            f' QPushButton:hover {{ background: {hov}; }}'
+        )
+        from player.mixins.visuals import resolve_active_hover
+        _ah = resolve_active_hover(theme)
+        _ah_css = f'rgba({_ah.red()},{_ah.green()},{_ah.blue()},{_ah.alpha()})'
+        _filter_style = _icon_style + f' QPushButton:checked {{ background: {_ah_css}; }}'
+        sec = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
+        self._shuffle_btn.setIcon(tint_icon('img/shuffle.png', sec))
+        self._shuffle_btn.setStyleSheet(_icon_style)
+        self._genre_btn.setIcon(tint_icon('img/filter.png', sec))
+        self._genre_btn.setStyleSheet(_filter_style)
+        self._clear_artist_btn.setStyleSheet(
+            f'QPushButton {{ background: transparent; border: none; '
+            f'color: {color}; font-size: 11px; padding: 4px 8px; }}'
+            f'QPushButton:hover {{ text-decoration: underline; }}'
+        )
+        self._genre_popup.apply_theme(theme, color, hov)
 
     def refresh(self):
         if not self._client:
@@ -404,6 +654,15 @@ class FavoritesView(QWidget):
 
         self._populate_tracks(songs)
 
+        # Populate genre filter with genres from all songs
+        all_genres: set = set()
+        for s in songs:
+            for g in (s.get('genre', '') or '').split('•'):
+                g = g.strip()
+                if g:
+                    all_genres.add(g)
+        self._genre_popup.set_genres(sorted(all_genres), self._selected_genres)
+
         # Queue covers through the persistent worker
         if self._client:
             self._ensure_cover_worker()
@@ -435,6 +694,85 @@ class FavoritesView(QWidget):
         5: lambda t, i: t.get('duration_ms', 0) or 0,
         6: lambda t, i: int(t.get('play_count', 0) or 0),
     }
+
+    # ── Genre filter ──────────────────────────────────────────────────────
+
+    def _toggle_genre_popup(self):
+        if self._genre_popup.isVisible():
+            self._genre_popup.hide()
+            self._genre_btn.setChecked(False)
+            return
+        btn_pos = self._genre_btn.mapToGlobal(QPoint(0, self._genre_btn.height() + 4))
+        self._genre_popup.move(btn_pos)
+        self._genre_popup.show()
+        self._genre_popup.raise_()
+        self._genre_btn.setChecked(True)
+
+    def _on_genres_changed(self, genres: set):
+        self._selected_genres = genres
+        self._genre_btn.setChecked(bool(genres))
+        self._apply_filters()
+
+    # ── Artist filter (Top Artists row) ──────────────────────────────────
+
+    def _on_top_artist_clicked(self, card: dict):
+        name = card.get('_artist_name', card.get('title', ''))
+        self._selected_artist = '' if self._selected_artist == name else name
+        # Reset genre filter when switching artist
+        if self._selected_artist and self._selected_genres:
+            self._selected_genres = set()
+            self._genre_btn.setChecked(False)
+            self._genre_popup.set_genres(self._genre_popup._genres, set())
+        self._apply_filters()
+
+    def _clear_all_filters(self):
+        self._selected_artist = ''
+        self._selected_genres = set()
+        self._genre_btn.setChecked(False)
+        self._genre_popup.set_genres(self._genre_popup._genres, set())
+        self._apply_filters()
+
+    def _on_play_all(self):
+        songs = getattr(self, '_songs', [])
+        if songs:
+            self.play_all.emit(songs)
+
+    def _on_shuffle_all(self):
+        import random
+        songs = list(getattr(self, '_songs', []))
+        if songs:
+            random.shuffle(songs)
+            self.shuffle_all.emit(songs)
+
+    # ── Combined filter application ───────────────────────────────────────
+
+    def _apply_filters(self):
+        all_songs = list(getattr(self, '_songs_original', []))
+        songs = all_songs
+        if self._selected_artist:
+            songs = [s for s in songs if s.get('artist', '') == self._selected_artist]
+        if self._selected_genres:
+            def _genre_match(s):
+                g = s.get('genre', '') or ''
+                return any(sel in g for sel in self._selected_genres)
+            songs = [s for s in songs if _genre_match(s)]
+        self._populate_tracks(songs, update_original=False)
+
+        # Update status label
+        total = len(all_songs)
+        shown = len(songs)
+        parts = []
+        if self._selected_artist:
+            parts.append(self._selected_artist)
+        if self._selected_genres:
+            parts.append(', '.join(sorted(self._selected_genres)))
+        if parts or shown != total:
+            self._songs_status_lbl.setText(
+                f'Showing {shown} of {total}' + (f'  ({" · ".join(parts)})' if parts else ''))
+        else:
+            self._songs_status_lbl.setText('')
+
+        self._clear_artist_btn.setVisible(bool(self._selected_artist or self._selected_genres))
 
     def _on_sort(self, col: int, state: str):
         songs = list(getattr(self, '_songs_original', self._songs))
