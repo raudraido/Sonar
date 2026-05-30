@@ -54,7 +54,7 @@ from player.workers import (
 from player.widgets import (
     ElidedLabel, NowPlayingFooterWidget, FooterClickableLabel,
     TriangleTooltip, ClickableSlider, ClickableLabel,
-    SettingsWindow, StatusButton, SquareArtContainer,
+    SettingsWindow, StatusButton, SquareArtContainer, PlayButton,
 )
 from player import resource_path
 from player.theme import Theme
@@ -1042,8 +1042,8 @@ class SonarPlayer(
         self.btn_prev.clicked.connect(self.play_prev)
         self.btn_prev.setToolTip("Previous Track")
 
-        self.btn_play = QPushButton("")
-        self.btn_play.setFixedSize(65, 65)
+        self.btn_play = PlayButton()
+        self.btn_play.setFixedSize(58, 58)
         self.btn_play.clicked.connect(self.toggle_playback)
         self.btn_play.setToolTip("Play/Pause")
 

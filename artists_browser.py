@@ -1691,8 +1691,6 @@ class ArtistRichDetailView(QWidget):
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.lbl_type = QLabel("ARTIST")
-        self.lbl_type.setStyleSheet("font-weight: bold; color: #aaa; font-size: 12px; letter-spacing: 1px; background: transparent;")
 
         self.lbl_name = QLabel("Artist Name")
         self.lbl_name.setStyleSheet("font-weight: 900; color: white; font-size: 48px; background: transparent;")
@@ -1725,12 +1723,13 @@ class ArtistRichDetailView(QWidget):
             painter.end()
             return QIcon(out)
 
-        self.btn_play = QPushButton()
+        from player.widgets import PlayButton as _PlayButton, tint_icon as _tint
+        self.btn_play = _PlayButton()
         self.btn_play.setFixedSize(60, 60)
-        self.btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_play.setIcon(QIcon(resource_path("img/play.png")))
-        self.btn_play.setIconSize(QSize(15, 15))
+        self.btn_play.setIcon(_tint('img/play.png', '#cccccc'))
+        self.btn_play.setIconSize(QSize(18, 18))
+        self.btn_play.ensure_glow()
         self.btn_play.clicked.connect(self.play_current_artist_tracks)
         btn_layout.addWidget(self.btn_play)
         self.btn_play.setToolTip("Play All Tracks (Ctrl+↵)")
@@ -1777,7 +1776,6 @@ class ArtistRichDetailView(QWidget):
         self.btn_wikipedia.clicked.connect(lambda: self._open_artist_url('wikipedia'))
         btn_layout.addWidget(self.btn_wikipedia)
 
-        info_layout.addWidget(self.lbl_type)
         info_layout.addWidget(self.lbl_name)
         info_layout.addWidget(self.lbl_stats)
         info_layout.addWidget(btn_bar)
@@ -2268,11 +2266,7 @@ class ArtistRichDetailView(QWidget):
             self.header_container.set_border(border)
             self.header_container.set_bg(card_bg)
         
-        play_btn_style = f"""
-            QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }}
-            QPushButton:hover {{ background-color: white; }}
-        """
-        self.btn_play.setStyleSheet(play_btn_style)
+        self.btn_play.apply_accent(color, getattr(self.window(), 'theme', None))
 
         if hasattr(self, 'btn_lastfm'):
             theme = getattr(self.window(), 'theme', None)
@@ -2316,8 +2310,6 @@ class ArtistRichDetailView(QWidget):
         sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
         sk_color  = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
-        if hasattr(self, 'lbl_type'):
-            self.lbl_type.setStyleSheet(f"font-weight: bold; color: {sec_color}; font-size: 12px; letter-spacing: 1px;")
         if hasattr(self, 'lbl_name'):
             self.lbl_name.setStyleSheet(f"font-weight: 900; color: {pri_color}; font-size: 48px;")
         if hasattr(self, 'lbl_about_header'):

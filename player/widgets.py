@@ -22,6 +22,113 @@ from PyQt6.QtGui import (
 )
 
 from audio_engine import AudioEngine
+from PyQt6.QtWidgets import QGraphicsDropShadowEffect as _QDSE
+
+
+class PlayButton(QPushButton):
+    """Antialiased ring play/pause button shared by the footer and album detail view."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._ring_color = QColor('#cccccc')
+        self._hover_fill = QColor(255, 255, 255, 30)
+        self._glow_color = QColor(0, 0, 0, 0)
+        self._hovered    = False
+        self._glow_eff   = None
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_ring_color(self, color: str):
+        self._ring_color = QColor(color)
+        self.update()
+
+    def set_hover_fill(self, color: 'QColor'):
+        self._hover_fill = color
+        self.update()
+
+    def set_glow_color(self, color: 'QColor'):
+        self._glow_color = color
+
+    def apply_accent(self, color: str, theme=None):
+        """Apply master colour to ring, icon, hover fill and glow in one call."""
+        from player.mixins.visuals import resolve_active_hover
+        self.set_ring_color(color)
+        self.set_hover_fill(resolve_active_hover(theme))
+        gc = QColor(color); gc.setAlpha(160)
+        self.set_glow_color(gc)
+        self.setIcon(tint_icon('img/play.png', color))
+
+    def ensure_glow(self):
+        if self._glow_eff is None:
+            eff = _QDSE(self)
+            eff.setOffset(0, 0)
+            eff.setBlurRadius(28)
+            eff.setColor(QColor(0, 0, 0, 0))
+            self.setGraphicsEffect(eff)
+            self._glow_eff = eff
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        if self._glow_eff:
+            self._glow_eff.setColor(self._glow_color)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        if self._glow_eff:
+            self._glow_eff.setColor(QColor(0, 0, 0, 0))
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHints(
+            QPainter.RenderHint.Antialiasing |
+            QPainter.RenderHint.SmoothPixmapTransform
+        )
+        m = 2.5
+        ellipse = QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m)
+
+        if self._hovered or self.isDown():
+            fill = QColor(self._hover_fill)
+            if self.isDown():
+                fill.setAlpha(min(255, fill.alpha() + 40))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(fill)
+            p.drawEllipse(ellipse)
+
+        pen = QPen(self._ring_color, 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(ellipse)
+
+        icon = self.icon()
+        if not icon.isNull():
+            sz  = self.iconSize()
+            pix = icon.pixmap(sz)
+            x   = (self.width()  - sz.width())  // 2
+            y   = (self.height() - sz.height()) // 2
+            p.drawPixmap(x, y, pix)
+        p.end()
+
+
+def tint_icon(path: str, color: str) -> 'QIcon':
+    """Return a QIcon with the PNG at *path* tinted to *color*."""
+    from player import resource_path as _rp
+    pix = QPixmap(_rp(path))
+    if pix.isNull():
+        return QIcon()
+    out = QPixmap(pix.size())
+    out.fill(QColor(0, 0, 0, 0))
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+    p.fillRect(out.rect(), QColor(color))
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    p.drawPixmap(0, 0, pix)
+    p.end()
+    return QIcon(out)
 
 
 def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:

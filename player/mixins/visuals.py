@@ -351,7 +351,7 @@ class VisualsMixin:
             self._last_indicator_key = indicator_key
             self.update_indicator(scroll_to_current=scroll_to_current)
 
-        self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", "#111111"))
+        self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", mc))
 
         cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
         self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
@@ -605,7 +605,8 @@ class VisualsMixin:
         QTimer.singleShot(0, apply_deferred_styles)
 
         # (The rest of the fast footer styles stay exactly the same)
-        self.btn_play.setStyleSheet(f"QPushButton {{ background: {mc}; border-radius: 32px; border: none; }} QPushButton:hover {{ background: white; }}")
+        self.btn_play.apply_accent(mc, self.theme)
+        self.btn_play.ensure_glow()
         
         slider_style = f"QSlider::groove:horizontal {{ background: #333; height: 5px; border-radius: 2px; }} QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }} QSlider::sub-page:horizontal {{ background: {mc}; }}"
         self.vol_slider.setStyleSheet(slider_style)

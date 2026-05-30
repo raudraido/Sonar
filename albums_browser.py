@@ -1260,12 +1260,13 @@ class AlbumDetailView(QWidget):
         btn_layout.setSpacing(2)
         
         # --- ALBUM VIEW PLAY BUTTON ---
-        self.btn_play = QPushButton()
-        self.btn_play.setFixedSize(60, 60) 
-        self.btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus) 
-        self.btn_play.setIcon(QIcon(resource_path("img/play.png")))
-        self.btn_play.setIconSize(QSize(15, 15)) # Slightly smaller icon to fit the 40px button
+        from player.widgets import PlayButton as _PlayButton
+        self.btn_play = _PlayButton()
+        self.btn_play.setFixedSize(60, 60)
+        self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_play.setIcon(QIcon(resource_path("img/play.png")))  # tinted in set_accent_color
+        self.btn_play.setIconSize(QSize(18, 18))
+        self.btn_play.ensure_glow()
         self.btn_play.clicked.connect(self.play_clicked.emit)
         
         _icon_btn_style = (
@@ -2042,18 +2043,7 @@ class AlbumDetailView(QWidget):
                 self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
 
-        # Dynamically style the Album play button with the Master Color!
-        play_btn_style = f"""
-            QPushButton {{ 
-                background-color: {color}; 
-                border-radius: 30px; 
-                border: none; 
-            }} 
-            QPushButton:hover {{ 
-                background-color: white; 
-            }}
-        """
-        self.btn_play.setStyleSheet(play_btn_style)
+        self.btn_play.apply_accent(color, getattr(self.window(), 'theme', None))
         
         
         scrollbar_style = f"""
