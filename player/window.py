@@ -53,7 +53,7 @@ from player.workers import (
 )
 from player.widgets import (
     ElidedLabel, NowPlayingFooterWidget, FooterClickableLabel,
-    TriangleTooltip, ClickableSlider, ClickableLabel,
+    TriangleTooltip, ClickableSlider,
     SettingsWindow, StatusButton, SquareArtContainer, PlayButton,
 )
 from player import resource_path
@@ -380,6 +380,7 @@ class SonarPlayer(
     PersistenceMixin,
     QMainWindow,
 ):
+    _VOL_ICON_SIZE = 30  # px — single source of truth for volume icon size
     """
     Main application window.
 
@@ -1005,11 +1006,6 @@ class SonarPlayer(
         # PLAYER CONTROLS & FOOTER
         # =========================================================
 
-        self.import_btn = QPushButton("")
-        self.import_btn.setFixedSize(40, 40)
-        self.import_btn.setIconSize(QSize(20, 20))
-        self.import_btn.clicked.connect(self.import_music)
-        self.import_btn.setToolTip("Add Music")
 
         self.cast_btn = QPushButton("")
         self.cast_btn.setFixedSize(40, 40)
@@ -1059,16 +1055,19 @@ class SonarPlayer(
         self.btn_repeat.setToolTip("Repeat")
 
         self.vol_slider = ClickableSlider(Qt.Orientation.Horizontal, self, is_volume=True)
-        self.vol_slider.setFixedWidth(130)
+        self.vol_slider.setFixedWidth(100)
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(self.last_volume)
         self.vol_slider.valueChanged.connect(self.update_volume)
         self.vol_slider.sliderMoved.connect(self.vol_slider.update_tooltip_pos)
 
-        self.vol_icon_label = ClickableLabel(main_window=self)
-        self.vol_icon_label.setFixedSize(24, 24)
+        self.vol_icon_label = QPushButton()
+        self.vol_icon_label.setFixedSize(40, 40)
+        self.vol_icon_label.setIconSize(QSize(self._VOL_ICON_SIZE, self._VOL_ICON_SIZE))
         self.vol_icon_label.setToolTip("Mute/Unmute")
         self.vol_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.vol_icon_label.setFlat(True)
+        self.vol_icon_label.clicked.connect(self.toggle_mute)
 
         self.current_time_label = QLabel("0:00")
         
@@ -1210,21 +1209,19 @@ class SonarPlayer(
         
         footer_right = QWidget()
         right_layout = QHBoxLayout(footer_right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
-        right_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
-        
-        right_layout.addWidget(self.import_btn)
+        right_layout.setContentsMargins(8, 0, 8, 0)
+        right_layout.setSpacing(8)
+
+        right_layout.addStretch()
         right_layout.addWidget(self.settings_btn)
-        right_layout.addSpacing(10)
         right_layout.addWidget(self.vol_icon_label)
+        right_layout.addSpacing(4)
         right_layout.addWidget(self.vol_slider)
-        right_layout.addSpacing(10)
         right_layout.addWidget(self.cast_btn)
         
-        main_footer_layout.addWidget(footer_left, 1)
-        main_footer_layout.addWidget(footer_center, 2)
-        main_footer_layout.addWidget(footer_right, 1)
+        main_footer_layout.addWidget(footer_left, 2)
+        main_footer_layout.addWidget(footer_center, 3)
+        main_footer_layout.addWidget(footer_right, 2)
 
         main_layout.addWidget(self._footer_panel)
 
@@ -1232,7 +1229,7 @@ class SonarPlayer(
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
-        for w in [self.import_btn, self.settings_btn, self.cast_btn, self.btn_stop, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
+        for w in [self.settings_btn, self.cast_btn, self.btn_stop, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             w.setCursor(Qt.CursorShape.PointingHandCursor)
             w.installEventFilter(self)

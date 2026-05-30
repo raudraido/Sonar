@@ -499,18 +499,23 @@ class WaveformScrubber(QWidget):
             
             track_h = 6
             track_y = center_y - (track_h / 2.0)
-            
+            handle_radius = 6
+            margin = handle_radius
+            track_w = width - 2 * margin
+
             progress = self.position_ms / max(1, self.duration_ms)
-            playhead_x = progress * width
-            
+            playhead_x = margin + progress * track_w
+
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(60, 60, 60, 150))
-            painter.drawRoundedRect(QRectF(0, track_y, width, track_h), track_h/2, track_h/2)
-            
+            painter.drawRoundedRect(QRectF(margin, track_y, track_w, track_h), track_h/2, track_h/2)
+
+            filled_w = playhead_x - margin
+            if filled_w > 0:
+                painter.setBrush(self.master_color)
+                painter.drawRoundedRect(QRectF(margin, track_y, filled_w, track_h), track_h/2, track_h/2)
+
             painter.setBrush(self.master_color)
-            painter.drawRoundedRect(QRectF(0, track_y, playhead_x, track_h), track_h/2, track_h/2)
-            
-            handle_radius = 6
             painter.drawEllipse(QRectF(playhead_x - handle_radius, center_y - handle_radius, handle_radius*2, handle_radius*2))
 
         # --- MODE 2: BAR WAVEFORM ---

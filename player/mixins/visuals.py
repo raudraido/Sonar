@@ -393,9 +393,9 @@ class VisualsMixin:
         self.btn_shuffle.setIcon(get_cached_icon("img/shuffle.png", mc)); self.btn_repeat.setIcon(get_cached_icon("img/repeat.png", mc))
 
         vol_img = "img/volume_mute.png" if self.is_muted else "img/volume.png"
-        self.vol_icon_label.setPixmap(get_cached_icon(vol_img, "#888888" if self.is_muted else mc).pixmap(24, 24))
+        self.vol_icon_label.setIcon(get_cached_icon(vol_img, "#888888" if self.is_muted else mc))
 
-        for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.import_btn, "img/import.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png"), (self.btn_stop, "img/stop.png")]:
+        for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png"), (self.btn_stop, "img/stop.png")]:
             btn.setIcon(get_cached_icon(icon_name, mc))
 
         active_tab = self.tabs.currentWidget()
@@ -439,7 +439,7 @@ class VisualsMixin:
         self.btn_shuffle.setStyleSheet(toggle_style); self.btn_repeat.setStyleSheet(toggle_style)
 
         side_btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
-        for btn in [self.settings_btn, self.import_btn, self.btn_prev, self.btn_next, self.btn_stop, self.cast_btn]: btn.setStyleSheet(side_btn_style)
+        for btn in [self.settings_btn, self.btn_prev, self.btn_next, self.btn_stop, self.cast_btn, self.vol_icon_label]: btn.setStyleSheet(side_btn_style)
 
         # 2. Define the Buttons CSS
         modern_dark_style = f"""
@@ -608,7 +608,12 @@ class VisualsMixin:
         self.btn_play.apply_accent(mc, self.theme)
         self.btn_play.ensure_glow()
         
-        slider_style = f"QSlider::groove:horizontal {{ background: #333; height: 5px; border-radius: 2px; }} QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }} QSlider::sub-page:horizontal {{ background: {mc}; }}"
+        slider_style = (
+            f"QSlider::groove:horizontal {{ background: transparent; height: 5px; border-radius: 2px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {mc}; height: 5px; border-radius: 2px; }}"
+            f"QSlider::add-page:horizontal {{ background: #333; height: 5px; border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}"
+        )
         self.vol_slider.setStyleSheet(slider_style)
         self.seek_bar.set_master_color(mc)
 
@@ -748,8 +753,8 @@ class VisualsMixin:
         icon_path = resource_path(vol_img)
         if os.path.exists(icon_path):
 
-            pix = self.get_colored_pixmap(icon_path, v_color, 24)
-            self.vol_icon_label.setPixmap(pix)
+            from player.widgets import tint_icon as _ti
+            self.vol_icon_label.setIcon(_ti(vol_img, v_color))
 
     def toggle_mute(self):
         if not self.is_muted: self.last_volume = self.vol_slider.value(); self.vol_slider.setValue(0)
