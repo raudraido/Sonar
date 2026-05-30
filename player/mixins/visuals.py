@@ -432,7 +432,7 @@ class VisualsMixin:
                 border-radius: 5px;
                 margin-right: 4px;
             }}
-            QTabBar::tab:selected {{ color: {mc}; background: transparent; }}
+            QTabBar::tab:selected {{ color: {mc}; background: transparent; border: none; }}
             QTabBar::tab:hover {{ color: {_fc1}; background: {_hov}; border-radius: 5px; }}
         """
         toggle_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
@@ -516,6 +516,11 @@ class VisualsMixin:
                 self.tab_bar.setIconSize(QSize(16, 16))
                 self.tab_bar.set_master_color(mc)
                 self.tab_bar.set_active_hover(resolve_active_hover(self.theme))
+                try:
+                    _r, _g, _b = (int(x) for x in self.theme.header_panel_bg.split(','))
+                    self.tab_bar.set_bg_color(QColor(_r, _g, _b))
+                except Exception:
+                    pass
                 icon_map = {
                     'home_tab':           'img/home.png',
                     '_now_playing_panel': 'img/now_playing.png',

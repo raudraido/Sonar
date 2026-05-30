@@ -11,8 +11,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QStyledItemDelegate, QColorDialog, QMenu,
     QStyle, QCheckBox, QToolTip, QGraphicsColorizeEffect, QLineEdit,
     QGraphicsOpacityEffect, QTabWidget, QTabBar, QStackedWidget,
-    QStylePainter, QStyleOptionTab,
-    QListWidgetItem, QSizePolicy,
+    QStylePainter, QStyleOptionTab, QProxyStyle, QListWidgetItem, QSizePolicy,
     QProgressBar, QDialog, QMessageBox, QComboBox, QApplication, QSplitter
 )
 from PyQt6.QtCore import (
@@ -68,6 +67,14 @@ from left_panel import LeftPanel
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
 
 
+class _NoBaseStyle(QProxyStyle):
+    """Proxy style that suppresses the PE_FrameTabBarBase baseline."""
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QStyle.PrimitiveElement.PE_FrameTabBarBase:
+            return
+        super().drawPrimitive(element, option, painter, widget)
+
+
 class _TabBar(QTabBar):
     """QTabBar that skips CE_TabBarBase so no gray baseline is drawn."""
 
@@ -75,8 +82,10 @@ class _TabBar(QTabBar):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._overlays: dict = {}   # {tab_index: QLabel}
+        self._overlays:     dict  = {}   # {tab_index: QLabel}
+        self._stored_icons: dict  = {}   # {tab_index: QIcon} — cleared from bar in icon-only mode
         self._active_hover: QColor = QColor(204, 204, 204, 45)
+        self._bg_color:     QColor = QColor(14, 14, 14)
 
     def set_master_color(self, color: str):
         self._accent = color
@@ -85,6 +94,19 @@ class _TabBar(QTabBar):
     def set_active_hover(self, color: QColor):
         self._active_hover = color
         self.update()
+
+    def set_bg_color(self, color: QColor):
+        self._bg_color = color
+        self.update()
+
+    def _on_icons_tab_moved(self, from_idx: int, to_idx: int):
+        """Keep _stored_icons indices in sync when tabs are reordered."""
+        if not self._stored_icons:
+            return
+        icons = [self._stored_icons.get(i) for i in range(self.count())]
+        icon = icons.pop(from_idx)
+        icons.insert(to_idx, icon)
+        self._stored_icons = {i: ic for i, ic in enumerate(icons) if ic is not None}
 
     def tabSizeHint(self, index: int):
         hint = super().tabSizeHint(index)
@@ -97,8 +119,8 @@ class _TabBar(QTabBar):
         from PyQt6.QtWidgets import QLabel as _QL
         active: set = set()
         sz = self.iconSize()
-        for i in range(self.count()):
-            if not self.tabText(i) and not self.tabIcon(i).isNull():
+        for i, icon in self._stored_icons.items():
+            if not self.tabText(i):
                 active.add(i)
                 if i not in self._overlays:
                     lbl = _QL(self)
@@ -106,15 +128,12 @@ class _TabBar(QTabBar):
                     lbl.setStyleSheet('background: transparent;')
                     self._overlays[i] = lbl
                 lbl = self._overlays[i]
-                r  = self.tabRect(i)
-                # tabRect.width() includes the CSS margin-right: 4px gap;
-                # subtract it so we centre within the visible tab only.
+                r        = self.tabRect(i)
                 visual_w = r.width() - 4
-                x  = r.x() + (visual_w - sz.width())  // 2
-                y  = r.y() + (r.height() - sz.height()) // 2
+                x = r.x() + (visual_w - sz.width())  // 2
+                y = r.y() + (r.height() - sz.height()) // 2
                 lbl.setGeometry(x, y, sz.width(), sz.height())
-                lbl.setPixmap(self.tabIcon(i).pixmap(sz))
-
+                lbl.setPixmap(icon.pixmap(sz))
                 lbl.show()
                 lbl.raise_()
         for i, lbl in self._overlays.items():
@@ -122,38 +141,32 @@ class _TabBar(QTabBar):
                 lbl.hide()
 
     def paintEvent(self, event):
-        painter = QStylePainter(self)
-        opt = QStyleOptionTab()
-        for i in range(self.count()):
-            self.initStyleOption(opt, i)
-            is_selected = (i == self.currentIndex())
-            icon_only   = not opt.text and not opt.icon.isNull()
+        # Let Qt handle all tabs including drag — no duplication
+        super().paintEvent(event)
 
-            if is_selected:
-                # Strip Qt's selection/hover so we draw our own accent halo
-                opt.state &= ~(QStyle.StateFlag.State_Selected |
-                               QStyle.StateFlag.State_MouseOver)
-
-            if icon_only:
+        sel = self.currentIndex()
+        if sel >= 0 and self.isTabVisible(sel):
+            # Redraw selected tab WITHOUT State_Selected so Fusion skips its
+            # selection indicator (underline), then add our own accent halo.
+            sp = QStylePainter(self)
+            opt = QStyleOptionTab()
+            self.initStyleOption(opt, sel)
+            opt.state &= ~(QStyle.StateFlag.State_Selected |
+                           QStyle.StateFlag.State_MouseOver)
+            if not opt.text and not opt.icon.isNull():
                 opt.icon = QIcon()
-                painter.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
+                sp.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
             else:
-                if is_selected:
-                    painter.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
-                    self.initStyleOption(opt, i)   # restore full state for label
-                    painter.drawControl(QStyle.ControlElement.CE_TabBarTabLabel, opt)
-                else:
-                    painter.drawControl(QStyle.ControlElement.CE_TabBarTab, opt)
+                sp.drawControl(QStyle.ControlElement.CE_TabBarTabShape, opt)
+                self.initStyleOption(opt, sel)
+                sp.drawControl(QStyle.ControlElement.CE_TabBarTabLabel, opt)
 
-            # Active hover halo (theme-controlled, same as track-list keyboard halo)
-            if is_selected:
-                r = self.tabRect(i)
-                painter.save()
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(self._active_hover)
-                painter.drawRoundedRect(r.x(), r.y(), r.width() - 4, r.height(), 6, 6)
-                painter.restore()
+            # Accent halo
+            r = self.tabRect(sel)
+            sp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            sp.setPen(Qt.PenStyle.NoPen)
+            sp.setBrush(self._active_hover)
+            sp.drawRoundedRect(r.x(), r.y(), r.width() - 4, r.height(), 6, 6)
 
         self._sync_overlays()
 
@@ -610,21 +623,32 @@ class SonarPlayer(
             return
         bar = self.tab_bar
 
-        # Measure how wide the bar needs to be with all labels showing
+        # Measure natural width with all labels + icons restored
         bar.setIconSize(QSize(16, 16))
         for i in range(bar.count()):
             label = bar.tabData(i)
             if label:
                 bar.setTabText(i, label)
+                if i in bar._stored_icons:
+                    bar.setTabIcon(i, bar._stored_icons[i])
 
         needed = bar.sizeHint().width()
         icon_only = needed > self.main_header.width()
 
-        bar.setIconSize(QSize(20, 20) if icon_only else QSize(16, 16))
-        for i in range(bar.count()):
-            label = bar.tabData(i)
-            if label:
-                bar.setTabText(i, '' if icon_only else label)
+        if icon_only:
+            bar.setIconSize(QSize(20, 20))
+            for i in range(bar.count()):
+                label = bar.tabData(i)
+                if label:
+                    # Store icon and clear it — overlay will draw it centred
+                    icon = bar.tabIcon(i)
+                    if not icon.isNull():
+                        bar._stored_icons[i] = icon
+                    bar.setTabIcon(i, QIcon())
+                    bar.setTabText(i, '')
+        else:
+            bar._stored_icons.clear()
+            bar.setIconSize(QSize(16, 16))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -734,6 +758,8 @@ class SonarPlayer(
         # --- RIGHT PANEL (Tabs & Search) ---
 
         self.tab_bar = _TabBar()
+        self.tab_bar.setStyle(_NoBaseStyle(self.tab_bar.style()))
+        self.tab_bar.tabMoved.connect(self.tab_bar._on_icons_tab_moved)
         self.tab_bar.setObjectName('TabsPanel')
         self.tab_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
