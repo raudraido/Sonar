@@ -657,6 +657,23 @@ class NavigationMixin:
                         enabled=bool(album_id), icon_path='img/album.png')
 
         menu.add_action('Start Radio', lambda: self.start_radio(track), icon_path='img/radio.png')
+
+        track_id  = str(track.get('id', ''))
+        playlists = getattr(getattr(self, 'playlists_browser', None), 'all_playlists', None) or []
+        if track_id:
+            pl_items = [('New Playlist…',
+                         lambda: None,  # TODO: wire up new-playlist dialog
+                         'img/add.png')]
+            pl_items += [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                          lambda _, pid=pl.get('id'): (
+                              getattr(self, 'navidrome_client', None) and
+                              __import__('threading').Thread(
+                                  target=lambda: self.navidrome_client.add_tracks_to_playlist(pid, [track_id]),
+                                  daemon=True).start()),
+                          'img/playlist.png')
+                         for pl in playlists if pl.get('id')]
+            menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
+
         menu.add_action('Get Info',    lambda: self._show_footer_track_info(track), icon_path='img/info.png')
 
         is_fav = bool(track.get('starred'))

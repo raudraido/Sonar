@@ -16,8 +16,9 @@ from player.widgets import ShadowContextMenu as _ShadowContextMenu
 
 
 class _GenrePopup(QFrame):
-    """Genre filter popup styled like the tracks browser ColumnFilterPopup."""
+    """Genre filter popup — same shadow/border style as ShadowContextMenu."""
     selection_changed = pyqtSignal(set)
+    _PAD = 24   # shadow padding
 
     def __init__(self, parent=None):
         super().__init__(parent,
@@ -25,14 +26,15 @@ class _GenrePopup(QFrame):
                          Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.setFixedWidth(240)
+        pad = self._PAD
+        self.setFixedWidth(240 + 2 * pad)
         self._genres: list[str] = []
         self._selected: set[str] = set()
         self._paint_bg = QColor(20, 20, 20)
         self._paint_bc = QColor(42, 42, 42)
 
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(8, 8, 8, 8)
+        lo.setContentsMargins(pad + 8, pad + 8, pad + 8, pad + 8)
         lo.setSpacing(6)
 
         self._search = QLineEdit()
@@ -46,6 +48,7 @@ class _GenrePopup(QFrame):
         self._list.viewport().setMouseTracking(True)
         self._list.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self._list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._list.itemChanged.connect(self._on_item_changed)
         self._list.itemClicked.connect(self._on_item_clicked)
         lo.addWidget(self._list)
@@ -66,7 +69,6 @@ class _GenrePopup(QFrame):
     def apply_theme(self, theme, accent: str, hov: str):
         bg  = getattr(theme, 'main_panel_bg', '20,20,20') if theme else '20,20,20'
         bc  = getattr(theme, 'border_color',  '#2a2a2a') if theme else '#2a2a2a'
-        fg  = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
         fg2 = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
         try:
             self._paint_bg = QColor(*[int(x) for x in bg.split(',')])
@@ -79,15 +81,18 @@ class _GenrePopup(QFrame):
         from player.mixins.visuals import scrollbar_css
         self.setStyleSheet(f"""
             QLineEdit {{
-                background: rgb({bg}); color: {fg}; border: 1px solid {bc};
+                background: rgb({bg}); color: {fg2}; border: 1px solid {bc};
                 border-radius: 4px; padding: 4px 8px; font-size: 13px;
             }}
             QListWidget {{
-                background: transparent; border: none; color: {fg}; font-size: 13px;
+                background: transparent; border: none; color: {fg2}; font-size: 13px;
             }}
             QListWidget::item {{ padding: 3px 6px; border-radius: 3px; }}
             QListWidget::item:hover {{ background: {hov}; }}
-            QListWidget::item:selected {{ background: transparent; color: {fg}; }}
+            QListWidget::item:selected {{ background: transparent; color: {fg2}; }}
+            QListWidget::item:focus {{ background: transparent; outline: none; }}
+            QListWidget::item:selected:active {{ background: transparent; }}
+            QListWidget:focus {{ outline: none; border: none; }}
             QListWidget::indicator {{
                 width: 14px; height: 14px; border-radius: 3px;
                 border: 1px solid {bc}; background: rgb({bg});
@@ -97,7 +102,7 @@ class _GenrePopup(QFrame):
                 image: url("{_checkmark_svg_path(accent)}");
             }}
             QPushButton {{
-                background: transparent; color: {fg}; border: 1px solid {bc};
+                background: transparent; color: {fg2}; border: 1px solid {bc};
                 border-radius: 4px; padding: 4px 12px; font-size: 12px;
             }}
             QPushButton:hover {{ background: {hov}; }}
@@ -113,9 +118,18 @@ class _GenrePopup(QFrame):
         from PyQt6.QtCore import QRectF
         p = _QPainter(self)
         p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        pad = self._PAD
+        content = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
+        BLUR = 22; OY = 8; MAX_A = 45
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(16, 0, -1):
+            t = i / 16; alpha = int(MAX_A * (1 - t) ** 2); ex = BLUR * t
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(content.adjusted(-ex*.7, -ex*.4+OY*(1-t), ex*.7, ex+OY*t),
+                              8 + ex*.2, 8 + ex*.2)
         p.setPen(self._paint_bc)
         p.setBrush(self._paint_bg)
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.drawRoundedRect(content, 8, 8)
         p.end()
 
     def set_genres(self, genres: list[str], selected: set[str]):
@@ -138,11 +152,16 @@ class _GenrePopup(QFrame):
         self._list.blockSignals(False)
 
     def _on_item_clicked(self, item: QListWidgetItem):
-        # Toggle checkbox when clicking anywhere on the row
-        new_state = (Qt.CheckState.Unchecked
-                     if item.checkState() == Qt.CheckState.Checked
-                     else Qt.CheckState.Checked)
-        item.setCheckState(new_state)
+        # Only toggle when clicking the TEXT area — checkbox click already
+        # toggles via itemChanged; toggling here too would reverse it.
+        vp_pos = self._list.viewport().mapFromGlobal(QCursor.pos())
+        item_rect = self._list.visualItemRect(item)
+        # Checkbox occupies roughly the first 22px of the item
+        if vp_pos.x() - item_rect.left() > 22:
+            new_state = (Qt.CheckState.Unchecked
+                         if item.checkState() == Qt.CheckState.Checked
+                         else Qt.CheckState.Checked)
+            item.setCheckState(new_state)
 
     def _on_item_changed(self, item: QListWidgetItem):
         g = item.text()
@@ -706,7 +725,8 @@ class FavoritesView(QWidget):
             self._genre_popup.hide()
             self._genre_btn.setChecked(False)
             return
-        btn_pos = self._genre_btn.mapToGlobal(QPoint(0, self._genre_btn.height() + 4))
+        pad = self._genre_popup._PAD
+        btn_pos = self._genre_btn.mapToGlobal(QPoint(-pad, self._genre_btn.height() + 4 - pad))
         self._genre_popup.move(btn_pos)
         self._genre_popup.show()
         self._genre_popup.raise_()
@@ -906,8 +926,10 @@ class FavoritesView(QWidget):
             self._apply_filters()
 
         playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
-        if playlists and track_id:
-            pl_items = []
+        if track_id:
+            pl_items = [('New Playlist…',
+                         lambda: __import__('threading').Thread(target=lambda: None, daemon=True).start(),
+                         'img/add.png')]
             for pl in playlists:
                 pid = pl.get('id')
                 if not pid: continue
@@ -917,7 +939,7 @@ class FavoritesView(QWidget):
                     c = getattr(main, 'navidrome_client', None)
                     if c: __import__('threading').Thread(
                         target=lambda: c.add_tracks_to_playlist(_pid, [track_id]), daemon=True).start()
-                pl_items.append((lbl, _add))
+                pl_items.append((lbl, _add, 'img/playlist.png'))
             menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
 
         tb = getattr(main, 'tracks_browser', None)

@@ -394,8 +394,10 @@ class ColumnFilterPopup(QFrame):
     ID_FILTER_COLS = {3, 4, 6}
     MAX_ID_FILTER_VALUES = 10
 
+    _SHADOW_PAD = 24   # shadow area around the visible popup
+
     def __init__(self, col, values, active_values, up_icon, down_icon, accent_color="#cccccc", parent=None):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.col = col
         self.active_values = set(active_values) if active_values else set()
@@ -418,16 +420,16 @@ class ColumnFilterPopup(QFrame):
                 background: rgb({_bg}); border: 1px solid {_bc}; border-radius: 6px;
             }}
             QLineEdit {{
-                background: rgb({_bg}); color: {_fg}; border: 1px solid {_bc};
+                background: rgb({_bg}); color: {_fg2}; border: 1px solid {_bc};
                 border-radius: 4px; padding: 4px 8px; font-size: 13px;
             }}
             QLineEdit:focus {{ border: 1px solid {_bc}; }}
             QListWidget {{
-                background: transparent; border: none; color: {_fg}; font-size: 13px;
+                background: transparent; border: none; color: {_fg2}; font-size: 13px;
             }}
             QListWidget::item {{ padding: 3px 6px; border-radius: 3px; }}
             QListWidget::item:hover {{ background: {_hov}; }}
-            QListWidget::item:selected {{ background: {_hov}; color: {_fg}; }}
+            QListWidget::item:selected {{ background: {_hov}; color: {_fg2}; }}
             QListWidget::indicator {{
                 width: 14px; height: 14px; border-radius: 3px;
                 border: 1px solid {_bc}; background: rgb({_bg});
@@ -437,7 +439,7 @@ class ColumnFilterPopup(QFrame):
                 image: url("{_checkmark_svg_path(accent_color)}");
             }}
             QPushButton {{
-                background: transparent; color: {_fg}; border: 1px solid {_bc};
+                background: transparent; color: {_fg2}; border: 1px solid {_bc};
                 border-radius: 4px; padding: 4px 12px; font-size: 12px;
             }}
             QPushButton:hover {{ background: {_hov}; }}
@@ -445,10 +447,11 @@ class ColumnFilterPopup(QFrame):
             QFrame#sort_row:hover {{ background: {_hov}; border-radius: 3px; }}
             {scrollbar_css(accent_color)}
         """)
-        self.setFixedWidth(240)
+        pad = self._SHADOW_PAD
+        self.setFixedWidth(240 + 2 * pad)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(pad + 8, pad + 8, pad + 8, pad + 8)
         layout.setSpacing(4)
 
         icon_size = 14
@@ -487,7 +490,7 @@ class ColumnFilterPopup(QFrame):
                     px = dim
             lbl_icon.setPixmap(px)
             lbl_icon.setFixedSize(icon_size, icon_size)
-            color = (text_color or _fg) if enabled else "#555"
+            color = (text_color or _fg2) if enabled else "#555"
             lbl_text = QLabel(label)
             lbl_text.setStyleSheet(f"color: {color}; font-size: 13px; background: transparent;")
             hl.addWidget(lbl_icon)
@@ -729,13 +732,23 @@ class ColumnFilterPopup(QFrame):
         self.close()
 
     def paintEvent(self, event):
-        from PyQt6.QtGui import QPainter as _P, QColor as _C
+        from PyQt6.QtGui import QPainter as _P
         from PyQt6.QtCore import QRectF
         p = _P(self)
         p.setRenderHint(_P.RenderHint.Antialiasing)
+        pad = self._SHADOW_PAD
+        content = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
+        # Shadow: same style as ShadowContextMenu
+        BLUR = 22; OY = 8; MAX_A = 45
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(16, 0, -1):
+            t = i / 16; alpha = int(MAX_A * (1 - t) ** 2); ex = BLUR * t
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(content.adjusted(-ex*.7, -ex*.4+OY*(1-t), ex*.7, ex+OY*t),
+                              8 + ex*.2, 8 + ex*.2)
         p.setPen(self._paint_bc)
         p.setBrush(self._paint_bg)
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        p.drawRoundedRect(content, 8, 8)
         p.end()
 
 
@@ -3201,7 +3214,8 @@ class TracksBrowser(QWidget):
         popup = ColumnFilterPopup(col, values, active, hdr.up_icon, hdr.down_icon, accent_color=getattr(self, 'current_accent', '#cccccc'), parent=self)
         popup.filters_applied.connect(self._apply_col_filter)
         popup.sort_requested.connect(self._on_sort_from_popup)
-        popup.move(global_rect.topLeft())
+        pad = popup._SHADOW_PAD
+        popup.move(global_rect.left() - pad, global_rect.bottom() - pad)
         popup.show()
         self._active_filter_popup = popup
         popup.destroyed.connect(lambda: setattr(self, '_active_filter_popup', None))
@@ -3734,13 +3748,15 @@ class TracksBrowser(QWidget):
 
         if track_ids:
             playlists = getattr(getattr(main_win, 'playlists_browser', None), 'all_playlists', None) or []
-            pl_items = [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
-                         lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(pid, pn, track_ids))
-                        for pl in playlists if pl.get('id') and pl.get('id') != current_playlist_id]
+            pl_items = [('New Playlist…', lambda: self._add_to_new_playlist(track_ids), 'img/add.png')]
+            pl_items += [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                          lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(pid, pn, track_ids),
+                          'img/playlist.png')
+                         for pl in playlists if pl.get('id') and pl.get('id') != current_playlist_id]
             menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
 
-        # ── Unique: Filter by album/artist ───────────────────────────────────
-        if not is_multi and not getattr(self, 'album_mode_id', None):
+        # ── Unique: Filter by album/artist (not shown in playlist view) ──────
+        if not is_multi and not getattr(self, 'album_mode_id', None) and not getattr(self, 'current_playlist_id', None):
             album_name = first_track.get('album', '')
             album_id   = first_track.get('albumId') or first_track.get('parent')
             primary_artist_id = first_track.get('artist_id') or first_track.get('artistId')

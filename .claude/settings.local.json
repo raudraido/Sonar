@@ -13,7 +13,9 @@
       "PowerShell(git stash push -m \"handle update_color in set_master_color\" -- player/mixins/visuals.py)",
       "PowerShell(git pull)",
       "PowerShell(git stash pop)",
-      "Bash(dir \"C:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\UsersraidoDesktoppsysonic_ref\")"
+      "Bash(dir \"C:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\UsersraidoDesktoppsysonic_ref\")",
+      "Bash(find /home/raudraido/psysonic/src -name \"*GenreFilterBar*\" -o -name \"*genreFilter*\")",
+      "Read(//home/raudraido/psysonic/src/**)"
     ]
   }
 }

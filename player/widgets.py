@@ -1503,8 +1503,23 @@ class ShadowContextMenu(QFrame):
             sub.add_action(lbl, cb, icon_path=ico)
         def _show():
             sub.adjustSize()
-            tr = trigger.mapToGlobal(QPoint(trigger.width(), 0))
-            sub.move(QPoint(tr.x(), trigger.mapToGlobal(QPoint(0, -sub._PAD)).y()))
+            # Natural position: right of trigger, slightly overlapping (-4px like psysonic)
+            tr_right = trigger.mapToGlobal(QPoint(trigger.width(), 0)).x()
+            tr_left  = trigger.mapToGlobal(QPoint(0, 0)).x()
+            x = tr_right                                        # default: right side
+            y = trigger.mapToGlobal(QPoint(0, 0)).y() - 4 - sub._PAD  # -4px overlap
+
+            win = getattr(self, '_win', None)  # main app window stored by exec_at
+            if win:
+                wr  = win.geometry()
+                buf = self._PAD
+                if x + sub.width() > wr.right() + buf:
+                    x = tr_left - sub.width() + sub._PAD  # cancel right shadow gap
+                if y + sub.height() > wr.bottom() + buf:
+                    y = wr.bottom() + buf - sub.height()
+                x = max(x, wr.left() - buf)
+                y = max(y, wr.top()  - buf)
+            sub.move(QPoint(x, y))
             sub.show(); self._poll.start()
         _hs = (f'color: {self._fg2}; font-size: {self._px}px; '
                f'background: {self._hov}; border-radius: 4px;')
@@ -1516,11 +1531,11 @@ class ShadowContextMenu(QFrame):
         trigger.enterEvent = _on_enter; return trigger
 
     def exec_at(self, pos: QPoint, window=None):
+        self._win = window   # store for submenu bounds checking
         self.adjustSize()
         x, y = pos.x(), pos.y()
         if window:
             wr = window.geometry()
-            # Clamp so menu stays inside window bounds (accounting for shadow PAD)
             x = min(x, wr.right()  - self.width()  + self._PAD)
             y = min(y, wr.bottom() - self.height() + self._PAD)
             x = max(x, wr.left()   - self._PAD)
@@ -1544,5 +1559,5 @@ class ShadowContextMenu(QFrame):
             p.setBrush(QColor(0, 0, 0, alpha))
             p.drawRoundedRect(content.adjusted(lx, -ex*.4+OY*(1-t), ex*.7, ex+OY*t),
                               10+ex*.25, 10+ex*.25)
-        p.setPen(Qt.PenStyle.NoPen); p.setBrush(self._bg)
+        p.setPen(self._bc); p.setBrush(self._bg)
         p.drawRoundedRect(content, 10, 10); p.end()

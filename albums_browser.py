@@ -1834,10 +1834,12 @@ class AlbumDetailView(QWidget):
         menu.add_action('Start Radio',  lambda: main.start_radio(track) if hasattr(main, 'start_radio') else None, icon_path='img/radio.png')
 
         playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
-        if playlists and track_id:
-            pl_items = [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
-                         lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(main, pid, pn, [track_id]))
-                        for pl in playlists if pl.get('id')]
+        if track_id:
+            pl_items = [('New Playlist…', lambda: self._add_to_new_playlist(main, [track_id]), 'img/add.png')]
+            pl_items += [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                          lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(main, pid, pn, [track_id]),
+                          'img/playlist.png')
+                         for pl in playlists if pl.get('id')]
             menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
 
         tb = getattr(main, 'tracks_browser', None)
