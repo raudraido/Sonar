@@ -6,11 +6,193 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QHeaderView, QStyle, QPushButton, QCheckBox,
                               QListWidget, QListWidgetItem, QLineEdit, QFrame,
                               QApplication)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint
-from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QRect
+from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter, QCursor
 
 from home import HomeAlbumRowWidget
 from tracks_browser import _checkmark_svg_path
+
+
+class _ShadowContextMenu(QFrame):
+    """Frameless popup — shadow matches psysonic: 0 12px 32px rgba(0,0,0,0.6)."""
+    _PAD = 36   # generous enough for blur+offset without being too heavy
+
+    def __init__(self, parent=None, is_submenu: bool = False):
+        super().__init__(parent,
+                         Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._is_sub = is_submenu
+        self._bg = QColor(20, 20, 20)
+        self._bc = QColor(50, 50, 50)
+        self._fg = '#dddddd'; self._fg2 = '#666666'
+        self._hov = '#333333'; self._px = 14
+        self._callbacks: list = []
+        self._open_sub = None
+        self._sub_trigger = None
+        self._sub_trigger_base = ''
+        self._poll = QTimer(self)
+        self._poll.setInterval(40)
+        self._poll.timeout.connect(self._poll_mouse)
+
+        # Submenu: no left shadow so it doesn't overlap the parent menu rows
+        pl = 4 if is_submenu else self._PAD
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(pl, self._PAD, self._PAD, self._PAD)
+        outer.setSpacing(0)
+        self._lo = QVBoxLayout()
+        self._lo.setContentsMargins(4, 4, 4, 4)
+        self._lo.setSpacing(1)
+        outer.addLayout(self._lo)
+
+    def configure(self, bg_rgb: str, bc: str, fg: str, fg2: str, hov: str, px: int):
+        try:
+            r, g, b = [int(x) for x in bg_rgb.split(',')]
+            self._bg = QColor(r, g, b)
+        except Exception:
+            self._bg = QColor(20, 20, 20)
+        self._bc = QColor(bc)
+        self._fg = fg; self._fg2 = fg2; self._hov = hov; self._px = px
+
+    def _close_open_sub(self):
+        if self._open_sub and self._open_sub.isVisible():
+            self._open_sub.hide()
+        if self._sub_trigger and self._sub_trigger_base:
+            self._sub_trigger.setStyleSheet(self._sub_trigger_base)
+        self._open_sub = None
+        self._sub_trigger = None
+        self._sub_trigger_base = ''
+        self._poll.stop()
+
+    def _poll_mouse(self):
+        """Close submenu when cursor is over neither submenu nor its trigger row."""
+        if not (self._open_sub and self._open_sub.isVisible()):
+            self._poll.stop()
+            return
+        pos = QCursor.pos()
+        if self._open_sub.geometry().contains(pos):
+            return  # cursor inside submenu — keep open
+        if self._sub_trigger:
+            tg = self._sub_trigger.mapToGlobal(QPoint(0, 0))
+            if QRect(tg, self._sub_trigger.size()).contains(pos):
+                return  # cursor still on trigger row — keep open
+        self._close_open_sub()
+
+    def _row(self, text: str, enabled: bool = True, color: str = '') -> QLabel:
+        lbl = QLabel(text)
+        c = color or (self._fg if enabled else self._fg2)
+        base = (f'color: {c}; font-size: {self._px}px; padding: 6px 20px; '
+                f'background: transparent; border-radius: 4px;')
+        hov  = (f'color: {c}; font-size: {self._px}px; padding: 6px 20px; '
+                f'background: {self._hov}; border-radius: 4px;')
+        lbl.setStyleSheet(base)
+        if enabled:
+            lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+            def _enter(_, _l=lbl, _h=hov):
+                self._close_open_sub()
+                _l.setStyleSheet(_h)
+            def _leave(_, _l=lbl, _b=base):
+                _l.setStyleSheet(_b)
+            lbl.enterEvent = _enter
+            lbl.leaveEvent = _leave
+        return lbl
+
+    def add_header(self, text: str):
+        lbl = self._row(text, enabled=False)
+        lbl.setStyleSheet(
+            f'color: {self._fg}; font-size: {self._px}px; font-weight: bold; '
+            f'padding: 6px 12px; background: transparent;')
+        self._lo.addWidget(lbl)
+
+    def add_separator(self):
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f'background: {self._bc.name()}; margin: 3px 8px;')
+        sep.setFixedHeight(1)
+        self._lo.addWidget(sep)
+
+    def add_action(self, text: str, callback=None, enabled: bool = True, color: str = ''):
+        lbl = self._row(text, enabled, color)
+        if enabled and callback:
+            cb = callback
+            self._callbacks.append(cb)
+            def _press(_e, f=cb):
+                f(); self.close()
+            lbl.mousePressEvent = _press
+        self._lo.addWidget(lbl)
+        return lbl
+
+    def add_submenu(self, text: str, items: list):
+        """items = [(label, callback), ...]"""
+        trigger = self._row(f'{text}  ›')
+        self._lo.addWidget(trigger)
+        sub = _ShadowContextMenu(self, is_submenu=True)
+        sub.configure(
+            f'{self._bg.red()},{self._bg.green()},{self._bg.blue()}',
+            self._bc.name(), self._fg, self._fg2, self._hov, self._px)
+        for lbl, cb in items:
+            sub.add_action(lbl, cb)
+
+        def _show():
+            sub.adjustSize()
+            tr = trigger.mapToGlobal(QPoint(trigger.width(), 0))
+            gp = QPoint(tr.x(),
+                        trigger.mapToGlobal(QPoint(0, -sub._PAD)).y())
+            sub.move(gp)
+            sub.show()
+            self._poll.start()
+        _hov_style = (f'color: {self._fg}; font-size: {self._px}px; '
+                      f'padding: 6px 20px; background: {self._hov}; border-radius: 4px;')
+        _base_style = trigger.styleSheet()
+
+        def _on_enter(_):
+            self._close_open_sub()
+            self._open_sub = sub
+            self._sub_trigger = trigger
+            self._sub_trigger_base = _base_style
+            _show()
+            trigger.setStyleSheet(_hov_style)
+        trigger.enterEvent = _on_enter
+        return trigger
+
+    def hideEvent(self, event):
+        self._close_open_sub()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        self._close_open_sub()
+        super().closeEvent(event)
+
+    def exec_at(self, pos: QPoint):
+        self.adjustSize()
+        self.move(pos)
+        self.show()
+
+    def paintEvent(self, _):
+        from PyQt6.QtCore import QRectF
+        p = _QPainter(self)
+        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
+        pad = self._PAD
+        # Shadow: psysonic 0 12px 32px rgba(0,0,0,0.6)
+        # Offset mostly downward — minimal spread on sides/top
+        BLUR = 35; OY = 10; MAX_A = 45
+        pl = 4 if self._is_sub else pad
+        content = QRectF(self.rect()).adjusted(pl, pad, -pad, -pad)
+        p.setPen(Qt.PenStyle.NoPen)
+        steps = 16
+        for i in range(steps, 0, -1):
+            t = i / steps
+            alpha = int(MAX_A * (1 - t) ** 2)
+            ex = BLUR * t
+            left_ex = 0 if self._is_sub else -ex * .7
+            rect = content.adjusted(left_ex,
+                                    -ex * .4 + OY * (1 - t),
+                                     ex * .7,
+                                     ex + OY * t)
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(rect, 10 + ex * .25, 10 + ex * .25)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._bg)
+        p.drawRoundedRect(content, 10, 10)
+        p.end()
 
 
 class _GenrePopup(QFrame):
@@ -514,6 +696,8 @@ class FavoritesView(QWidget):
         self._track_tree.viewport().setAutoFillBackground(False)
         self._track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
+        self._track_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._track_tree.customContextMenuRequested.connect(self._show_context_menu)
 
         self._track_card = _Card()
         _tcl = QVBoxLayout(self._track_card)
@@ -840,6 +1024,95 @@ class FavoritesView(QWidget):
             if col != 1:
                 hdr.resizeSection(col, max(self._COL_MIN.get(col, 30), int(width)))
         hdr.blockSignals(False)
+
+    def _show_context_menu(self, pos):
+        item = self._track_tree.itemAt(pos)
+        if not item:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole) or {}
+        idx  = data.get('_track_idx', -1)
+        songs = getattr(self, '_songs', [])
+        if not (0 <= idx < len(songs)):
+            return
+        track = songs[idx]
+        main  = self.window()
+
+        theme = getattr(main, 'theme', None)
+        bg  = getattr(theme, 'main_panel_bg',       '14,14,14') if theme else '14,14,14'
+        if theme and not getattr(theme, 'auto_border_from_accent', True):
+            bc = getattr(theme, 'manual_border_color', '#2a2a2a')
+        else:
+            bc = getattr(theme, 'border_color', '#2a2a2a') if theme else '#2a2a2a'
+        fg  = getattr(theme, 'font_color_primary',  '#dddddd')  if theme else '#dddddd'
+        fg2 = getattr(theme, 'font_color_secondary','#555555')  if theme else '#555555'
+        px  = getattr(theme, 'font_size_primary',   14)         if theme else 14
+        from player.mixins.visuals import resolve_menu_hover
+        hov = resolve_menu_hover(theme)
+
+        menu = _ShadowContextMenu(self)
+        menu.configure(bg, bc, fg, fg2, hov, px)
+
+        menu.add_action('Play Now',      lambda: self.play_track.emit(track))
+        menu.add_action('Play Next',     lambda: main.play_track_next(track) if hasattr(main, 'play_track_next') else None)
+        menu.add_action('Add to Queue',  lambda: main.add_track_to_queue(track) if hasattr(main, 'add_track_to_queue') else None)
+        menu.add_action('Start Radio',   lambda: main.start_radio(track) if hasattr(main, 'start_radio') else None)
+        menu.add_separator()
+
+        is_fav   = bool(track.get('starred', True))
+        track_id = str(track.get('id', ''))
+
+        def _toggle_fav():
+            client = getattr(main, 'navidrome_client', None)
+            if not client: return
+            new_state = not is_fav
+            __import__('threading').Thread(
+                target=lambda: client.set_favorite(track_id, new_state), daemon=True).start()
+            if not new_state:
+                if hasattr(self, '_songs_original'):
+                    self._songs_original = [s for s in self._songs_original
+                                            if str(s.get('id', '')) != track_id]
+            else:
+                track['starred'] = True
+                for s in getattr(self, '_songs_original', []):
+                    if str(s.get('id', '')) == track_id:
+                        s['starred'] = True
+            self._apply_filters()
+
+        menu.add_action('Unlove (♥)' if is_fav else 'Love (♡)', _toggle_fav)
+        menu.add_separator()
+
+        playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
+        if playlists and track_id:
+            pl_items = []
+            for pl in playlists:
+                pid = pl.get('id')
+                if not pid: continue
+                cnt = pl.get('songCount', '')
+                lbl = f"{pl.get('name','Unnamed')}  ({cnt})" if cnt != '' else pl.get('name','Unnamed')
+                def _add(_, _pid=pid):
+                    c = getattr(main, 'navidrome_client', None)
+                    if c: __import__('threading').Thread(
+                        target=lambda: c.add_tracks_to_playlist(_pid, [track_id]), daemon=True).start()
+                pl_items.append((lbl, _add))
+            menu.add_submenu('Add to Playlist', pl_items)
+            menu.add_separator()
+
+        import re as _re
+        artists = [p.strip() for p in _re.split(
+            r' /// | • | / | feat\. | Feat\. | vs\. ', track.get('artist', '')) if p.strip()]
+        if artists:
+            art_items = [(f'Artist: {a}', lambda _, _a=a: self.artist_clicked.emit(_a))
+                         for a in artists]
+            menu.add_submenu('Go to', art_items)
+            menu.add_separator()
+
+        tb = getattr(main, 'tracks_browser', None)
+        menu.add_action('Get Info',
+                        callback=(lambda: tb._show_track_info(track)) if tb else None,
+                        enabled=bool(tb))
+
+        gp = self._track_tree.viewport().mapToGlobal(pos)
+        menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD))
 
     def _on_track_double_clicked(self, item: QTreeWidgetItem):
         data = item.data(0, Qt.ItemDataRole.UserRole) or {}

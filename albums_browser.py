@@ -1192,6 +1192,7 @@ class AlbumDetailView(QWidget):
     genre_clicked = pyqtSignal(str)
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
+    _album_star_ready = pyqtSignal(bool)
     def __init__(self, client=None):
         super().__init__()
         self.client = client
@@ -1371,6 +1372,7 @@ class AlbumDetailView(QWidget):
         self.track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
         self._tracks: list = []
         self._tracks_ready.connect(self._load_tracks)
+        self._album_star_ready.connect(self.set_header_heart_state)
         self.track_tree.installEventFilter(self)
         self.track_tree.viewport().installEventFilter(self)
         self.track_tree.setMouseTracking(True)
@@ -2159,6 +2161,13 @@ class AlbumDetailView(QWidget):
                     # Instantly draw the UI header with cached math!
                     self._meta_ready.emit(cached_detected, cached_meta)
                     if raw_cached:
+                        # Enrich starred status for initial load
+                        try:
+                            starred_ids = set(self.client.get_starred_ids())
+                            for t in raw_cached:
+                                t['starred'] = str(t.get('id', '')) in starred_ids
+                        except Exception:
+                            pass
                         self._tracks_ready.emit(raw_cached)
                     
                     # ─────────────────────────────────────────────────────────
@@ -2174,20 +2183,32 @@ class AlbumDetailView(QWidget):
                         # 2. Fetch fresh tracks (force_refresh bypasses disk cache)
                         raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
                         if not raw_fresh: return
-                        
+
+                        # 2b. Check album's own starred status from fresh getAlbum response
+                        try:
+                            import requests as _req
+                            _p = self.client._get_auth_params()
+                            _p['id'] = _album_id
+                            _r = _req.get(f"{self.client.base_url}/rest/getAlbum", params=_p, timeout=8)
+                            _ai = _r.json().get('subsonic-response', {}).get('album', {})
+                            self._album_star_ready.emit('starred' in _ai)
+                        except Exception:
+                            pass
+
                         fresh_detected, fresh_meta = compute_meta(raw_fresh)
-                        
+
                         # 3. THE SWAP: update header if summary changed
                         if fresh_meta != cached_meta or fresh_detected != cached_detected:
                             self._meta_ready.emit(fresh_detected, fresh_meta)
 
-                        # 4. If any track's title or artist changed, reload the track list
-                        cached_map = {str(t.get('id')): t for t in (raw_cached or [])}
-                        tracks_changed = any(
-                            cached_map.get(str(t.get('id')), {}).get('title') != t.get('title') or
-                            cached_map.get(str(t.get('id')), {}).get('artist') != t.get('artist')
-                            for t in raw_fresh
-                        )
+                        # 4. Enrich starred status from getStarred so hearts are correct
+                        try:
+                            starred_ids = set(self.client.get_starred_ids())
+                            for t in raw_fresh:
+                                t['starred'] = str(t.get('id', '')) in starred_ids
+                        except Exception:
+                            pass
+
                         self._tracks_ready.emit(raw_fresh)
                             
                     except Exception as e:
