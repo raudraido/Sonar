@@ -1378,3 +1378,171 @@ class SquareArtContainer(QWidget):
             painter.setFont(font)
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "💿")
 
+
+
+# ── Shared shadow context menu ────────────────────────────────────────────────
+
+class ShadowContextMenu(QFrame):
+    """Universal shadow context menu — psysonic style: 0 12px 32px rgba(0,0,0,0.6)."""
+    _PAD = 36
+
+    def __init__(self, parent=None, is_submenu: bool = False):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._is_sub  = is_submenu
+        self._bg      = QColor(20, 20, 20)
+        self._bc      = QColor(50, 50, 50)
+        self._fg      = '#dddddd'
+        self._fg2     = '#666666'
+        self._hov     = '#333333'
+        self._px      = 14
+        self._accent  = '#cccccc'
+        self._callbacks:      list = []
+        self._open_sub        = None
+        self._sub_trigger     = None
+        self._sub_trigger_base = ''
+        self._poll = QTimer(self)
+        self._poll.setInterval(40)
+        self._poll.timeout.connect(self._poll_mouse)
+
+        pl = 4 if is_submenu else self._PAD
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(pl, self._PAD, self._PAD, self._PAD)
+        outer.setSpacing(0)
+        self._lo = QVBoxLayout()
+        self._lo.setContentsMargins(4, 4, 4, 4)
+        self._lo.setSpacing(1)
+        outer.addLayout(self._lo)
+
+    def configure(self, bg_rgb: str, bc: str, fg: str, fg2: str, hov: str,
+                  px: int, accent: str = '#cccccc'):
+        try:
+            r, g, b = [int(x) for x in bg_rgb.split(',')]
+            self._bg = QColor(r, g, b)
+        except Exception:
+            self._bg = QColor(20, 20, 20)
+        self._bc = QColor(bc)
+        self._fg = fg; self._fg2 = fg2; self._hov = hov
+        self._px = px; self._accent = accent
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _close_open_sub(self):
+        if self._open_sub and self._open_sub.isVisible():
+            self._open_sub.hide()
+        if self._sub_trigger and self._sub_trigger_base:
+            self._sub_trigger.setStyleSheet(self._sub_trigger_base)
+        self._open_sub = None; self._sub_trigger = None
+        self._sub_trigger_base = ''; self._poll.stop()
+
+    def _poll_mouse(self):
+        from PyQt6.QtGui import QCursor as _QC
+        if not (self._open_sub and self._open_sub.isVisible()):
+            self._poll.stop(); return
+        pos = _QC.pos()
+        if self._open_sub.geometry().contains(pos): return
+        if self._sub_trigger:
+            tg = self._sub_trigger.mapToGlobal(QPoint(0, 0))
+            if QRect(tg, self._sub_trigger.size()).contains(pos): return
+        self._close_open_sub()
+
+    def _row(self, text: str, enabled: bool = True, color: str = '',
+             icon_path: str = '') -> QWidget:
+        c = color or self._fg2
+        base_ss = (f'color: {c}; font-size: {self._px}px; '
+                   f'background: transparent; border-radius: 4px;')
+        hov_ss  = (f'color: {c}; font-size: {self._px}px; '
+                   f'background: {self._hov}; border-radius: 4px;')
+        row = QWidget()
+        row.setStyleSheet(base_ss)
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        lo = QHBoxLayout(row)
+        lo.setContentsMargins(12, 5, 20, 5)
+        lo.setSpacing(8)
+        if icon_path:
+            _ti = tint_icon  # already in this module
+            ico = QLabel()
+            pix = _ti(icon_path, color if color else self._accent).pixmap(QSize(14, 14))
+            ico.setPixmap(pix); ico.setFixedSize(14, 14)
+            ico.setStyleSheet('background: transparent;')
+            lo.addWidget(ico)
+        else:
+            lo.addSpacing(22)
+        txt = QLabel(text)
+        txt.setStyleSheet(f'color: {c}; font-size: {self._px}px; background: transparent;')
+        lo.addWidget(txt); lo.addStretch()
+        if enabled:
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            def _enter(_, _r=row, _h=hov_ss):
+                self._close_open_sub(); _r.setStyleSheet(_h)
+            def _leave(_, _r=row, _b=base_ss): _r.setStyleSheet(_b)
+            row.enterEvent = _enter; row.leaveEvent = _leave
+        return row
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def add_action(self, text: str, callback=None, enabled: bool = True,
+                   color: str = '', icon_path: str = ''):
+        row = self._row(text, enabled, color, icon_path)
+        if enabled and callback:
+            cb = callback; self._callbacks.append(cb)
+            def _press(_e, f=cb): f(); self.close()
+            row.mousePressEvent = _press
+        self._lo.addWidget(row); return row
+
+    def add_submenu(self, text: str, items: list, icon_path: str = ''):
+        trigger = self._row(f'{text}  ›', icon_path=icon_path)
+        self._lo.addWidget(trigger)
+        sub = ShadowContextMenu(self, is_submenu=True)
+        sub.configure(f'{self._bg.red()},{self._bg.green()},{self._bg.blue()}',
+                      self._bc.name(), self._fg, self._fg2, self._hov, self._px,
+                      accent=self._accent)
+        for entry in items:
+            lbl, cb = entry[0], entry[1]
+            ico = entry[2] if len(entry) > 2 else ""
+            sub.add_action(lbl, cb, icon_path=ico)
+        def _show():
+            sub.adjustSize()
+            tr = trigger.mapToGlobal(QPoint(trigger.width(), 0))
+            sub.move(QPoint(tr.x(), trigger.mapToGlobal(QPoint(0, -sub._PAD)).y()))
+            sub.show(); self._poll.start()
+        _hs = (f'color: {self._fg2}; font-size: {self._px}px; '
+               f'background: {self._hov}; border-radius: 4px;')
+        _bs = trigger.styleSheet()
+        def _on_enter(_):
+            self._close_open_sub(); self._open_sub = sub
+            self._sub_trigger = trigger; self._sub_trigger_base = _bs
+            _show(); trigger.setStyleSheet(_hs)
+        trigger.enterEvent = _on_enter; return trigger
+
+    def exec_at(self, pos: QPoint, window=None):
+        self.adjustSize()
+        x, y = pos.x(), pos.y()
+        if window:
+            wr = window.geometry()
+            # Clamp so menu stays inside window bounds (accounting for shadow PAD)
+            x = min(x, wr.right()  - self.width()  + self._PAD)
+            y = min(y, wr.bottom() - self.height() + self._PAD)
+            x = max(x, wr.left()   - self._PAD)
+            y = max(y, wr.top()    - self._PAD)
+        self.move(QPoint(x, y)); self.show()
+
+    def hideEvent(self, ev): self._close_open_sub(); super().hideEvent(ev)
+    def closeEvent(self, ev): self._close_open_sub(); super().closeEvent(ev)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pad = self._PAD
+        BLUR = 35; OY = 10; MAX_A = 45
+        pl = 4 if self._is_sub else pad
+        content = QRectF(self.rect()).adjusted(pl, pad, -pad, -pad)
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(16, 0, -1):
+            t = i / 16; alpha = int(MAX_A * (1 - t) ** 2); ex = BLUR * t
+            lx = 0 if self._is_sub else -ex * .7
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(content.adjusted(lx, -ex*.4+OY*(1-t), ex*.7, ex+OY*t),
+                              10+ex*.25, 10+ex*.25)
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(self._bg)
+        p.drawRoundedRect(content, 10, 10); p.end()

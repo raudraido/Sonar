@@ -995,104 +995,60 @@ class QueuePanel(QWidget):
         idx   = self._list.row(item)
         data  = item.data(Qt.ItemDataRole.UserRole) or {}
         track = {k: v for k, v in data.items() if not k.startswith('_')}
+        main  = self.window()
 
-        _main = self.window()
-        _theme = getattr(_main, 'theme', None)
-        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14')
-        _bc  = getattr(_theme, 'border_color',        '#2a2a2a')
-        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
-        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
-        _px  = getattr(_theme, 'font_size_primary',   14)
-        _acc = getattr(_theme, 'accent',               '#ffffff')
-        MENU_CSS = (
-            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
-            "  border-radius: 12px; padding: 4px; }"
-            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
-            f"QMenu::item:disabled {{ color: {_fg2}; }}"
-            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
-        )
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(MENU_CSS)
+        from player.widgets import ShadowContextMenu
+        from player.mixins.visuals import resolve_menu_hover
+        _theme = getattr(main, 'theme', None)
+        bg  = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14'
+        bc  = getattr(_theme, 'border_color',          '#2a2a2a') if _theme else '#2a2a2a'
+        fg  = getattr(_theme, 'font_color_primary',    '#dddddd') if _theme else '#dddddd'
+        fg2 = getattr(_theme, 'font_color_secondary',  '#555555') if _theme else '#555555'
+        px  = getattr(_theme, 'font_size_primary',     14)        if _theme else 14
+        acc = getattr(_theme, 'accent',                '#cccccc') if _theme else '#cccccc'
+        if _theme and not getattr(_theme, 'auto_border_from_accent', True):
+            bc = getattr(_theme, 'manual_border_color', '#2a2a2a')
+        hov = resolve_menu_hover(_theme)
 
-        # Play / queue actions
-        act_play  = menu.addAction("Play Now")
-        act_next  = menu.addAction("Play Next")
-        act_radio = menu.addAction("Start Radio")
-        menu.addSeparator()
+        menu = ShadowContextMenu(self)
+        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
 
-        # Favorite
+        track_id   = str(track.get('id', ''))
+        artist     = track.get('artist', '')
+        album_id   = track.get('albumId') or track.get('parent')
+        album_data = {'id': album_id, 'title': track.get('album', ''),
+                      'artist': artist, 'coverArt': track.get('coverArt', '')}
+
+        menu.add_action('Play Now',     lambda: self.play_index.emit(idx),      icon_path='img/sub_play.png')
+        menu.add_action('Play Next',    lambda: self.play_next_index.emit(idx), icon_path='img/sub_next.png')
+        menu.add_action('Go to Artist', lambda: self.artist_clicked.emit(artist) if artist else None,
+                        enabled=bool(artist), icon_path='img/sub_artist.png')
+        menu.add_action('Open Album',   lambda: main.navigate_to_album(album_data) if album_id and main else None,
+                        enabled=bool(album_id and main), icon_path='img/album.png')
+        menu.add_action('Start Radio',  lambda: self.start_radio.emit(track), icon_path='img/radio.png')
+
+        playlists = (main.playlists_browser.all_playlists or []) if main and hasattr(main, 'playlists_browser') else []
+        if playlists and track_id:
+            pl_items = [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                         lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(main, pid, pn, [track_id]))
+                        for pl in playlists if pl.get('id')]
+            menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
+
+        tb = getattr(main, 'tracks_browser', None) if main else None
+        menu.add_action('Get Info', callback=(lambda: tb._show_track_info(track)) if tb else None,
+                        enabled=bool(tb), icon_path='img/info.png')
+
         is_fav_raw = track.get('starred', False)
         is_fav = is_fav_raw.lower() in ('true', '1') if isinstance(is_fav_raw, str) else bool(is_fav_raw)
-        act_fav = menu.addAction("Unlove (♥)" if is_fav else "Love (♡)")
-        menu.addSeparator()
+        menu.add_action('Remove from Favorites' if is_fav else 'Add to Favorites',
+                        lambda: (self.toggle_favorite_at(idx), self.favorite_toggled.emit(idx)),
+                        color='#E91E63',
+                        icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
 
-        # Add to Playlist submenu
-        main = self.window()
-        track_id = str(track.get('id', ''))
-        if track_id and main:
-            add_menu = QMenu("Add to Playlist", menu)
-            add_menu.setWindowFlags(add_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-            add_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-            add_menu.setStyleSheet(MENU_CSS)
-            act_new_pl = QAction("+ New Playlist...", add_menu)
-            act_new_pl.triggered.connect(lambda: self._add_to_new_playlist(main, [track_id]))
-            add_menu.addAction(act_new_pl)
-            playlists = []
-            if hasattr(main, 'playlists_browser'):
-                playlists = main.playlists_browser.all_playlists or []
-            if playlists:
-                add_menu.addSeparator()
-                for pl in playlists:
-                    pl_id = pl.get('id')
-                    if not pl_id:
-                        continue
-                    label = f"{pl.get('name', 'Unnamed')}  ({pl.get('songCount', '')})" if pl.get('songCount', '') != '' else pl.get('name', 'Unnamed')
-                    a = QAction(label, add_menu)
-                    a.triggered.connect(lambda checked=False, pid=pl_id, pn=pl.get('name', ''): self._add_to_existing_playlist(main, pid, pn, [track_id]))
-                    add_menu.addAction(a)
-            menu.addMenu(add_menu)
-            menu.addSeparator()
+        menu.add_action('Remove from Queue', lambda: self.remove_index.emit(idx), icon_path='img/remove.png')
 
-        # Go to submenu
-        goto_menu = menu.addMenu("Go to")
-        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        goto_menu.setStyleSheet(MENU_CSS)
-        album_id = track.get('albumId') or track.get('parent')
-        album_title = track.get('album', 'Unknown')
-        if album_id and main:
-            album_data = {'id': album_id, 'title': album_title, 'artist': track.get('artist'), 'coverArt': track.get('coverArt')}
-            goto_menu.addAction(f"Album: {album_title}").triggered.connect(
-                lambda: main.navigate_to_album(album_data))
-        goto_menu.addSeparator()
-        import re as _re
-        artists = [p.strip() for p in _re.split(
-            r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
-            track.get('artist', '')) if p.strip()]
-        for art in artists:
-            goto_menu.addAction(f"Artist: {art}").triggered.connect(
-                lambda checked=False, a=art: (self.artist_clicked.emit(a)))
-
-        menu.addSeparator()
-        act_info = menu.addAction("Get Info")
-        menu.addSeparator()
-        act_remove = menu.addAction("Remove from Queue")
-
-        # Connect actions
-        act_play.triggered.connect(lambda: self.play_index.emit(idx))
-        act_next.triggered.connect(lambda: self.play_next_index.emit(idx))
-        act_radio.triggered.connect(lambda: self.start_radio.emit(track))
-        act_fav.triggered.connect(lambda: (self.toggle_favorite_at(idx), self.favorite_toggled.emit(idx)))
-        tb = getattr(main, 'tracks_browser', None) if main else None
-        act_info.triggered.connect(lambda: tb and tb._show_track_info(track))
-        if not tb:
-            act_info.setEnabled(False)
-        act_remove.triggered.connect(lambda: self.remove_index.emit(idx))
-
-        menu.exec(self._list.viewport().mapToGlobal(pos))
+        gp = self._list.viewport().mapToGlobal(pos)
+        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=main)
 
     def _add_to_new_playlist(self, main, track_ids):
         client = getattr(main, 'navidrome_client', None)

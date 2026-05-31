@@ -3,7 +3,7 @@ player/mixins/navigation.py — Tab navigation, back/forward history,
 spotlight routing, and footer label click handlers.
 """
 from PyQt6.QtWidgets import QApplication, QAbstractItemView, QPushButton, QListWidget
-from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel
+from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel, QPoint
 
 from player.workers import SyncCheckWorker
 from home import _ArrowButton
@@ -624,96 +624,49 @@ class NavigationMixin:
         if not track:
             return
         import re
-        from PyQt6.QtWidgets import QMenu
-        from PyQt6.QtGui import QAction, QCursor
+        from PyQt6.QtGui import QCursor
+        from player.widgets import ShadowContextMenu
         from player.mixins.visuals import resolve_menu_hover
 
         _t   = getattr(self, 'theme', None)
-        _bg  = getattr(_t, 'main_panel_bg',       '14,14,14')
-        _bc  = getattr(_t, 'border_color',        '#2a2a2a')
-        _fg  = getattr(_t, 'font_color_primary',  '#dddddd')
-        _fg2 = getattr(_t, 'font_color_secondary','#555555')
-        _px  = getattr(_t, 'font_size_primary',   14)
-        MENU_CSS = (
-            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
-            "  border-radius: 12px; padding: 4px; }"
-            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_t)}; color: {_fg}; }}"
-            f"QMenu::item:disabled {{ color: {_fg2}; }}"
-            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
-        )
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(MENU_CSS)
+        bg   = getattr(_t, 'main_panel_bg',        '14,14,14')
+        bc   = getattr(_t, 'border_color',          '#2a2a2a')
+        fg   = getattr(_t, 'font_color_primary',    '#dddddd')
+        fg2  = getattr(_t, 'font_color_secondary',  '#555555')
+        px   = getattr(_t, 'font_size_primary',     14)
+        acc  = getattr(_t, 'accent',                '#cccccc')
+        hov  = resolve_menu_hover(_t)
+        if _t and not getattr(_t, 'auto_border_from_accent', True):
+            bc = getattr(_t, 'manual_border_color', '#2a2a2a')
 
-        menu.addAction("Play Now").triggered.connect(lambda: self.add_and_play_from_browser(track))
+        menu = ShadowContextMenu(self)
+        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
+
         album_id = track.get('albumId') or track.get('parent')
-        if album_id:
-            menu.addAction(f"Play Album: {track.get('album', 'Unknown')}").triggered.connect(
-                lambda: self.play_full_album_by_id(album_id)
-            )
-        menu.addAction("Play Next").triggered.connect(lambda: self.play_track_next(track))
-        menu.addAction("Add to Queue").triggered.connect(lambda: self.add_track_to_queue(track))
-        menu.addAction("Start Radio").triggered.connect(lambda: self.start_radio(track))
-        menu.addSeparator()
+        menu.add_action('Play Now',     lambda: self.add_and_play_from_browser(track), icon_path='img/sub_play.png')
+        menu.add_action('Play Next',    lambda: self.play_track_next(track),            icon_path='img/sub_next.png')
+        menu.add_action('Add to Queue', lambda: self.add_track_to_queue(track),         icon_path='img/queue.png')
+
+        artist = track.get('artist', '')
+        menu.add_action('Go to Artist', lambda: self.navigate_to_artist(artist) if artist else None,
+                        enabled=bool(artist), icon_path='img/sub_artist.png')
+
+        album_data = {'id': album_id, 'title': track.get('album', ''),
+                      'artist': artist, 'coverArt': track.get('coverArt', '')}
+        menu.add_action('Open Album', lambda: self.navigate_to_album(album_data) if album_id else None,
+                        enabled=bool(album_id), icon_path='img/album.png')
+
+        menu.add_action('Start Radio', lambda: self.start_radio(track), icon_path='img/radio.png')
+        menu.add_action('Get Info',    lambda: self._show_footer_track_info(track), icon_path='img/info.png')
 
         is_fav = bool(track.get('starred'))
-        menu.addAction("Unlove (♥)" if is_fav else "Love (♡)").triggered.connect(
-            lambda: self._toggle_now_playing_favorite()
-        )
-        menu.addSeparator()
+        menu.add_action('Remove from Favorites' if is_fav else 'Add to Favorites',
+                        lambda: self._toggle_now_playing_favorite(),
+                        color='#E91E63',
+                        icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
 
-        goto_menu = menu.addMenu("Go to")
-        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        goto_menu.setStyleSheet(MENU_CSS)
-        album_data = {
-            'id': album_id,
-            'title': track.get('album', 'Unknown'),
-            'artist': track.get('artist', ''),
-            'coverArt': track.get('coverArt'),
-        }
-        if album_id:
-            goto_menu.addAction(f"Album: {album_data['title']}").triggered.connect(
-                lambda: self.navigate_to_album(album_data)
-            )
-            goto_menu.addSeparator()
-        artists = [p.strip() for p in re.split(
-            r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
-            track.get('artist', '')
-        ) if p.strip()]
-        for art in artists:
-            goto_menu.addAction(f"Artist: {art}").triggered.connect(
-                lambda checked, a=art: self.navigate_to_artist(a)
-            )
-
-        bpm_cache = getattr(self, 'bpm_cache', {})
-        tid = str(track.get('id', ''))
-        current_bpm = bpm_cache.get(tid) or track.get('bpm') or 0
-        try:
-            current_bpm = float(current_bpm)
-        except (TypeError, ValueError):
-            current_bpm = 0.0
-
-        if current_bpm > 0:
-            def _fmt(v):
-                return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
-            bpm_menu = menu.addMenu("Adjust BPM")
-            bpm_menu.setWindowFlags(bpm_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-            bpm_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-            bpm_menu.setStyleSheet(menu.styleSheet())
-            for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
-                                 ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
-                new_val = current_bpm * mult
-                bpm_menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
-                    lambda checked=False, v=new_val: self._on_footer_bpm_adjusted(v)
-                )
-
-        menu.addSeparator()
-        menu.addAction("Get Info").triggered.connect(lambda: self._show_footer_track_info(track))
-
-        menu.exec(QCursor.pos())
+        gp = QCursor.pos()
+        menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self)
 
     def _show_footer_track_info(self, track):
         from components import TrackInfoDialog

@@ -3682,181 +3682,116 @@ class TracksBrowser(QWidget):
             data = item.data(0, Qt.ItemDataRole.UserRole)
             if data and data.get('type') == 'track': selected_tracks.append(data['data'])
         if not selected_tracks: return
-        
-        count = len(selected_tracks); is_multi = count > 1; first_track = selected_tracks[0]
-        
-        # 🟢 NEW: Collect track IDs for playlist operations
-        track_ids = [str(t.get('id')) for t in selected_tracks if t.get('id')]
-        
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        _theme = getattr(self.window(), 'theme', None)
-        _bc  = getattr(_theme, 'border_color',        '#444444')
-        _bg  = getattr(_theme, 'main_panel_bg',       '20,20,20')
-        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd')
-        _fg2 = getattr(_theme, 'font_color_secondary', '#777777')
-        _px  = getattr(_theme, 'font_size_primary',    14)
-        _acc = getattr(_theme, 'accent',                '#ffffff')
-        menu.setStyleSheet(
-            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px;"
-            f" border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
-            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; }}"
-            f"QMenu::item:disabled {{ color: {_fg2}; }}"
-            f"QMenu::separator {{ height: 1px; background: {_bc}; margin: 4px 8px; }}"
-        )
-        
-        action_play = menu.addAction(f"Play Now ({count})" if is_multi else "Play Now")
-        if not is_multi:
-            album_id = first_track.get('albumId') or first_track.get('parent')
-            if album_id:
-                menu.addAction(f"Play Album: {first_track.get('album', 'Unknown')}").triggered.connect(lambda: self.play_full_album(album_id))
-        
-        action_next = menu.addAction(f"Play Next ({count})" if is_multi else "Play Next")
-        action_queue = menu.addAction(f"Add to Queue ({count})" if is_multi else "Add to Queue")
-        action_radio = menu.addAction("Start Radio") if not is_multi else None
-        menu.addSeparator()
-        action_fav = menu.addAction(f"Toggle Favorite ({count})" if is_multi else ("Unlove (♥)" if first_track.get('starred') else "Love (♡)"))
-        menu.addSeparator()
 
-        # 👇 🟢 NEW: REMOVE FROM PLAYLIST (Only shows if we are inside a playlist!) 👇
+        count = len(selected_tracks); is_multi = count > 1; first_track = selected_tracks[0]
+        track_ids = [str(t.get('id')) for t in selected_tracks if t.get('id')]
+
+        from player.widgets import ShadowContextMenu
+        main_win = self.window()
+        _theme = getattr(main_win, 'theme', None)
+        bg  = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14'
+        bc  = getattr(_theme, 'border_color',          '#2a2a2a') if _theme else '#2a2a2a'
+        fg  = getattr(_theme, 'font_color_primary',    '#dddddd') if _theme else '#dddddd'
+        fg2 = getattr(_theme, 'font_color_secondary',  '#555555') if _theme else '#555555'
+        px  = getattr(_theme, 'font_size_primary',     14)        if _theme else 14
+        acc = getattr(_theme, 'accent',                '#cccccc') if _theme else '#cccccc'
+        if _theme and not getattr(_theme, 'auto_border_from_accent', True):
+            bc = getattr(_theme, 'manual_border_color', '#2a2a2a')
+        hov = resolve_menu_hover(_theme)
+
+        menu = ShadowContextMenu(self)
+        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
+
+        # ── Playback ──────────────────────────────────────────────────────────
+        play_lbl  = f"Play Now ({count})"  if is_multi else "Play Now"
+        next_lbl  = f"Play Next ({count})" if is_multi else "Play Next"
+        queue_lbl = f"Add to Queue ({count})" if is_multi else "Add to Queue"
+
+        if is_multi:
+            menu.add_action(play_lbl,  lambda: self.play_multiple_tracks.emit(selected_tracks), icon_path='img/sub_play.png')
+            menu.add_action(next_lbl,  lambda: [self.play_next.emit(t) for t in reversed(selected_tracks)], icon_path='img/sub_next.png')
+            menu.add_action(queue_lbl, lambda: [self.queue_track.emit(t) for t in selected_tracks], icon_path='img/queue.png')
+        else:
+            menu.add_action(play_lbl,  lambda: self.play_track.emit(first_track),  icon_path='img/sub_play.png')
+            menu.add_action(next_lbl,  lambda: self.play_next.emit(first_track),   icon_path='img/sub_next.png')
+            menu.add_action(queue_lbl, lambda: self.queue_track.emit(first_track), icon_path='img/queue.png')
+            artist = first_track.get('artist', '')
+            album_id = first_track.get('albumId') or first_track.get('parent')
+            album_data = {'id': album_id, 'title': first_track.get('album', ''),
+                          'artist': artist, 'coverArt': first_track.get('coverArt', '')}
+            menu.add_action('Go to Artist', lambda: self.switch_to_artist_tab.emit(artist) if artist else None,
+                            enabled=bool(artist), icon_path='img/sub_artist.png')
+            menu.add_action('Open Album',   lambda: self.switch_to_album_tab.emit(album_data) if album_id else None,
+                            enabled=bool(album_id), icon_path='img/album.png')
+            menu.add_action('Start Radio',  lambda: self.start_radio.emit(first_track), icon_path='img/radio.png')
+
+        # ── Playlist ──────────────────────────────────────────────────────────
         current_playlist_id = getattr(self, 'current_playlist_id', None)
         if current_playlist_id:
-            action_remove = menu.addAction(f"Remove from Playlist ({count})" if is_multi else "Remove from Playlist")
-            action_remove.triggered.connect(lambda: self._remove_selected_from_playlist(selected_items))
-            menu.addSeparator()
-        # 👆 🟢 END NEW 👆
-        
-        # 🟢 NEW: ADD TO PLAYLIST SUBMENU
-        if track_ids:
-            add_menu = QMenu("Add to Playlist", menu)
-            add_menu.setWindowFlags(add_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-            add_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-            add_menu.setStyleSheet(menu.styleSheet())
-            
-            new_pl_action = QAction("+ New Playlist...", add_menu)
-            new_pl_action.triggered.connect(lambda: self._add_to_new_playlist(track_ids))
-            add_menu.addAction(new_pl_action)
-            
-            # Fetch cached playlists from main window
-            main_win = self.window()
-            playlists = []
-            if hasattr(main_win, 'playlists_browser'):
-                playlists = main_win.playlists_browser.all_playlists or []
-                
-            if playlists:
-                add_menu.addSeparator()
-                
-                # Find out if we are currently looking at a playlist
-                current_playlist_id = getattr(self, 'current_playlist_id', None)
-                
-                for pl in playlists:
-                    pl_id = pl.get('id')
-                    if not pl_id: continue
-                    
-                    # 🟢 Skip the current playlist so they can't add a song to the playlist they are already in!
-                    if pl_id == current_playlist_id:
-                        continue
-                        
-                    pl_name = pl.get('name', 'Unnamed')
-                    pl_count = pl.get('songCount', '')
-                    label_text = f"{pl_name}  ({pl_count})" if pl_count != '' else pl_name
-                    
-                    action = QAction(label_text, add_menu)
-                    action.triggered.connect(
-                        lambda checked, pid=pl_id, pname=pl_name: 
-                            self._add_to_existing_playlist(pid, pname, track_ids)
-                    )
-                    add_menu.addAction(action)
-                    
-            menu.addMenu(add_menu)
-            menu.addSeparator()
-        # 🟢 END NEW
+            menu.add_action(f"Remove from Playlist ({count})" if is_multi else "Remove from Playlist",
+                            lambda: self._remove_selected_from_playlist(selected_items),
+                            icon_path='img/remove.png')
 
+        if track_ids:
+            playlists = getattr(getattr(main_win, 'playlists_browser', None), 'all_playlists', None) or []
+            pl_items = [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                         lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(pid, pn, track_ids))
+                        for pl in playlists if pl.get('id') and pl.get('id') != current_playlist_id]
+            menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
+
+        # ── Unique: Filter by album/artist ───────────────────────────────────
         if not is_multi and not getattr(self, 'album_mode_id', None):
             album_name = first_track.get('album', '')
             album_id   = first_track.get('albumId') or first_track.get('parent')
             primary_artist_id = first_track.get('artist_id') or first_track.get('artistId')
-            artists = [p.strip() for p in re.split(
+            f_artists = [p.strip() for p in re.split(
                 r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )',
                 first_track.get('artist', '')) if p.strip()]
-
-            has_filter_items = bool(album_name and album_id) or bool(artists)
-            if has_filter_items:
-                menu.addSeparator()
+            filter_items = []
             if album_name and album_id:
-                menu.addAction(f"Filter by Album: {album_name}").triggered.connect(
-                    lambda: self._filter_by_album(album_name, album_id)
-                )
-            for i, artist in enumerate(artists):
+                filter_items.append((f"Album: {album_name}",
+                                     lambda _an=album_name, _aid=album_id: self._filter_by_album(_an, _aid),
+                                     'img/album.png'))
+            for i, art in enumerate(f_artists):
                 aid = primary_artist_id if i == 0 else None
-                menu.addAction(f"Filter by Artist: {artist}").triggered.connect(
-                    lambda checked=False, a=artist, aid=aid: self._filter_by_artist(a, aid)
-                )
+                filter_items.append((f"Artist: {art}",
+                                     lambda _a=art, _aid=aid: self._filter_by_artist(_a, _aid),
+                                     'img/sub_artist.png'))
+            if filter_items:
+                menu.add_submenu('Filter by', filter_items, icon_path='img/filter.png')
 
-        goto_menu = menu.addMenu("Go to")
-        goto_menu.setWindowFlags(goto_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        goto_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        goto_menu.setStyleSheet(menu.styleSheet())
-        if is_multi: goto_menu.setEnabled(False)
-        else:
-            album_data = {'id': first_track.get('albumId') or first_track.get('parent'), 'title': first_track.get('album', 'Unknown'), 'artist': first_track.get('artist'), 'coverArt': first_track.get('coverArt')}
-            if album_data['id']: goto_menu.addAction(f"Album: {album_data['title']}").triggered.connect(lambda: self.switch_to_album_tab.emit(album_data))
-            goto_menu.addSeparator()
-            artists = [p.strip() for p in re.split(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )', first_track.get('artist', 'Unknown')) if p.strip()]
-            for art in artists: goto_menu.addAction(f"Artist: {art}").triggered.connect(lambda checked, a=art: self.switch_to_artist_tab.emit(a))
-
+        # ── Unique: Adjust BPM ───────────────────────────────────────────────
         if not is_multi:
-            _win = self.window()
-            _bpm_cache = getattr(_win, 'bpm_cache', {}) if _win else {}
-            _sid = str(first_track.get('id', ''))
-            raw_bpm = _bpm_cache.get(_sid) or first_track.get('bpm') or 0
-            try:
-                current_bpm = float(raw_bpm)
-            except (TypeError, ValueError):
-                current_bpm = 0.0
-
+            _bpm_cache = getattr(main_win, 'bpm_cache', {}) if main_win else {}
+            raw_bpm = _bpm_cache.get(str(first_track.get('id', ''))) or first_track.get('bpm') or 0
+            try: current_bpm = float(raw_bpm)
+            except (TypeError, ValueError): current_bpm = 0.0
             if current_bpm > 0:
-                def _fmt(v):
-                    return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
+                def _fmt(v): return f"{v:.2f}".rstrip('0').rstrip('.') + ' BPM'
+                bpm_items = [(f"{lbl}  |  {_fmt(current_bpm * m)}",
+                              lambda _, v=current_bpm * m: self._apply_bpm(first_track, v))
+                             for lbl, m in [("Half",.5),("2/3",2/3),("3/4",3/4),("4/3",4/3),("3/2",3/2),("Double",2.)]]
+                menu.add_submenu('Adjust BPM', bpm_items, icon_path='img/bpm.png')
 
-                bpm_menu = QMenu("Adjust BPM", menu)
-                bpm_menu.setWindowFlags(bpm_menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-                bpm_menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-                bpm_menu.setStyleSheet(menu.styleSheet())
-                multipliers = [
-                    ("Half",   0.5),
-                    ("2/3",    2/3),
-                    ("3/4",    3/4),
-                    ("4/3",    4/3),
-                    ("3/2",    3/2),
-                    ("Double", 2.0),
-                ]
-                for label, mult in multipliers:
-                    new_val = current_bpm * mult
-                    bpm_menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
-                        lambda checked=False, v=new_val, t=first_track: self._apply_bpm(t, v)
-                    )
-                menu.addMenu(bpm_menu)
+        # ── Get Info / Favorite ───────────────────────────────────────────────
+        if not is_multi:
+            menu.add_action('Get Info', lambda: self._show_track_info(first_track), icon_path='img/info.png')
 
-            menu.addSeparator()
-            action_info = menu.addAction("Get Info")
-            action_info.triggered.connect(lambda: self._show_track_info(first_track))
-
+        is_fav = bool(first_track.get('starred')) if not is_multi else False
+        fav_lbl = (f"Toggle Favorite ({count})" if is_multi
+                   else ('Remove from Favorites' if is_fav else 'Add to Favorites'))
         if is_multi:
-             action_play.triggered.connect(lambda: self.play_multiple_tracks.emit(selected_tracks))
-             action_next.triggered.connect(lambda: [self.play_next.emit(t) for t in reversed(selected_tracks)])
-             action_queue.triggered.connect(lambda: [self.queue_track.emit(t) for t in selected_tracks])
-             action_fav.triggered.connect(lambda: [self.toggle_track_favorite(selected_tracks[i], selected_items[i]) for i in range(len(selected_tracks))])
+            menu.add_action(fav_lbl,
+                            lambda: [self.toggle_track_favorite(selected_tracks[i], selected_items[i]) for i in range(len(selected_tracks))],
+                            color='#E91E63', icon_path='img/heart.png')
         else:
-             action_play.triggered.connect(lambda: self.play_track.emit(first_track))
-             action_next.triggered.connect(lambda: self.play_next.emit(first_track))
-             action_queue.triggered.connect(lambda: self.queue_track.emit(first_track))
-             action_fav.triggered.connect(lambda: self.toggle_track_favorite(first_track, selected_items[0]))
-             if action_radio:
-                 action_radio.triggered.connect(lambda: self.start_radio.emit(first_track))
-        menu.exec(self.tree.mapToGlobal(pos))
+            menu.add_action(fav_lbl,
+                            lambda: self.toggle_track_favorite(first_track, selected_items[0]),
+                            color='#E91E63',
+                            icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
+
+        gp = self.tree.mapToGlobal(pos)
+        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=main_win)
 
     def _apply_bpm(self, track, new_bpm):
         rounded = round(new_bpm, 1)
