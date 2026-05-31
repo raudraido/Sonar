@@ -25,7 +25,7 @@ class _ShadowContextMenu(QFrame):
         self._bg = QColor(20, 20, 20)
         self._bc = QColor(50, 50, 50)
         self._fg = '#dddddd'; self._fg2 = '#666666'
-        self._hov = '#333333'; self._px = 14
+        self._hov = '#333333'; self._px = 14; self._accent = '#cccccc'
         self._callbacks: list = []
         self._open_sub = None
         self._sub_trigger = None
@@ -44,7 +44,8 @@ class _ShadowContextMenu(QFrame):
         self._lo.setSpacing(1)
         outer.addLayout(self._lo)
 
-    def configure(self, bg_rgb: str, bc: str, fg: str, fg2: str, hov: str, px: int):
+    def configure(self, bg_rgb: str, bc: str, fg: str, fg2: str, hov: str, px: int,
+                  accent: str = '#cccccc'):
         try:
             r, g, b = [int(x) for x in bg_rgb.split(',')]
             self._bg = QColor(r, g, b)
@@ -52,6 +53,7 @@ class _ShadowContextMenu(QFrame):
             self._bg = QColor(20, 20, 20)
         self._bc = QColor(bc)
         self._fg = fg; self._fg2 = fg2; self._hov = hov; self._px = px
+        self._accent = accent
 
     def _close_open_sub(self):
         if self._open_sub and self._open_sub.isVisible():
@@ -77,24 +79,49 @@ class _ShadowContextMenu(QFrame):
                 return  # cursor still on trigger row — keep open
         self._close_open_sub()
 
-    def _row(self, text: str, enabled: bool = True, color: str = '') -> QLabel:
-        lbl = QLabel(text)
-        c = color or (self._fg if enabled else self._fg2)
-        base = (f'color: {c}; font-size: {self._px}px; padding: 6px 20px; '
-                f'background: transparent; border-radius: 4px;')
-        hov  = (f'color: {c}; font-size: {self._px}px; padding: 6px 20px; '
-                f'background: {self._hov}; border-radius: 4px;')
-        lbl.setStyleSheet(base)
+    def _row(self, text: str, enabled: bool = True, color: str = '',
+             icon_path: str = '') -> QWidget:
+        from PyQt6.QtWidgets import QHBoxLayout as _HBL
+        from player.widgets import tint_icon as _ti
+        c = color or self._fg2
+        base_ss = (f'color: {c}; font-size: {self._px}px; '
+                   f'background: transparent; border-radius: 4px;')
+        hov_ss  = (f'color: {c}; font-size: {self._px}px; '
+                   f'background: {self._hov}; border-radius: 4px;')
+
+        row = QWidget()
+        row.setStyleSheet(base_ss)
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        lo = _HBL(row)
+        lo.setContentsMargins(12, 5, 20, 5)
+        lo.setSpacing(8)
+
+        if icon_path:
+            ico = QLabel()
+            icon_color = color if color else self._accent
+            pix = _ti(icon_path, icon_color).pixmap(QSize(14, 14))
+            ico.setPixmap(pix)
+            ico.setFixedSize(14, 14)
+            ico.setStyleSheet('background: transparent;')
+            lo.addWidget(ico)
+        else:
+            lo.addSpacing(22)   # align text with icon rows
+
+        txt = QLabel(text)
+        txt.setStyleSheet(f'color: {c}; font-size: {self._px}px; background: transparent;')
+        lo.addWidget(txt)
+        lo.addStretch()
+
         if enabled:
-            lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-            def _enter(_, _l=lbl, _h=hov):
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            def _enter(_, _r=row, _h=hov_ss):
                 self._close_open_sub()
-                _l.setStyleSheet(_h)
-            def _leave(_, _l=lbl, _b=base):
-                _l.setStyleSheet(_b)
-            lbl.enterEvent = _enter
-            lbl.leaveEvent = _leave
-        return lbl
+                _r.setStyleSheet(_h)
+            def _leave(_, _r=row, _b=base_ss):
+                _r.setStyleSheet(_b)
+            row.enterEvent = _enter
+            row.leaveEvent = _leave
+        return row
 
     def add_header(self, text: str):
         lbl = self._row(text, enabled=False)
@@ -109,20 +136,21 @@ class _ShadowContextMenu(QFrame):
         sep.setFixedHeight(1)
         self._lo.addWidget(sep)
 
-    def add_action(self, text: str, callback=None, enabled: bool = True, color: str = ''):
-        lbl = self._row(text, enabled, color)
+    def add_action(self, text: str, callback=None, enabled: bool = True,
+                   color: str = '', icon_path: str = ''):
+        row = self._row(text, enabled, color, icon_path)
         if enabled and callback:
             cb = callback
             self._callbacks.append(cb)
             def _press(_e, f=cb):
                 f(); self.close()
-            lbl.mousePressEvent = _press
-        self._lo.addWidget(lbl)
-        return lbl
+            row.mousePressEvent = _press
+        self._lo.addWidget(row)
+        return row
 
-    def add_submenu(self, text: str, items: list):
+    def add_submenu(self, text: str, items: list, icon_path: str = ''):
         """items = [(label, callback), ...]"""
-        trigger = self._row(f'{text}  ›')
+        trigger = self._row(f'{text}  ›', icon_path=icon_path)
         self._lo.addWidget(trigger)
         sub = _ShadowContextMenu(self, is_submenu=True)
         sub.configure(
@@ -139,8 +167,8 @@ class _ShadowContextMenu(QFrame):
             sub.move(gp)
             sub.show()
             self._poll.start()
-        _hov_style = (f'color: {self._fg}; font-size: {self._px}px; '
-                      f'padding: 6px 20px; background: {self._hov}; border-radius: 4px;')
+        _hov_style = (f'color: {self._fg2}; font-size: {self._px}px; '
+                      f'background: {self._hov}; border-radius: 4px;')
         _base_style = trigger.styleSheet()
 
         def _on_enter(_):
@@ -1050,13 +1078,20 @@ class FavoritesView(QWidget):
         hov = resolve_menu_hover(theme)
 
         menu = _ShadowContextMenu(self)
-        menu.configure(bg, bc, fg, fg2, hov, px)
+        acc = getattr(theme, 'accent', '#cccccc') if theme else '#cccccc'
+        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
 
-        menu.add_action('Play Now',      lambda: self.play_track.emit(track))
-        menu.add_action('Play Next',     lambda: main.play_track_next(track) if hasattr(main, 'play_track_next') else None)
-        menu.add_action('Add to Queue',  lambda: main.add_track_to_queue(track) if hasattr(main, 'add_track_to_queue') else None)
-        menu.add_action('Start Radio',   lambda: main.start_radio(track) if hasattr(main, 'start_radio') else None)
-        menu.add_separator()
+        menu.add_action('Play Now',     lambda: self.play_track.emit(track),     icon_path='img/sub_play.png')
+        menu.add_action('Play Next',    lambda: main.play_track_next(track) if hasattr(main, 'play_track_next') else None,    icon_path='img/sub_next.png')
+        menu.add_action('Add to Queue', lambda: main.add_track_to_queue(track) if hasattr(main, 'add_track_to_queue') else None, icon_path='img/queue.png')
+        _artist = track.get('artist', '')
+        menu.add_action('Go to Artist', lambda: self.artist_clicked.emit(_artist) if _artist else None,
+                        enabled=bool(_artist), icon_path='img/sub_artist.png')
+        _album_data = {'id': track.get('albumId', ''), 'title': track.get('album', ''),
+                       'artist': track.get('artist', ''), 'coverArt': track.get('cover_id', '')}
+        menu.add_action('Open Album', lambda: self.album_clicked.emit(_album_data) if _album_data.get('id') else None,
+                        enabled=bool(track.get('albumId')), icon_path='img/album.png')
+        menu.add_action('Start Radio',   lambda: main.start_radio(track) if hasattr(main, 'start_radio') else None, icon_path='img/radio.png')
 
         is_fav   = bool(track.get('starred', True))
         track_id = str(track.get('id', ''))
@@ -1078,9 +1113,6 @@ class FavoritesView(QWidget):
                         s['starred'] = True
             self._apply_filters()
 
-        menu.add_action('Unlove (♥)' if is_fav else 'Love (♡)', _toggle_fav)
-        menu.add_separator()
-
         playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
         if playlists and track_id:
             pl_items = []
@@ -1094,22 +1126,18 @@ class FavoritesView(QWidget):
                     if c: __import__('threading').Thread(
                         target=lambda: c.add_tracks_to_playlist(_pid, [track_id]), daemon=True).start()
                 pl_items.append((lbl, _add))
-            menu.add_submenu('Add to Playlist', pl_items)
-            menu.add_separator()
-
-        import re as _re
-        artists = [p.strip() for p in _re.split(
-            r' /// | • | / | feat\. | Feat\. | vs\. ', track.get('artist', '')) if p.strip()]
-        if artists:
-            art_items = [(f'Artist: {a}', lambda _, _a=a: self.artist_clicked.emit(_a))
-                         for a in artists]
-            menu.add_submenu('Go to', art_items)
-            menu.add_separator()
+            menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
 
         tb = getattr(main, 'tracks_browser', None)
         menu.add_action('Get Info',
                         callback=(lambda: tb._show_track_info(track)) if tb else None,
-                        enabled=bool(tb))
+                        enabled=bool(tb), icon_path='img/info.png')
+
+        _HEART_COLOR = '#E91E63'
+        fav_label = 'Remove from Favorites' if is_fav else 'Add to Favorites'
+        fav_icon  = 'img/heart_filled.png'  if is_fav else 'img/heart.png'
+        menu.add_action(fav_label, _toggle_fav,
+                        color=_HEART_COLOR, icon_path=fav_icon)
 
         gp = self._track_tree.viewport().mapToGlobal(pos)
         menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD))
