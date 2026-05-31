@@ -929,6 +929,24 @@ class SonarPlayer(
         self.tabs.tabBar().setTabVisible(self.global_album_tab_idx, False) 
         self.tabs.tabBarClicked.connect(self.on_tab_bar_clicked)
 
+        # Easter egg: 7 rapid clicks on the Home tab launches Tetris
+        self._home_click_count = 0
+        self._home_click_timer = QTimer(self)
+        self._home_click_timer.setSingleShot(True)
+        self._home_click_timer.setInterval(600)
+        self._home_click_timer.timeout.connect(lambda: setattr(self, '_home_click_count', 0))
+
+        def _on_tab_clicked_egg(idx):
+            home_idx = self.tabs.indexOf(self.home_tab)
+            if idx == home_idx:
+                self._home_click_count += 1
+                self._home_click_timer.start()
+                if self._home_click_count >= 7:
+                    self._home_click_count = 0
+                    self._home_click_timer.stop()
+                    self._toggle_tetris()
+        self.tabs.tabBarClicked.connect(_on_tab_clicked_egg)
+
         # 8. THE HIDDEN GLOBAL ARTIST TAB!
         from artists_browser import ArtistRichDetailView
         self.global_artist_view = ArtistRichDetailView()
@@ -1398,6 +1416,11 @@ class SonarPlayer(
             )
 
     def _toggle_sidebar_art(self):
+        # Block expand when Tetris is active
+        tetris_active = (getattr(self, '_tetris_widget', None) and
+                         self._tetris_widget.isVisible())
+        if tetris_active and not self._sidebar_art_visible:
+            return  # refuse to expand while playing
         self._sidebar_art_visible = not self._sidebar_art_visible
         target = self._left_panel.width() - 16
         art_lbl = self.now_playing_widget.art_label
@@ -1504,6 +1527,46 @@ class SonarPlayer(
         )
         if hasattr(self, 'tracks_browser') and track_id:
             self.tracks_browser.refresh_track_bpm(track_id, rounded)
+
+    def _toggle_tetris(self):
+        from tetris_easter_egg import TetrisWidget
+        if not hasattr(self, '_tetris_widget'):
+            self._tetris_widget = None
+        if self._tetris_widget and self._tetris_widget.isVisible():
+            self._tetris_widget.hide()
+            return
+        if not self._tetris_widget:
+            self._tetris_widget = TetrisWidget(self._left_panel)
+            self._tetris_widget.closed.connect(self._tetris_widget.hide)
+
+            # Keep tetris filling the panel whenever it resizes
+            class _PanelFilter(_QObject):
+                def eventFilter(self_, obj, ev):
+                    if ev.type() == QEvent.Type.Resize and self._tetris_widget.isVisible():
+                        hh = self._left_panel.header.height()
+                        self._tetris_widget.setGeometry(
+                            0, hh, self._left_panel.width() - 1, self._left_panel.height() - hh)
+                    return False
+            self._tetris_panel_filter = _PanelFilter(self._left_panel)
+            self._left_panel.installEventFilter(self._tetris_panel_filter)
+        lp = self._left_panel
+        # Collapse album art if open
+        if getattr(self, '_sidebar_art_visible', False):
+            self._toggle_sidebar_art()
+        # Apply current theme colors
+        _t = getattr(self, 'theme', None)
+        _bg  = getattr(_t, 'left_panel_bg',  '14,14,14') if _t else '14,14,14'
+        _bc  = getattr(_t, 'border_color',   '#2a2a2a')  if _t else '#2a2a2a'
+        if _t and not getattr(_t, 'auto_border_from_accent', True):
+            _bc = getattr(_t, 'manual_border_color', '#2a2a2a')
+        self._tetris_widget.set_theme(_bg, _bc)
+
+        # Fill left panel below the header (y=62 = header height)
+        hdr_h = lp.header.height()
+        self._tetris_widget.setGeometry(0, hdr_h, lp.width() - 1, lp.height() - hdr_h)
+        self._tetris_widget.raise_()
+        self._tetris_widget.show()
+        self._tetris_widget.setFocus()
 
     def _queue_reordered(self, new_tracks: list, new_current: int):
         clean = [{k: v for k, v in t.items() if not k.startswith('_')} for t in new_tracks]
