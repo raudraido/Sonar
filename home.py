@@ -551,13 +551,20 @@ class HomeAlbumRowWidget(QWidget):
             if icid == cid:
                 item.setIcon(self._make_icon(cid, cw))
 
+    def set_draggable(self, enabled: bool):
+        self._draggable = enabled
+        if not enabled:
+            self._grip.setVisible(False)
+
     def enterEvent(self, event):
-        self._grip_timer.stop()
-        self._grip.setVisible(True)
+        if getattr(self, '_draggable', True):
+            self._grip_timer.stop()
+            self._grip.setVisible(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._grip_timer.start()
+        if getattr(self, '_draggable', True):
+            self._grip_timer.start()
         super().leaveEvent(event)
 
     def _hide_grip_if_outside(self):

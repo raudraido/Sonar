@@ -1555,11 +1555,14 @@ class SonarPlayer(
             self._toggle_sidebar_art()
         # Apply current theme colors
         _t = getattr(self, 'theme', None)
-        _bg  = getattr(_t, 'left_panel_bg',  '14,14,14') if _t else '14,14,14'
-        _bc  = getattr(_t, 'border_color',   '#2a2a2a')  if _t else '#2a2a2a'
+        _bg     = getattr(_t, 'left_panel_bg',        '14,14,14') if _t else '14,14,14'
+        _bc     = getattr(_t, 'border_color',         '#2a2a2a')  if _t else '#2a2a2a'
+        _accent = getattr(_t, 'accent',               '#cccccc')  if _t else '#cccccc'
+        _fg2    = getattr(_t, 'font_color_secondary', '#999999')  if _t else '#999999'
+        _px2    = getattr(_t, 'font_size_secondary',  12)         if _t else 12
         if _t and not getattr(_t, 'auto_border_from_accent', True):
             _bc = getattr(_t, 'manual_border_color', '#2a2a2a')
-        self._tetris_widget.set_theme(_bg, _bc)
+        self._tetris_widget.set_theme(_bg, _bc, _accent, _fg2, _px2)
 
         # Fill left panel below the header (y=62 = header height)
         hdr_h = lp.header.height()

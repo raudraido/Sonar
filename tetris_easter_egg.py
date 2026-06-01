@@ -1,11 +1,10 @@
 """tetris_easter_egg.py — Hidden Tetris easter egg, triggered by 7 Home-tab clicks."""
 import random
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRect
-from PyQt6.QtGui import QPainter, QColor, QFont
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRect, QSize
+from PyQt6.QtGui import QPainter, QColor, QFont, QPixmap
 
 COLS, ROWS = 10, 26
-HUD_H = 36   # fixed px for the bottom score/button bar
 
 SHAPES = {
     'I': [[1,1,1,1]],
@@ -126,10 +125,6 @@ class _Canvas(QWidget):
 class TetrisWidget(QWidget):
     closed = pyqtSignal()
 
-    _BTN = ("QPushButton { background: rgba(255,255,255,0.08); border: none; "
-            "border-radius: 4px; color: #aaa; font-size: 11px; padding: 4px 10px; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.18); color: #fff; }")
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -137,6 +132,12 @@ class TetrisWidget(QWidget):
         self.setObjectName('TetrisWidget')
         self.setStyleSheet('#TetrisWidget { background: #0d0d0d; }')
         self._bg_css = '#0d0d0d'
+        self._accent = '#cccccc'
+        self._fg2    = '#999999'
+        self._px2    = 12
+        self._btn_icons: list = []   # [[QLabel, path], ...]
+        self._btn_text_lbls: list = []
+        self._pause_icon_path = 'img/sub_pause.png'
 
         self._board: list[list] = [[None] * COLS for _ in range(ROWS)]
         self._piece: _Piece | None = None
@@ -144,6 +145,8 @@ class TetrisWidget(QWidget):
         self._score = self._lines = 0
         self._level = 1
         self._game_over = self._paused = False
+        from PyQt6.QtCore import QSettings
+        self._high_score = int(QSettings().value('tetris/high_score', 0))
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -152,29 +155,32 @@ class TetrisWidget(QWidget):
         self._canvas = _Canvas(self)
         root.addWidget(self._canvas, 1)
 
-        # HUD row
-        hud = QWidget(); hud.setFixedHeight(HUD_H)
-        hud.setStyleSheet('background: #111; border-top: 1px solid #222;')
-        hlo = QHBoxLayout(hud)
-        hlo.setContentsMargins(6, 0, 6, 0)
-        hlo.setSpacing(4)
+        # HUD — two rows: score above, buttons below
+        hud = QWidget()
+        self._hud = hud
+        hud.setStyleSheet('background: transparent;')
+        hlo = QVBoxLayout(hud)
+        hlo.setContentsMargins(8, 6, 8, 6)
+        hlo.setSpacing(3)
 
         self._score_lbl = QLabel('Score: 0   Lines: 0   Lv 1')
-        self._score_lbl.setStyleSheet('color: #666; font-size: 11px; background: transparent;')
+        self._score_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._score_lbl.setStyleSheet(
+            f'color: {self._fg2}; font-size: {self._px2}px; background: transparent;')
         hlo.addWidget(self._score_lbl)
-        hlo.addStretch()
 
-        for text, slot in [('⏸ Pause', self._toggle_pause),
-                           ('↺ Restart', self._restart),
-                           ('✕ Close',  lambda: self.closed.emit())]:
-            btn = QPushButton(text)
-            btn.setStyleSheet(self._BTN)
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.clicked.connect(slot)
-            hlo.addWidget(btn)
-            if '⏸' in text:
-                self._pause_btn = btn
+        btn_row = QWidget()
+        btn_row.setStyleSheet('background: transparent;')
+        btn_lo = QHBoxLayout(btn_row)
+        btn_lo.setContentsMargins(0, 0, 0, 0)
+        btn_lo.setSpacing(16)
+        btn_lo.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        pi, pt = self._flat_btn('img/sub_pause.png',    'Pause',   self._toggle_pause,   btn_lo, track=False)
+        self._pause_icon_lbl, self._pause_text_lbl = pi, pt
+        self._flat_btn('img/sub_refresh.png', 'Restart', self._restart,                btn_lo)
+        self._flat_btn('img/sub_close.png', 'Close', lambda: self.closed.emit(),   btn_lo)
+        hlo.addWidget(btn_row)
         root.addWidget(hud)
 
         self._timer = QTimer(self)
@@ -182,17 +188,71 @@ class TetrisWidget(QWidget):
         self._new_piece()
         self._timer.start(self._speed())
 
-    def set_theme(self, bg_rgb: str, border_color: str):
-        """Apply theme colors — bg_rgb like '20,20,20', border_color hex."""
+    def _tint_pix(self, path: str) -> QPixmap:
+        from player import resource_path as _rp
+        pix = QPixmap(_rp(path))
+        if pix.isNull():
+            return pix
+        out = QPixmap(pix.size())
+        out.fill(QColor(0, 0, 0, 0))
+        from PyQt6.QtGui import QPainter as _P
+        p = _P(out)
+        p.setCompositionMode(_P.CompositionMode.CompositionMode_Source)
+        p.fillRect(out.rect(), QColor(self._accent))
+        p.setCompositionMode(_P.CompositionMode.CompositionMode_DestinationIn)
+        p.drawPixmap(0, 0, pix)
+        p.end()
+        return out.scaled(QSize(14, 14), Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+
+    def _flat_btn(self, icon_path: str, text: str, slot, layout, *, track: bool = True):
+        w = QWidget()
+        w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        w.setStyleSheet('background: transparent; border-radius: 4px;')
+        lo = QHBoxLayout(w)
+        lo.setContentsMargins(6, 3, 8, 3)
+        lo.setSpacing(6)
+        ico = QLabel()
+        ico.setFixedSize(14, 14)
+        ico.setPixmap(self._tint_pix(icon_path))
+        ico.setStyleSheet('background: transparent;')
+        txt = QLabel(text)
+        txt.setStyleSheet(
+            f'color: {self._fg2}; font-size: {self._px2}px; background: transparent;')
+        lo.addWidget(ico); lo.addWidget(txt)
+        if track:
+            self._btn_icons.append([ico, icon_path])
+        self._btn_text_lbls.append(txt)
+        def enter(_):
+            w.setStyleSheet('background: rgba(255,255,255,0.07); border-radius: 4px;')
+        def leave(_):
+            w.setStyleSheet('background: transparent; border-radius: 4px;')
+        w.enterEvent = enter
+        w.leaveEvent = leave
+        w.mousePressEvent = lambda e: slot()
+        layout.addWidget(w)
+        return ico, txt
+
+    def set_theme(self, bg_rgb: str, border_color: str, accent: str = '#cccccc',
+                  fg2: str = '#999999', px2: int = 12):
         try:
             r, g, b = [int(x) for x in bg_rgb.split(',')]
             bg = QColor(r, g, b)
         except Exception:
             bg = QColor('#0d0d0d')
+        self._accent = accent; self._fg2 = fg2; self._px2 = px2
         self._bg_css = bg.name()
         self.setStyleSheet(f'#TetrisWidget {{ background: {bg.name()}; }}')
+        self._hud.setStyleSheet(f'background: {bg.name()};')
         self._canvas._bg   = bg
         self._canvas._grid = QColor(border_color)
+        self._score_lbl.setStyleSheet(
+            f'color: {fg2}; font-size: {px2}px; background: transparent;')
+        for entry in self._btn_icons:
+            entry[0].setPixmap(self._tint_pix(entry[1]))
+        self._pause_icon_lbl.setPixmap(self._tint_pix(self._pause_icon_path))
+        for lbl in self._btn_text_lbls:
+            lbl.setStyleSheet(f'color: {fg2}; font-size: {px2}px; background: transparent;')
         self._canvas.update()
 
     # ── game logic ────────────────────────────────────────────────────────
@@ -236,24 +296,41 @@ class TetrisWidget(QWidget):
         self._canvas.update()
 
     def _update_hud(self):
+        if self._score > self._high_score:
+            self._high_score = self._score
+            from PyQt6.QtCore import QSettings
+            QSettings().setValue('tetris/high_score', self._high_score)
         self._score_lbl.setText(
-            f'Score: {self._score}   Lines: {self._lines}   Lv {self._level}')
+            f'Score: {self._score}   Lines: {self._lines}   Lv {self._level}   Best: {self._high_score}')
 
     # ── controls ──────────────────────────────────────────────────────────
 
     def _toggle_pause(self):
         self._paused = not self._paused
-        self._pause_btn.setText('▶ Resume' if self._paused else '⏸ Pause')
+        self._pause_icon_path = 'img/sub_play.png' if self._paused else 'img/sub_pause.png'
+        self._pause_icon_lbl.setPixmap(self._tint_pix(self._pause_icon_path))
+        self._pause_text_lbl.setText('Resume' if self._paused else 'Pause')
         self._canvas.update()
 
     def _restart(self):
         self._board = [[None] * COLS for _ in range(ROWS)]
         self._score = self._lines = 0; self._level = 1
         self._game_over = self._paused = False
-        self._pause_btn.setText('⏸ Pause')
+        self._pause_icon_path = 'img/sub_pause.png'
+        self._pause_icon_lbl.setPixmap(self._tint_pix(self._pause_icon_path))
+        self._pause_text_lbl.setText('Pause')
         self._next = _Piece(); self._new_piece()
         self._timer.start(self._speed())
         self._update_hud(); self._canvas.update()
+
+    def hideEvent(self, ev):
+        super().hideEvent(ev)
+        if not self._game_over and not self._paused:
+            self._paused = True
+            self._pause_icon_path = 'img/sub_play.png'
+            self._pause_icon_lbl.setPixmap(self._tint_pix(self._pause_icon_path))
+            self._pause_text_lbl.setText('Resume')
+            self._canvas.update()
 
     def keyPressEvent(self, e):
         k = e.key()

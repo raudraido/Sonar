@@ -1387,7 +1387,7 @@ class ShadowContextMenu(QFrame):
     _PAD = 36
 
     def __init__(self, parent=None, is_submenu: bool = False):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._is_sub  = is_submenu
         self._bg      = QColor(20, 20, 20)

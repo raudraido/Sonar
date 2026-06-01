@@ -369,6 +369,7 @@ class FavoritesView(QWidget):
         self._artists_row.album_clicked.connect(self._on_artist_card_clicked)
         self._artists_row.delegate.clickable_artist = False
         self._artists_row.delegate.show_play_btn    = False
+        self._artists_row.set_draggable(False)
         self._layout.addWidget(self._artists_row)
 
         # ── Albums row ────────────────────────────────────────────────────
@@ -376,6 +377,7 @@ class FavoritesView(QWidget):
         self._albums_row.album_clicked.connect(self.album_clicked)
         self._albums_row.play_album.connect(self.play_album)
         self._albums_row.artist_clicked.connect(self.artist_clicked)
+        self._albums_row.set_draggable(False)
         self._layout.addWidget(self._albums_row)
 
         # ── Top Artists by Favorites ──────────────────────────────────────
@@ -383,6 +385,7 @@ class FavoritesView(QWidget):
         self._top_row.album_clicked.connect(self._on_top_artist_clicked)
         self._top_row.delegate.clickable_artist = False
         self._top_row.delegate.show_play_btn    = False
+        self._top_row.set_draggable(False)
         self._layout.addWidget(self._top_row)
 
         # ── Favorite Songs header ─────────────────────────────────────────
