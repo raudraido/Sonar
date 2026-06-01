@@ -129,16 +129,13 @@ if __name__ == '__main__':
     
     client = None
     
-    # 2. Try to auto-login silently in the background
+    # 2. Trust saved credentials and open immediately — background ping in test_navidrome_fetch
+    #    validates the connection after the window is shown (avoids blocking startup)
     if url and user and password:
         try:
             client = SubsonicClient(url, user, password)
-            # 🟢 NEW: Actually test if the saved credentials still work!
-            if not client.ping():
-                print("Saved credentials failed or server offline. Falling back to dialog.")
-                client = None # Force the login dialog to open
         except Exception as e:
-            print(f"Auto-login failed: {e}")
+            print(f"Client init failed: {e}")
             client = None
             
     # 3. If auto-login fails (or it's the first time), show the Login Dialog
@@ -187,6 +184,7 @@ if __name__ == '__main__':
                 
     # 4. Launch the main UI using our successfully authenticated client!
     window = SonarPlayer(client)
-    window.show()
+    if not window.isVisible():
+        window.show()
 
     sys.exit(app.exec())

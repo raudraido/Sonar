@@ -1199,6 +1199,15 @@ class AlbumDetailView(QWidget):
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
     _album_star_ready = pyqtSignal(bool)
+    _track_mem_cache: dict = {}   # class-level LRU: album_id → tracks (shared across instances)
+    _TRACK_MEM_MAX = 20
+
+    @classmethod
+    def _mem_cache_put(cls, album_id: str, tracks: list):
+        cls._track_mem_cache[album_id] = tracks
+        if len(cls._track_mem_cache) > cls._TRACK_MEM_MAX:
+            cls._track_mem_cache.pop(next(iter(cls._track_mem_cache)))
+
     def __init__(self, client=None):
         super().__init__()
         self.client = client
@@ -2074,119 +2083,99 @@ class AlbumDetailView(QWidget):
         self.lbl_artist.setText(album_artist)
         self.lbl_meta.setText("Loading...")
         self.track_tree.clear()
-        
-        # 1. TRUTH CHECK FOR COMPILATIONS & META — fetch live from API in background
-        if hasattr(self, 'client') and self.client:
-            import threading, re
-            _album_id = self.current_album_id
-            _album_data = album_data
-            
-            def _fetch_meta():
+        self.track_tree.setFixedHeight(self.track_tree.header().height())
+
+        if not (hasattr(self, 'client') and self.client):
+            return
+
+        import threading, re
+        _album_id = self.current_album_id
+        _album_data = album_data
+
+        # ── Instant pre-load: memory cache → disk cache ───────────────────
+        _pre_loaded = False
+        _pre_tracks = self._track_mem_cache.get(str(_album_id))
+        if _pre_tracks:
+            self._load_tracks(_pre_tracks)
+            _pre_loaded = True
+        else:
+            try:
+                _disk = self.client._disk_cache_get(f"album_tracks_{_album_id}")
+                if _disk:
+                    self._load_tracks(_disk)
+                    self._mem_cache_put(str(_album_id), _disk)
+                    _pre_loaded = True
+            except Exception:
+                pass
+
+        def compute_meta(tracks):
+            if not tracks: return "", "Ready."
+            found_aa = None; artist_counts = {}; total_sec = 0
+            for t in tracks:
+                total_sec += t.get('duration_ms', 0) // 1000
+                aa = t.get('albumArtist') or t.get('album_artist')
+                if aa and not found_aa: found_aa = aa
+                a = t.get('artist', '')
+                if a:
+                    main_a = re.split(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )', a)[0].strip()
+                    artist_counts[main_a] = artist_counts.get(main_a, 0) + 1
+            n = len(tracks)
+            if found_aa: detected = found_aa
+            elif artist_counts:
+                best = max(artist_counts, key=artist_counts.get)
+                detected = best if artist_counts[best] >= (n * 0.4) else "Various Artists"
+            else: detected = album_artist
+            m, s = divmod(total_sec, 60)
+            time_str = f"{m//60} hr {m%60} min" if m >= 60 else f"{m} min {s} sec"
+            year = str(_album_data.get('year', '')).replace('None', '')
+            return detected, " • ".join(p for p in [year, f"{n} songs", time_str] if p)
+
+        def _fetch_fresh():
+            try:
+                # If not pre-loaded, do a stale load first (no network, no starred blocking)
+                cached_meta = ""
+                if not _pre_loaded:
+                    raw_stale = self.client.get_album_tracks(_album_id)
+                    if raw_stale:
+                        detected, cached_meta = compute_meta(raw_stale)
+                        self._meta_ready.emit(detected, cached_meta)
+                        self._tracks_ready.emit(raw_stale)
+                        self._mem_cache_put(str(_album_id), raw_stale)
+
+                # Fresh fetch from server
+                try: self.client._scan_status_cache = None
+                except: pass
+                raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
+                if not raw_fresh: return
+
+                # Album star status
                 try:
-                    import copy
-                    
-                    # Calculate the metadata so we can run it on both Stale and Fresh data!
-                    def compute_meta(tracks):
-                        if not tracks: return "", "Ready."
-                        found_aa = None
-                        artist_counts = {}
-                        total_sec = 0
-                        for t in tracks:
-                            total_sec += t.get('duration_ms', 0) // 1000
-                            aa = t.get('albumArtist') or t.get('album_artist')
-                            if aa and not found_aa: found_aa = aa
-                            a = t.get('artist', '')
-                            if a:
-                                main_a = re.split(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )', a)[0].strip()
-                                artist_counts[main_a] = artist_counts.get(main_a, 0) + 1
-                        
-                        n = len(tracks)
-                        if found_aa: detected = found_aa
-                        elif artist_counts:
-                            best = max(artist_counts, key=artist_counts.get)
-                            detected = best if artist_counts[best] >= (n * 0.4) else "Various Artists"
-                        else: detected = album_artist
+                    import requests as _req
+                    _p = self.client._get_auth_params(); _p['id'] = _album_id
+                    _ai = _req.get(f"{self.client.base_url}/rest/getAlbum",
+                                   params=_p, timeout=8).json() \
+                                  .get('subsonic-response', {}).get('album', {})
+                    self._album_star_ready.emit('starred' in _ai)
+                except Exception: pass
 
-                        m, s = divmod(total_sec, 60)
-                        if m >= 60:
-                            h2, m2 = divmod(m, 60)
-                            time_str = f"{h2} hr {m2} min"
-                        else:
-                            time_str = f"{m} min {s} sec"
-                            
-                        year = str(_album_data.get('year', '')).replace('None', '')
-                        meta_parts = [p for p in [year, f"{n} songs", time_str] if p]
-                        return detected, " • ".join(meta_parts)
+                # Enrich starred — one call for fresh data only
+                try:
+                    starred_ids = set(self.client.get_starred_ids())
+                    for t in raw_fresh:
+                        t['starred'] = str(t.get('id', '')) in starred_ids
+                except Exception: pass
 
-                    # ─────────────────────────────────────────────────────────
-                    # PHASE 1: THE INSTANT "STALE" LOAD
-                    # ─────────────────────────────────────────────────────────
-                    raw_cached = self.client.get_album_tracks(_album_id)
-                    cached_detected, cached_meta = compute_meta(raw_cached)
-                    
-                    # Instantly draw the UI header with cached math!
-                    self._meta_ready.emit(cached_detected, cached_meta)
-                    if raw_cached:
-                        # Enrich starred status for initial load
-                        try:
-                            starred_ids = set(self.client.get_starred_ids())
-                            for t in raw_cached:
-                                t['starred'] = str(t.get('id', '')) in starred_ids
-                        except Exception:
-                            pass
-                        self._tracks_ready.emit(raw_cached)
-                    
-                    # ─────────────────────────────────────────────────────────
-                    # PHASE 2 & 3: BACKGROUND WIPE & SEAMLESS SWAP
-                    # ─────────────────────────────────────────────────────────
-                    try:
-                        # 1. Force scan_status re-fetch so disk cache invalidation works correctly
-                        try: self.client._scan_status_cache = None
-                        except: pass
-                        try: self.client._api_cache.cache.clear()
-                        except: pass
+                fresh_detected, fresh_meta = compute_meta(raw_fresh)
+                if fresh_meta != cached_meta or not _pre_loaded:
+                    self._meta_ready.emit(fresh_detected, fresh_meta)
+                self._tracks_ready.emit(raw_fresh)
+                self._mem_cache_put(str(_album_id), raw_fresh)
 
-                        # 2. Fetch fresh tracks (force_refresh bypasses disk cache)
-                        raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
-                        if not raw_fresh: return
+            except Exception as e:
+                print(f"[AlbumDetailView] fetch error: {e}")
+                self._meta_ready.emit("", "Ready.")
 
-                        # 2b. Check album's own starred status from fresh getAlbum response
-                        try:
-                            import requests as _req
-                            _p = self.client._get_auth_params()
-                            _p['id'] = _album_id
-                            _r = _req.get(f"{self.client.base_url}/rest/getAlbum", params=_p, timeout=8)
-                            _ai = _r.json().get('subsonic-response', {}).get('album', {})
-                            self._album_star_ready.emit('starred' in _ai)
-                        except Exception:
-                            pass
-
-                        fresh_detected, fresh_meta = compute_meta(raw_fresh)
-
-                        # 3. THE SWAP: update header if summary changed
-                        if fresh_meta != cached_meta or fresh_detected != cached_detected:
-                            self._meta_ready.emit(fresh_detected, fresh_meta)
-
-                        # 4. Enrich starred status from getStarred so hearts are correct
-                        try:
-                            starred_ids = set(self.client.get_starred_ids())
-                            for t in raw_fresh:
-                                t['starred'] = str(t.get('id', '')) in starred_ids
-                        except Exception:
-                            pass
-
-                        self._tracks_ready.emit(raw_fresh)
-                            
-                    except Exception as e:
-                        print(f"[AlbumDetailView] Silent background sync failed: {e}")
-
-                except Exception as e:
-                    print(f"[AlbumDetailView] Meta fetch error: {e}")
-                    self._meta_ready.emit("", "Ready.")
-
-
-
-            threading.Thread(target=_fetch_meta, daemon=True).start()
+        threading.Thread(target=_fetch_fresh, daemon=True).start()
             
         is_fav = album_data.get('starred', False) or album_data.get('favorite', False)
         self.set_header_heart_state(is_fav)
@@ -2871,12 +2860,10 @@ class LibraryGridBrowser(QWidget):
         
         # Switch the UI view
         self.stack.setCurrentIndex(1)
-        
+
         # Keep track of the ID for grid operations
         self.current_album_id = album_data.get('id')
-        
-        # Delegate ALL the heavy lifting to the AlbumDetailView!
-        # It already has the perfect math for track lengths, artist counting, and cover fetching.
+
         self.detail_view.load_album(album_data)
 
     def on_shuffle_album_clicked(self):

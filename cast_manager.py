@@ -1278,10 +1278,6 @@ class CastManager:
         self._popup.toggled.connect(self._on_toggle)
         self._popup.volume_changed.connect(self._on_volume_changed)
         self._popup._on_close_cb = self._on_popup_hidden
-        # Pre-warm: force the native window handle to be created now, then hide.
-        self._popup.move(-9999, -9999)
-        self._popup.show()
-        self._popup.hide()
 
         if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
             self._start_scan()

@@ -43,25 +43,6 @@ class PersistenceMixin:
         except Exception as e: print(f"Playlist Save Error: {e}")
 
     def load_playlist(self):
-        try:
-            from PyQt6.QtWidgets import QApplication
-            screen = QApplication.primaryScreen()
-            if screen:
-                available = screen.availableGeometry()
-                saved_w = int(self.settings.value('window_width',  0) or 0)
-                saved_h = int(self.settings.value('window_height', 0) or 0)
-                if saved_w > 0 and saved_h > 0:
-                    w = min(saved_w, available.width())
-                    h = min(saved_h, available.height())
-                    self.resize(w, h)
-                else:
-                    w = self.width()
-                    h = self.height()
-                x = available.x() + (available.width()  - w) // 2
-                y = available.y() + (available.height() - h) // 2
-                self.move(x, y)
-        except Exception as e:
-            print(f"Window size restore error: {e}")
 
 
         try:
@@ -181,48 +162,54 @@ class PersistenceMixin:
 
     def test_navidrome_fetch(self):
         client = self.navidrome_client
-
         if not client:
-            print("[CRITICAL] No Navidrome client provided! The app requires an active connection.")
+            print("[CRITICAL] No Navidrome client provided!")
             return
 
-        print("Initializing UI tabs with Navidrome connection...")
+        class _PingThread(QThread):
+            done = pyqtSignal(bool)
+            def __init__(self, c): super().__init__(); self._c = c
+            def run(self):
+                ok = self._c.ping()
+                if ok and hasattr(self._c, 'warm_artist_name_cache'):
+                    self._c.warm_artist_name_cache()
+                self.done.emit(ok)
 
-        if client.ping():
-            print("Success! Live connected to Navidrome.")
+        self._ping_thread = _PingThread(client)
+        self._ping_thread.done.connect(lambda ok: self._on_connection_result(ok, client))
+        self._ping_thread.start()
 
-            # Warm the artist name→id cache in background so every surface
-            # (footer, now-playing, queue, etc.) can skip phase-1 lookups.
-            if hasattr(client, 'warm_artist_name_cache'):
-                client.warm_artist_name_cache()
+    def _on_connection_result(self, ok: bool, client):
+        if not ok:
+            from PyQt6.QtWidgets import QMessageBox
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Connection Failed")
+            msg.setText("Could not reach the Navidrome server.\nCheck your connection or server status.")
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+            return
 
-            # Store client for lazy initialization of tabs not yet visited
-            self._pending_client = client
-            if not hasattr(self, '_initialized_tabs'):
-                self._initialized_tabs = set()
+        print("Success! Live connected to Navidrome.")
+        self._pending_client = client
+        if not hasattr(self, '_initialized_tabs'):
+            self._initialized_tabs = set()
 
-            # --- 1. HOME TAB (visible on startup — initialize immediately) ---
-            if hasattr(self, 'home_tab') and 'home' not in self._initialized_tabs:
-                self._init_tab_home(client)
+        if hasattr(self, 'home_tab') and 'home' not in self._initialized_tabs:
+            self._init_tab_home(client)
 
-            # --- 2-5: Wire up signals only; data loading deferred until first visit ---
-            if hasattr(self, 'album_browser'):
-                try: self.album_browser.switch_to_artist_tab.disconnect()
-                except: pass
-                self.album_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
+        if hasattr(self, 'album_browser'):
+            try: self.album_browser.switch_to_artist_tab.disconnect()
+            except: pass
+            self.album_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
 
-            if hasattr(self, 'artist_browser'):
-                try: self.artist_browser.switch_to_album_tab.disconnect()
-                except: pass
-                self.artist_browser.switch_to_album_tab.connect(self.navigate_to_album)
+        if hasattr(self, 'artist_browser'):
+            try: self.artist_browser.switch_to_album_tab.disconnect()
+            except: pass
+            self.artist_browser.switch_to_album_tab.connect(self.navigate_to_album)
 
-            # --- 6. SYNC & REFRESH ---
-            self.playlist_cover_worker.client = client
-            if self.playlist_cover_worker.queue and not self.playlist_cover_worker.isRunning():
-                self.playlist_cover_worker.start()
-
-        else:
-            print("[ERROR] Connection to Navidrome failed. Check your server status.")
+        self.playlist_cover_worker.client = client
+        if self.playlist_cover_worker.queue and not self.playlist_cover_worker.isRunning():
+            self.playlist_cover_worker.start()
 
     # --- Per-tab initialization (called lazily on first visit) ---
 
@@ -236,19 +223,13 @@ class PersistenceMixin:
         QTimer.singleShot(1500, self._background_preload_tabs)
 
     def _background_preload_tabs(self):
+        # Tabs initialize lazily on first visit via _ensure_tab_initialized.
+        # Exception: playlists browser must be initialized for "Add to Playlist"
+        # context menus to work regardless of which tab is active.
         client = getattr(self, '_pending_client', None)
-        if not client:
-            return
-        if 'albums' not in self._initialized_tabs:
-            self._init_tab_albums(client)
-        if 'artists' not in self._initialized_tabs:
-            self._init_tab_artists(client)
-        if 'tracks' not in self._initialized_tabs:
-            self._init_tab_tracks(client)
-        if 'playlists' not in self._initialized_tabs:
+        if client and hasattr(self, 'playlists_browser') and 'playlists' not in self._initialized_tabs:
             self._init_tab_playlists(client)
-        # Restore home focus after all background loading fires
-        QTimer.singleShot(2000, self._restore_home_focus_if_active)
+        QTimer.singleShot(0, self._restore_home_focus_if_active)
 
     def _restore_home_focus_if_active(self):
         if hasattr(self, 'home_tab') and self.tabs.currentWidget() is self.home_tab:

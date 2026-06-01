@@ -403,13 +403,29 @@ class SonarPlayer(
 
     def __init__(self, client):
         super().__init__()
+        self.settings = QSettings()
+        self.setWindowTitle(f"Icosahedron {__version__}")
+
+        # Restore saved geometry and dark title bar BEFORE show so the window
+        # appears in the right place and with the right chrome on the first frame
+        _screen = QApplication.primaryScreen()
+        _available = _screen.availableGeometry() if _screen else None
+        _saved_w = int(self.settings.value('window_width',  0) or 0)
+        _saved_h = int(self.settings.value('window_height', 0) or 0)
+        if _available and _saved_w > 0 and _saved_h > 0:
+            w = min(_saved_w, _available.width())
+            h = min(_saved_h, _available.height())
+            self.resize(w, h)
+            self.move(_available.x() + (_available.width()  - w) // 2,
+                      _available.y() + (_available.height() - h) // 2)
+        else:
+            self.resize(1750, 1070)
+
         # Install app-level event filters (keep refs to prevent GC)
         self._tooltip_filter = _TooltipFilter(QApplication.instance())
         QApplication.instance().installEventFilter(self._tooltip_filter)
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
-        self.setWindowTitle(f"Icosahedron {__version__}")
-        self.resize(1750, 1070)  #Screen Size Pixels
         self.setAcceptDrops(True)
         self.last_gapless_time = 0
       
@@ -432,8 +448,6 @@ class SonarPlayer(
         self._shuffle_queue = []
         self.temp_files = []
 
-        self.settings = QSettings()
-        
         self.search_context = {}  
         self.last_tab_index = 0    
 
@@ -487,7 +501,20 @@ class SonarPlayer(
         self.last_volume = 100
 
         self.init_ui()
-        
+
+        # Show after UI is built so the window appears fully formed in one animation
+        try:
+            from player.theme import Theme as _Theme
+            _saved = self.settings.value('theme')
+            _bg = _Theme.from_json(_saved).main_panel_bg if _saved else '14,14,14'
+            _r2, _g2, _b2 = (int(x) for x in _bg.split(','))
+            _is_dark = (_r2 * 299 + _g2 * 587 + _b2 * 114) / 1000 < 128
+        except Exception:
+            _is_dark = True
+        self.enable_dark_title_bar(_is_dark)
+        self._last_title_bar_dark = _is_dark
+        self.show()
+
         self.crossfade_progress = 1.0
         self.blur_thread = None
         self.generic_tooltip = TriangleTooltip(self, show_triangle=False)
@@ -530,11 +557,9 @@ class SonarPlayer(
             print(f"Startup restore error: {e}")
 
         # Continue with standard init
-        self.enable_dark_title_bar()
         self.refresh_ui_styles()
         self.audio_engine.set_volume(self.last_volume)
-        self.load_playlist()
-        self.refresh_ui_styles()
+        QTimer.singleShot(0, self.load_playlist)
 
         QTimer.singleShot(100, self.test_navidrome_fetch)
         QTimer.singleShot(0, self.reposition_nav_buttons)
@@ -542,8 +567,7 @@ class SonarPlayer(
         self.playlist_cover_worker = PlaylistCoverWorker(None)
         self.playlist_cover_worker.cover_downloaded.connect(self.tree.viewport().update)
 
-        # Pre-initialize cast manager so device discovery runs in background at startup
-        QTimer.singleShot(2000, self._init_cast_manager)
+        # Cast manager initialized lazily on first cast button click
         
         # --- Initialize the Spotlight Search Overlay (No DB passed)
         self.spotlight = SpotlightSearch(self, None)

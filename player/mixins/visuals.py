@@ -952,7 +952,14 @@ class VisualsMixin:
     def enable_dark_title_bar(self, is_dark=True):
         if sys.platform == "win32":
             try:
-                import ctypes; hwnd = int(self.winId()); val = ctypes.c_int(1 if is_dark else 0)
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4); ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(val), 4)
-            except: pass
+                import ctypes
+                hwnd = int(self.winId())
+                val  = ctypes.c_int(1 if is_dark else 0)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(val), 4)
+                # Force non-client area repaint so Windows applies the change immediately
+                _SWP = 0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+                ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP)
+            except Exception:
+                pass
        

@@ -349,19 +349,14 @@ class SpotlightSearch(QWidget):
 
     def __init__(self, parent_window, db):
     # Pass None so it becomes a top-level window, store parent_window separately
-        super().__init__(None)
+        super().__init__(None,
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.NoDropShadowWindowHint)
         self.parent_window = parent_window
         self.parent_window.installEventFilter(self)
         self.db = db
         self._stale_workers = []   # strong refs to cancelled-but-still-running workers
-        self.hide()
-
-        # Frameless + always on top at the OS level, same as QQuickWidget
-        self.setWindowFlags(
-            Qt.WindowType.Tool |
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.NoDropShadowWindowHint
-        )
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 

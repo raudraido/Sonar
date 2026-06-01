@@ -868,7 +868,7 @@ class HomeView(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.omni_scroller = MiddleClickScroller(self.scroll)
 
