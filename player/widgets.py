@@ -1098,6 +1098,10 @@ class SettingsWindow(QDialog):
         QApplication.instance().removeEventFilter(self)
         if hasattr(self.parent, 'hide_dim'):
             self.parent.hide_dim()
+        # Re-apply title bar mode: Windows may reset DWM state when a child window closes
+        if hasattr(self.parent, 'enable_dark_title_bar') and hasattr(self.parent, '_last_title_bar_dark') \
+                and self.parent._last_title_bar_dark is not None:
+            self.parent.enable_dark_title_bar(self.parent._last_title_bar_dark)
         super().hideEvent(event)
 
     def eventFilter(self, _, event):
@@ -1199,6 +1203,7 @@ class SettingsWindow(QDialog):
         pal.setColor(QPalette.ColorRole.HighlightedText, text_c)
         QApplication.instance().setPalette(pal)
         self.parent._last_theme_key = None
+        self.parent._last_title_bar_dark = None  # force re-apply after palette change
         self.parent.refresh_ui_styles()
         for i in range(self.parent.tabs.count()):
             tab = self.parent.tabs.widget(i)
