@@ -594,9 +594,8 @@ class FavoritesView(QWidget):
         if hasattr(self, '_track_card'):
             border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
             card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
-            self._track_card._bg = card_bg
-            self._track_card._border = border
-            self._track_card._refresh()
+            self._track_card.set_bg(card_bg)
+            self._track_card.set_border(border)
         if self._scroll_reveal:
             self._scroll_reveal.color = color
         from player.mixins.visuals import resolve_menu_hover

@@ -333,20 +333,39 @@ class _Card(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('_Card')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self._bg     = QColor(self._DEFAULT_BG)
         self._border = QColor(self._DEFAULT_BORDER)
 
     def _refresh(self):
         self.update()
 
-    def set_border(self, border: str):
-        c = QColor(border)
+    @staticmethod
+    def _qc(val) -> QColor:
+        if isinstance(val, QColor):
+            return val
+        s = str(val).strip()
+        if s.startswith('rgba('):
+            try:
+                parts = s[5:-1].split(',')
+                r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                a = int(float(parts[3])) if len(parts) > 3 else 255
+                return QColor(r, g, b, a)
+            except Exception:
+                pass
+        c = QColor(s)
+        return c if c.isValid() else QColor(42, 42, 42)
+
+    def set_border(self, border):
+        c = self._qc(border)
         if c != self._border:
             self._border = c
             self.update()
 
-    def set_bg(self, bg: str):
-        c = QColor(bg)
+    def set_bg(self, bg):
+        c = self._qc(bg)
         if c != self._bg:
             self._bg = c
             self.update()
@@ -354,10 +373,12 @@ class _Card(QWidget):
     def paintEvent(self, _):
         from PyQt6.QtCore import QRectF
         from PyQt6.QtGui import QPen
+        border = self._qc(self._border)
+        bg     = self._qc(self._bg)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(self._border, 1))
-        p.setBrush(self._bg)
+        p.setPen(QPen(border, 1))
+        p.setBrush(bg)
         p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 10, 10)
         p.end()
 
