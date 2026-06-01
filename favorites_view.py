@@ -622,6 +622,9 @@ class FavoritesView(QWidget):
         )
         self._genre_popup.apply_theme(theme, color, hov)
 
+    def set_bg_color(self, c: str):
+        self.setStyleSheet(f'#FavoritesPanel {{ background: rgb({c}); }}')
+
     def refresh(self):
         if not self._client:
             return
