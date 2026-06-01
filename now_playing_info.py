@@ -327,28 +327,39 @@ def _parse_dur(value) -> int:
 # ── Card base widget ──────────────────────────────────────────────────────────
 
 class _Card(QWidget):
-    _STYLE = 'QWidget#_Card {{ background: {bg}; border-radius: 10px; border: 1px solid {border}; }}'
     _DEFAULT_BG     = '#1e1e1e'
     _DEFAULT_BORDER = '#2a2a2a'
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName('_Card')
-        self._bg     = self._DEFAULT_BG
-        self._border = self._DEFAULT_BORDER
-        self._refresh()
+        self._bg     = QColor(self._DEFAULT_BG)
+        self._border = QColor(self._DEFAULT_BORDER)
 
     def _refresh(self):
-        self.setStyleSheet(self._STYLE.format(bg=self._bg, border=self._border))
+        self.update()
 
     def set_border(self, border: str):
-        self._border = border
-        self._refresh()
+        c = QColor(border)
+        if c != self._border:
+            self._border = c
+            self.update()
 
     def set_bg(self, bg: str):
-        self._bg = bg
-        self._refresh()
+        c = QColor(bg)
+        if c != self._bg:
+            self._bg = c
+            self.update()
+
+    def paintEvent(self, _):
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(self._border, 1))
+        p.setBrush(self._bg)
+        p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 10, 10)
+        p.end()
 
 
 # ── Rounded pixmap widget ─────────────────────────────────────────────────────

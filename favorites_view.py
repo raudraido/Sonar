@@ -491,6 +491,7 @@ class FavoritesView(QWidget):
         """)
 
         self._track_delegate = _TrackListDelegate(self._track_tree, heart_col=-1)
+        self._track_delegate.max_genres = 3
         self._playing_movie = QMovie(resource_path('img/playing.gif'))
         self._playing_movie.setScaledSize(QSize(30, 30))
         self._playing_movie.frameChanged.connect(
@@ -573,10 +574,15 @@ class FavoritesView(QWidget):
         bg    = getattr(theme, 'main_panel_bg', '14,14,14') if theme else '14,14,14'
         fc1   = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
         fsize = getattr(theme, 'font_size_primary',   14)        if theme else 14
-        self.scroll.setStyleSheet(
-            f'QScrollArea {{ background: rgb({bg}); border: none; }}'
-            + scrollbar_css(color)
-        )
+        from PyQt6.QtGui import QPalette as _Pal
+        _bg_c = QColor(f'rgb({bg})')
+        _pal = self.scroll.palette()
+        _pal.setColor(_Pal.ColorRole.Window, _bg_c)
+        _pal.setColor(_Pal.ColorRole.Base,   _bg_c)
+        self.scroll.setPalette(_pal)
+        _sb_css = scrollbar_css(color)
+        self.scroll.verticalScrollBar().setStyleSheet(_sb_css)
+        self.scroll.horizontalScrollBar().setStyleSheet(_sb_css)
         self._songs_lbl.setStyleSheet(
             f'color: {fc1}; font-size: {fsize + 1}px; font-weight: bold;'
             ' background: transparent; padding: 8px 6px 4px 6px;'
@@ -588,8 +594,9 @@ class FavoritesView(QWidget):
         if hasattr(self, '_track_card'):
             border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
             card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
-            self._track_card.set_border(border)
-            self._track_card.set_bg(card_bg)
+            self._track_card._bg = card_bg
+            self._track_card._border = border
+            self._track_card._refresh()
         if self._scroll_reveal:
             self._scroll_reveal.color = color
         from player.mixins.visuals import resolve_menu_hover
@@ -621,6 +628,12 @@ class FavoritesView(QWidget):
             return
         if self._worker and self._worker.isRunning():
             return
+        self._selected_artist = ''
+        self._selected_genres = set()
+        self._genre_btn.setChecked(False)
+        self._clear_artist_btn.setVisible(False)
+        if hasattr(self, '_genre_popup') and self._genre_popup._genres:
+            self._genre_popup.set_genres(self._genre_popup._genres, set())
         self._worker = _StarredWorker(self._client)
         self._worker.done.connect(self._on_data)
         self._worker.start()

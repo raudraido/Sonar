@@ -284,13 +284,15 @@ class VisualsMixin:
 
     def refresh_ui_styles(self, scroll_to_current=True):
         _font_name = getattr(self.theme, 'app_font', '')
-        _app = QApplication.instance()
-        if _app:
-            _f = QFont(_font_name if _font_name else 'Segoe UI')
-            _f.setPointSize(10)
-            _f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-            _f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-            _app.setFont(_f)
+        if getattr(self, '_last_app_font', None) != _font_name:
+            self._last_app_font = _font_name
+            _app = QApplication.instance()
+            if _app:
+                _f = QFont(_font_name if _font_name else 'Segoe UI')
+                _f.setPointSize(10)
+                _f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+                _f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+                _app.setFont(_f)
 
         mc = self.theme.accent
         if mc.startswith('#') and len(mc) > 7:
@@ -412,7 +414,13 @@ class VisualsMixin:
                 _w.set_active_hover(_active_hover)
 
         if not getattr(self, '_tab_hook_set', False):
-            self.tabs.currentChanged.connect(lambda: self.tabs.currentWidget().set_accent_color(self.theme.accent) if hasattr(self.tabs.currentWidget(), 'set_accent_color') else None)
+            def _on_tab_changed():
+                w = self.tabs.currentWidget()
+                if w and hasattr(w, 'set_accent_color'):
+                    w.set_accent_color(self.theme.accent)
+                if w and hasattr(w, 'set_bg_color'):
+                    w.set_bg_color(self.theme.main_panel_bg)
+            self.tabs.currentChanged.connect(_on_tab_changed)
             self._tab_hook_set = True
 
         _hov = resolve_menu_hover(self.theme)
@@ -466,42 +474,38 @@ class VisualsMixin:
 
         # 3. DEFER BOTH STYLES! This prevents the 30ms layout freeze!
         def apply_deferred_styles():
-            
+            from PyQt6.QtWidgets import QListWidget
+            current_tab = self.tabs.currentWidget()
             grids_to_save = []
             areas_to_save = []
-            
-            # 1. Capture the scroll positions of ALL grids and scroll areas before the CSS nuke
-            for tab_idx in range(self.tabs.count()):
-                widget = self.tabs.widget(tab_idx)
-                
-                if hasattr(widget, 'grid_view'):
-                    grid = widget.grid_view
-                    grids_to_save.append({
-                        'grid': grid,
-                        'scroll': grid.verticalScrollBar().value()
-                    })
-                    # Disable Batched mode temporarily so max-height calculation is instant & accurate
-                    from PyQt6.QtWidgets import QListWidget
-                    grid.setLayoutMode(QListWidget.LayoutMode.SinglePass)
-                    
-                if hasattr(widget, 'scroll_area'):
-                    area = widget.scroll_area
-                    areas_to_save.append({
-                        'area': area,
-                        'scroll': area.verticalScrollBar().value()
-                    })
 
-            # 2. Apply the CSS (This causes Qt to violently reset all layouts)
+            # Only save/restore scroll on the VISIBLE tab — hidden tabs rebuild lazily
+            widget = current_tab
+            if widget and hasattr(widget, 'grid_view'):
+                grid = widget.grid_view
+                grids_to_save.append({
+                    'grid': grid,
+                    'scroll': grid.verticalScrollBar().value()
+                })
+                grid.setLayoutMode(QListWidget.LayoutMode.SinglePass)
+
+            if widget and hasattr(widget, 'scroll_area'):
+                area = widget.scroll_area
+                areas_to_save.append({
+                    'area': area,
+                    'scroll': area.verticalScrollBar().value()
+                })
+
+            # Apply the CSS (triggers style recalc across all tabs)
             self.tabs.setStyleSheet(tabs_css)
 
-            # 3. Restore all the scrollbars instantly
+            # Rebuild and restore scroll only for the current tab
             for state in grids_to_save:
                 grid = state['grid']
-                grid.doItemsLayout() # Force rebuild right now
+                grid.doItemsLayout()
                 grid.verticalScrollBar().setValue(state['scroll'])
-                from PyQt6.QtWidgets import QListWidget
-                grid.setLayoutMode(QListWidget.LayoutMode.Batched) # Restore performance mode
-                
+                grid.setLayoutMode(QListWidget.LayoutMode.Batched)
+
             for state in areas_to_save:
                 area = state['area']
                 area.verticalScrollBar().setValue(state['scroll'])
@@ -572,8 +576,12 @@ class VisualsMixin:
                 f'border-right: {bw}px solid {bc}; border-radius: 0px; }}'
             )
         bg = self.theme.main_panel_bg
+        _visible_tab = self.tabs.currentWidget()
         for _i in range(self.tabs.count()):
             _w = self.tabs.widget(_i)
+            if _w is not _visible_tab and hasattr(_w, 'set_bg_color'):
+                # Defer hidden tabs — they'll pick up bg on next show via set_accent_color
+                continue
             if hasattr(_w, 'set_bg_color'):
                 _w.set_bg_color(bg)
             elif _w is not None and _w.objectName() == 'VisContainer':
@@ -602,10 +610,9 @@ class VisualsMixin:
                 _bb.setStyleSheet(
                     f'#QueueBottomBar {{ background: transparent; border-top: {bw}px solid {bc}; }}'
                 )
-        if hasattr(self, '_main_panel'):
-            self._main_panel.setStyleSheet(
-                f'#MainPanel {{ background: transparent; border: none; }}'
-            )
+        if hasattr(self, '_main_panel') and not getattr(self, '_main_panel_ss_set', False):
+            self._main_panel.setStyleSheet('#MainPanel { background: transparent; border: none; }')
+            self._main_panel_ss_set = True
         if hasattr(self, '_favorites_tab') and hasattr(self._favorites_tab, 'set_accent_color'):
             self._favorites_tab.set_accent_color(mc)
         _tab_bg = f'rgb({self.theme.main_panel_bg})'
@@ -618,7 +625,6 @@ class VisualsMixin:
                 f' font-size: {_fsize}px; letter-spacing: 1px; }}'
             )
 
-              
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, apply_deferred_styles)
 
@@ -642,8 +648,8 @@ class VisualsMixin:
             self._queue_tree_panel.set_accent_color(mc)
 
         if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
-            self.swin.refresh_theme()
-
+            _swin = self.swin
+            QTimer.singleShot(0, _swin.refresh_theme)
         pass  # Tooltip styling handled by _TooltipFilter in window.py
 
     def refresh_visuals(self):

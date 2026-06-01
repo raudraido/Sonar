@@ -969,6 +969,7 @@ class _TrackListDelegate(QStyledItemDelegate):
         self._heart_filled_pix = QPixmap()
         self._heart_empty_pix  = QPixmap()
         self._kbd_row = -1
+        self.max_genres = -1   # -1 = no limit
 
     def set_font_size(self, size: int):
         self.font_size = size
@@ -1147,7 +1148,12 @@ class _TrackListDelegate(QStyledItemDelegate):
                 row = index.row()
                 painter.save()
                 painter.setFont(f)
+                genre_count = 0
                 for part, is_sep in _split_genres(genre_text):
+                    if self.max_genres > 0 and genre_count >= self.max_genres:
+                        break
+                    if not is_sep:
+                        genre_count += 1
                     pw = fm.horizontalAdvance(part)
                     available = right_edge - ax
                     if ax >= right_edge:
@@ -1837,7 +1843,7 @@ class AlbumDetailView(QWidget):
         if track_id:
             pl_items = [('New Playlist…', lambda: self._add_to_new_playlist(main, [track_id]), 'img/add.png')]
             pl_items += [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
-                          lambda _, pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(main, pid, pn, [track_id]),
+                          lambda pid=pl.get('id'), pn=pl.get('name',''): self._add_to_existing_playlist(main, pid, pn, [track_id]),
                           'img/playlist.png')
                          for pl in playlists if pl.get('id')]
             menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
@@ -1849,7 +1855,7 @@ class AlbumDetailView(QWidget):
         raw_star = track.get('starred', False)
         is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
         menu.add_action('Remove from Favorites' if is_fav else 'Add to Favorites',
-                        lambda: self._toggle_track_fav(item),
+                        lambda i=idx: self._toggle_track_fav(self.track_tree.topLevelItem(i)),
                         color='#E91E63',
                         icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
 
