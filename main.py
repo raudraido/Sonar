@@ -21,8 +21,22 @@ elif platform.system() == "Linux":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # Use XWayland so Qt stylesheets apply to tooltips
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, qInstallMessageHandler, QtMsgType
 from PyQt6.QtGui import QIcon, QFont, QFontDatabase, QSurfaceFormat
+
+_FONT_NOISE = (
+    'DirectWrite: CreateFontFaceFromHDC',
+    'OpenType support missing',
+    'Fixedsys',
+)
+
+def _qt_msg_handler(msg_type, _ctx, message):
+    if any(s in message for s in _FONT_NOISE):
+        return
+    if msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg):
+        print(f'Qt: {message}', file=sys.stderr)
+
+qInstallMessageHandler(_qt_msg_handler)
 
 from subsonic_client import SubsonicClient
 from login_dialog import LoginDialog
