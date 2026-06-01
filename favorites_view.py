@@ -574,12 +574,6 @@ class FavoritesView(QWidget):
         bg    = getattr(theme, 'main_panel_bg', '14,14,14') if theme else '14,14,14'
         fc1   = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
         fsize = getattr(theme, 'font_size_primary',   14)        if theme else 14
-        from PyQt6.QtGui import QPalette as _Pal
-        _bg_c = QColor(f'rgb({bg})')
-        _pal = self.scroll.palette()
-        _pal.setColor(_Pal.ColorRole.Window, _bg_c)
-        _pal.setColor(_Pal.ColorRole.Base,   _bg_c)
-        self.scroll.setPalette(_pal)
         _sb_css = scrollbar_css(color)
         self.scroll.verticalScrollBar().setStyleSheet(_sb_css)
         self.scroll.horizontalScrollBar().setStyleSheet(_sb_css)
@@ -623,7 +617,11 @@ class FavoritesView(QWidget):
         self._genre_popup.apply_theme(theme, color, hov)
 
     def set_bg_color(self, c: str):
-        self.setStyleSheet(f'#FavoritesPanel {{ background: rgb({c}); }}')
+        self.setStyleSheet(
+            f'#FavoritesPanel {{ background: rgb({c}); }}'
+            f' #FavScroll {{ background: rgb({c}); border: none; }}'
+            f' #FavContent  {{ background: rgb({c}); }}'
+        )
 
     def refresh(self):
         if not self._client:
