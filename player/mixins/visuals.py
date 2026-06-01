@@ -418,8 +418,6 @@ class VisualsMixin:
                 w = self.tabs.currentWidget()
                 if w and hasattr(w, 'set_accent_color'):
                     w.set_accent_color(self.theme.accent)
-                if w and hasattr(w, 'set_bg_color'):
-                    w.set_bg_color(self.theme.main_panel_bg)
             self.tabs.currentChanged.connect(_on_tab_changed)
             self._tab_hook_set = True
 
@@ -576,12 +574,8 @@ class VisualsMixin:
                 f'border-right: {bw}px solid {bc}; border-radius: 0px; }}'
             )
         bg = self.theme.main_panel_bg
-        _visible_tab = self.tabs.currentWidget()
         for _i in range(self.tabs.count()):
             _w = self.tabs.widget(_i)
-            if _w is not _visible_tab and hasattr(_w, 'set_bg_color'):
-                # Defer hidden tabs — they'll pick up bg on next show via set_accent_color
-                continue
             if hasattr(_w, 'set_bg_color'):
                 _w.set_bg_color(bg)
             elif _w is not None and _w.objectName() == 'VisContainer':
