@@ -2069,10 +2069,11 @@ class AlbumDetailView(QWidget):
         self.current_album_id = album_data.get('id')
         title = album_data.get('title') or album_data.get('name') or "Unknown Album"
         album_artist = album_data.get('albumArtist') or album_data.get('album_artist') or album_data.get('artist') or "Unknown Artist"
-        
+
         self.lbl_title.setText(title)
         self.lbl_artist.setText(album_artist)
         self.lbl_meta.setText("Loading...")
+        self.track_tree.clear()
         
         # 1. TRUTH CHECK FOR COMPILATIONS & META — fetch live from API in background
         if hasattr(self, 'client') and self.client:
