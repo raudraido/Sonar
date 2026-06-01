@@ -430,4 +430,7 @@ class PersistenceMixin:
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        if hasattr(self, 'swin') and self.swin and self.swin.isVisible():
+            self.swin.close()
+            self.hide_dim()
 
