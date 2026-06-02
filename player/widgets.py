@@ -1178,7 +1178,7 @@ class SettingsWindow(QDialog):
             self.parent._auto_tint_bg_colors()
         self.parent.refresh_ui_styles()
         self._apply_menu_hover_palette()
-        if hasattr(self.parent, 'visualizer'):
+        if getattr(self.parent, 'visualizer', None):
             self.parent.visualizer.bar_color = QColor(t.accent)
         if hasattr(self.parent, '_queue_panel'):
             self.parent._queue_panel.set_accent_color(t.accent)

@@ -162,7 +162,7 @@ class VisualsMixin:
         self.theme.accent = dominant_color
         self._auto_tint_bg_colors()
         if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
-        if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(self.theme.accent)
+        if getattr(self, 'visualizer', None): self.visualizer.bar_color = QColor(self.theme.accent)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
         self.now_playing_widget.set_accent_color(self.theme.accent)
         if 0 <= self.current_index < len(self.playlist_data):
@@ -374,7 +374,7 @@ class VisualsMixin:
             
         self._last_theme_key = theme_key
 
-        if hasattr(self, 'visualizer'): self.visualizer.bar_color = QColor(mc)
+        if getattr(self, 'visualizer', None): self.visualizer.bar_color = QColor(mc)
         if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
@@ -580,7 +580,7 @@ class VisualsMixin:
                 _w.set_bg_color(bg)
             elif _w is not None and _w.objectName() == 'VisContainer':
                 _w.setStyleSheet(f'#VisContainer {{ background: rgb({bg}); }}')
-                if hasattr(self, 'visualizer'):
+                if getattr(self, 'visualizer', None):
                     self.visualizer.set_bg_color(bg)
                 if hasattr(self, '_coming_soon_lbl'):
                     self._coming_soon_lbl.setStyleSheet(

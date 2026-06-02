@@ -31,7 +31,7 @@ class PersistenceMixin:
             self.settings.setValue('saved_position', str(self.seek_bar.position_ms))
             self.settings.setValue('theme', self.theme.to_json())
             self.settings.setValue('waveform_mode', self.seek_bar.display_mode)
-            if hasattr(self, 'visualizer'):
+            if getattr(self, 'visualizer', None):
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
             

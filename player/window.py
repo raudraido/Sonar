@@ -701,7 +701,7 @@ class SonarPlayer(
             vis_active = not minimized and on_vis_tab
             if hasattr(self, 'audio_engine'):
                 self.audio_engine.set_visualizer_active(vis_active)
-            if hasattr(self, 'visualizer'):
+            if getattr(self, 'visualizer', None):
                 self.visualizer.visualizer_enabled = vis_active
 
             if hasattr(self, 'smooth_timer'):
@@ -923,8 +923,8 @@ class SonarPlayer(
         _mb_lo.addStretch()
         self.tabs.addTab(self._mix_builder_tab, "Mix Builder")
 
-        # 9. Visualizer
-        self.visualizer = AudioVisualizer(self.audio_engine)
+        # 9. Visualizer — created lazily on first visit to save ~50–80 MB at startup
+        self.visualizer = None
         _vis_container = QWidget()
         _vis_container.setObjectName('VisContainer')
         _vis_lo = QVBoxLayout(_vis_container)
@@ -937,15 +937,26 @@ class SonarPlayer(
             "font-size: 11px; letter-spacing: 1px; padding: 10px 0 0 0;"
         )
         _vis_lo.addWidget(self._coming_soon_lbl)
-        _vis_lo.addWidget(self.visualizer, 1)
         self._vis_container = _vis_container
+        self._vis_lo = _vis_lo
         self.tabs.addTab(_vis_container, "Visualizer")
         self._vis_tab_idx = self.tabs.count() - 1
 
         def _on_vis_tab_changed(idx):
             is_vis = (self.tabs.widget(idx) is self._vis_container)
-            self.audio_engine.set_visualizer_active(is_vis)
-            self.visualizer.visualizer_enabled = is_vis
+            if is_vis and self.visualizer is None:
+                # First visit — create the visualizer now
+                self.visualizer = AudioVisualizer(self.audio_engine)
+                self._vis_lo.addWidget(self.visualizer, 1)
+                saved_vis = self.settings.value('vis_mode')
+                if saved_vis:
+                    self.visualizer.vis_mode = saved_vis
+                if hasattr(self, 'theme'):
+                    self.visualizer.bar_color = QColor(self.theme.accent)
+                    self.visualizer.set_bg_color(self.theme.main_panel_bg)
+            if self.visualizer:
+                self.audio_engine.set_visualizer_active(is_vis)
+                self.visualizer.visualizer_enabled = is_vis
         self.tabs.currentChanged.connect(_on_vis_tab_changed)
 
         # 8. THE HIDDEN GLOBAL ALBUM TAB!
@@ -1216,7 +1227,7 @@ class SonarPlayer(
             self.seek_bar.render_timer.stop()
 
         saved_vis = int(self.settings.value('vis_mode', 0))
-        if saved_vis and hasattr(self, 'visualizer'):
+        if saved_vis and getattr(self, 'visualizer', None):
             self.visualizer.vis_mode = saved_vis
         
         self.total_time_label = QLabel("0:00")

@@ -1289,7 +1289,7 @@ class NowPlayingInfoTab(QWidget):
         t_lbl.setWordWrap(True)
         t_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         t_lbl.setStyleSheet(
-            f'color: {self._fg}; font-size: {self._font_size_primary + 15}px; font-weight: bold; background: transparent; margin: 0; padding: 0;'
+            f'color: {self._accent}; font-size: {self._font_size_primary + 15}px; font-weight: bold; background: transparent; margin: 0; padding: 0;'
         )
         right_lo.addWidget(t_lbl)
 

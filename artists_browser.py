@@ -2311,7 +2311,7 @@ class ArtistRichDetailView(QWidget):
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
         sk_color  = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
         if hasattr(self, 'lbl_name'):
-            self.lbl_name.setStyleSheet(f"font-weight: 900; color: {pri_color}; font-size: 48px;")
+            self.lbl_name.setStyleSheet(f"font-weight: 900; color: {color}; font-size: 48px;")
         if hasattr(self, 'lbl_about_header'):
             self.lbl_about_header.setStyleSheet(f"color: {pri_color}; font-size: 20px; font-weight: bold;")
         if hasattr(self, 'lbl_top_tracks'):
