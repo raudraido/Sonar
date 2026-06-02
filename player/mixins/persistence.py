@@ -296,18 +296,19 @@ class PersistenceMixin:
         if not hasattr(self, '_initialized_tabs'):
             self._initialized_tabs = set()
 
+        # Defer init one frame so the tab switch renders before heavy work starts
         if widget is getattr(self, 'album_browser', None) and 'albums' not in self._initialized_tabs:
-            print("[LazyInit] Albums tab")
-            self._init_tab_albums(client)
+            self._initialized_tabs.add('albums')  # reserve to prevent double-init
+            QTimer.singleShot(0, lambda: self._init_tab_albums(client))
         elif widget is getattr(self, 'artist_browser', None) and 'artists' not in self._initialized_tabs:
-            print("[LazyInit] Artists tab")
-            self._init_tab_artists(client)
+            self._initialized_tabs.add('artists')
+            QTimer.singleShot(0, lambda: self._init_tab_artists(client))
         elif widget is getattr(self, 'tracks_browser', None) and 'tracks' not in self._initialized_tabs:
-            print("[LazyInit] Tracks tab")
-            self._init_tab_tracks(client)
+            self._initialized_tabs.add('tracks')
+            QTimer.singleShot(0, lambda: self._init_tab_tracks(client))
         elif widget is getattr(self, 'playlists_browser', None) and 'playlists' not in self._initialized_tabs:
-            print("[LazyInit] Playlists tab")
-            self._init_tab_playlists(client)
+            self._initialized_tabs.add('playlists')
+            QTimer.singleShot(0, lambda: self._init_tab_playlists(client))
    
     def _safe_discard_worker(self, worker):
         """Parks workers in a graveyard so they don't crash the app on disposal."""
