@@ -264,6 +264,13 @@ class PersistenceMixin:
             self.artist_browser.cover_worker.start()
         else:
             self.artist_browser.cover_worker.client = client
+        # Restore cached count+chunk so first visit is instant (same as albums)
+        _sort = getattr(self.artist_browser, 'current_sort', 'alphabetical')
+        _cached_count = client.stale_cache_get('artists_count')
+        _cached_chunk = client.stale_cache_get(f'artists_chunk_0_{_sort}')
+        if _cached_count and isinstance(_cached_count, int) and _cached_count > 0:
+            self.artist_browser.true_server_count = _cached_count
+        self.artist_browser._pending_cached_chunk = _cached_chunk or None
         if hasattr(self.artist_browser, 'load_artists_page'):
             self.artist_browser.load_artists_page(reset=True)
         try: self.artist_browser.switch_to_album_tab.disconnect()

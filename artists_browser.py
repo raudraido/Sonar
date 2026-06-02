@@ -3579,6 +3579,9 @@ class ArtistGridBrowser(QWidget):
             pending = getattr(self, '_pending_cached_chunk', None)
             if pending:
                 self.loaded_chunks.add(0)
+                if not hasattr(self, 'active_chunk_workers'):
+                    self.active_chunk_workers = {}
+                self.active_chunk_workers[0] = None  # satisfy is_expected check in _on_chunk_loaded
             placeholders = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(total_count)]
             self.artist_model.append_artists(placeholders)
             if pending:
@@ -3674,12 +3677,6 @@ class ArtistGridBrowser(QWidget):
             _sort = getattr(self, 'current_sort', 'alphabetical')
             cached_count = client.stale_cache_get('artists_count')
             cached_chunk = client.stale_cache_get(f'artists_chunk_0_{_sort}')
-            if cached_count and isinstance(cached_count, int) and cached_count > 0:
-                self.true_server_count = cached_count
-                self._stale_count_set = True
-            else:
-                self.true_server_count = 0
-                self._stale_count_set = False
             self._pending_cached_chunk = cached_chunk or None
             self.refresh_grid()
 
@@ -3690,10 +3687,8 @@ class ArtistGridBrowser(QWidget):
         self._live_artists_cache = None
         self._live_artists_randomized = False
         
-        # 2. Clear the server count unless stale cache provided it
-        if not getattr(self, '_stale_count_set', False):
-            self.true_server_count = 0
-        self._stale_count_set = False
+        # 2. Clear the server count so it always fetches fresh
+        self.true_server_count = 0
         
         # 3. Brutally wipe the API cache for artists
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):
