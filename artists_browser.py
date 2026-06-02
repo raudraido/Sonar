@@ -3392,48 +3392,35 @@ class ArtistGridBrowser(QWidget):
     def on_sort_changed(self):
         self.load_artists_page(reset=True)
     
+    def _sort_icon_path(self, sort_type, is_ascending):
+        if sort_type == 'albums_count':
+            return 'img/album.png'
+        return f"img/sort-{sort_type}-{'a' if is_ascending else 'd'}.png"
+
     def show_sort_menu(self):
         """Show dropdown menu with sort options when burger is clicked"""
+        from player.widgets import ShadowContextMenu
+        from player.mixins.visuals import resolve_menu_hover
         _theme = getattr(self.window(), 'theme', None)
-        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
-        _bc = getattr(_theme, 'border_color',       '#333333')
-        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px = getattr(_theme, 'font_size_primary',  14)
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background-color: rgb({_bg});
-                border: 1px solid {_bc};
-                border-radius: 12px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                background-color: transparent;
-                color: {_fg};
-                font-size: {_px}px;
-                padding: 8px 12px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: rgba(255,255,255,0.08);
-                color: {_fg};
-            }}
-            QMenu::icon {{
-                padding-left: 4px;
-            }}
-        """)
+        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14') if _theme else '14,14,14'
+        _bc  = getattr(_theme, 'border_color',         '#2a2a2a') if _theme else '#2a2a2a'
+        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd'
+        _fg2 = getattr(_theme, 'font_color_secondary', '#555555') if _theme else '#555555'
+        _px  = getattr(_theme, 'font_size_primary',    14)        if _theme else 14
+        _acc = getattr(_theme, 'accent',               '#cccccc') if _theme else '#cccccc'
+        _hov = resolve_menu_hover(_theme)
 
-        # Create actions for each sort type
-        self.create_sort_action(menu, 'random', 'Random')
-        self.create_sort_action(menu, 'most_played', 'Most Played')
-        self.create_sort_action(menu, 'alphabetical', 'Alphabetical')
-        self.create_sort_action(menu, 'albums_count', 'Albums Count') # 🟢 NEW
-        
-        # Show menu below burger button
-        button_pos = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
-        menu.exec(button_pos)
+        menu = ShadowContextMenu(self)
+        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
+
+        for sort_type, label in [('random', 'Random'), ('most_played', 'Most Played'),
+                                   ('alphabetical', 'Alphabetical'), ('albums_count', 'Albums Count')]:
+            st = sort_type
+            menu.add_action(label, lambda s=st: self.toggle_sort_state(s),
+                            icon_path=self._sort_icon_path(st, self.sort_states.get(st, True)))
+
+        gp = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
+        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self.window())
     
     def get_tinted_sort_icon(self, sort_type, is_ascending):
         """Get a tinted icon for the sort menu based on current accent color"""

@@ -941,10 +941,11 @@ class SubsonicClient:
 
     def set_favorite(self, item_id, active, id_param='id'):
         """Toggles the star on the server. id_param: 'id' (song), 'albumId', or 'artistId'."""
+        self.invalidate_starred_cache()   # next album open will re-fetch fresh starred list
         endpoint = "star" if active else "unstar"
         params = self._get_auth_params()
         params[id_param] = item_id
-        
+
         print(f"[Client] Attempting to {endpoint} item: {item_id}")
         
         try:
@@ -1474,6 +1475,16 @@ class SubsonicClient:
         albums  = _list('album')
         artists = _list('artist')
         return {'songs': songs, 'albums': albums, 'artists': artists}
+
+    def get_starred_ids_cached(self) -> set:
+        """Return starred song IDs from session cache — fetch once, reuse until invalidated."""
+        if not hasattr(self, '_starred_ids_session') or self._starred_ids_session is None:
+            self._starred_ids_session = set(self.get_starred_ids())
+        return self._starred_ids_session
+
+    def invalidate_starred_cache(self):
+        """Call after starring/unstarring so the next open fetches fresh data."""
+        self._starred_ids_session = None
 
     def get_starred_ids(self):
         """Fetches list of all starred song IDs from the server."""

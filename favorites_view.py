@@ -23,7 +23,8 @@ class _GenrePopup(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent,
                          Qt.WindowType.Popup |
-                         Qt.WindowType.FramelessWindowHint)
+                         Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         pad = self._PAD
@@ -1011,6 +1012,7 @@ class FavoritesView(QWidget):
             'artist':   a.get('artist', a.get('artistName', '')),
             'year':     a.get('year', ''),
             'coverArt': a.get('coverArt', ''),
+            'starred':  a.get('starred', True),   # albums in favorites are starred by definition
         }
 
     def showEvent(self, event):

@@ -397,7 +397,7 @@ class ColumnFilterPopup(QFrame):
     _SHADOW_PAD = 24   # shadow area around the visible popup
 
     def __init__(self, col, values, active_values, up_icon, down_icon, accent_color="#cccccc", parent=None):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.col = col
         self.active_values = set(active_values) if active_values else set()
@@ -2402,31 +2402,32 @@ class TracksBrowser(QWidget):
     # --- BURGER MENU: COLUMN VISIBILITY ---
     
     def show_column_menu(self):
+        from player.widgets import ShadowContextMenu
+        from player.mixins.visuals import resolve_menu_hover
         _theme = getattr(self.window(), 'theme', None)
-        _bg  = getattr(_theme, 'main_panel_bg',      '26,26,26')
-        _bc  = getattr(_theme, 'border_color',       '#444444')
-        _fg  = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px  = getattr(_theme, 'font_size_primary',  14)
-        _acc = getattr(_theme, 'accent',              '#ffffff')
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(
-            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc}; border-radius: 12px; padding: 4px; }}"
-            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
-        )
+        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14') if _theme else '14,14,14'
+        _bc  = getattr(_theme, 'border_color',         '#2a2a2a') if _theme else '#2a2a2a'
+        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd'
+        _fg2 = getattr(_theme, 'font_color_secondary', '#555555') if _theme else '#555555'
+        _px  = getattr(_theme, 'font_size_primary',    14)        if _theme else 14
+        _acc = getattr(_theme, 'accent',               '#cccccc') if _theme else '#cccccc'
+        _hov = resolve_menu_hover(_theme)
 
-        headers = ["#", "TRACK", "TITLE", "ARTIST", "ALBUM", "YEAR", "GENRE", "FAVORITE", "PLAYS", "LENGTH", "NO.", "DATE ADDED", "BPM"]
+        menu = ShadowContextMenu(self)
+        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
 
+        headers = ["#", "Track", "Title", "Artist", "Album", "Year", "Genre", "Favorite", "Plays", "Length", "No.", "Date Added", "BPM"]
         for i, name in enumerate(headers):
-            action = QAction(name, menu)
-            action.setCheckable(True)
-            action.setChecked(not self.tree.isColumnHidden(i))
-            action.triggered.connect(lambda checked, col=i: self.toggle_column(col, checked))
-            menu.addAction(action)
-            
-        menu.exec(self.burger_btn.mapToGlobal(QPoint(0, self.burger_btn.height())))
+            visible = not self.tree.isColumnHidden(i)
+            col = i
+            menu.add_action(
+                name,
+                lambda c=col: self.toggle_column(c, self.tree.isColumnHidden(c)),
+                icon_path='img/yes.png' if visible else '',
+            )
+
+        gp = self.burger_btn.mapToGlobal(QPoint(0, self.burger_btn.height()))
+        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self.window())
 
     # --- ALBUM DETAIL MODE LOGIC ---
 

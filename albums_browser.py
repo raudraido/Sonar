@@ -2157,19 +2157,19 @@ class AlbumDetailView(QWidget):
                 raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
                 if not raw_fresh: return
 
-                # Album star status
+                # Album star status — read from the same response already cached by get_album_tracks
                 try:
-                    import requests as _req
-                    _p = self.client._get_auth_params(); _p['id'] = _album_id
-                    _ai = _req.get(f"{self.client.base_url}/rest/getAlbum",
-                                   params=_p, timeout=8).json() \
-                                  .get('subsonic-response', {}).get('album', {})
-                    self._album_star_ready.emit('starred' in _ai)
+                    _cached_resp = self.client._disk_cache_get(f"album_tracks_{_album_id}")
+                    # _parse_song_data already set 'starred' per track correctly from getAlbum
+                    # For the album's own star status, check the album_data passed in
+                    album_starred = bool(
+                        _album_data.get('starred') or _album_data.get('favorite')
+                    )
+                    self._album_star_ready.emit(album_starred)
                 except Exception: pass
-
-                # Enrich starred — one call for fresh data only
+                # Enrich starred — use session cache (fetched once, not per album open)
                 try:
-                    starred_ids = set(self.client.get_starred_ids())
+                    starred_ids = self.client.get_starred_ids_cached()
                     for t in raw_fresh:
                         t['starred'] = str(t.get('id', '')) in starred_ids
                 except Exception: pass
@@ -2624,60 +2624,36 @@ class LibraryGridBrowser(QWidget):
 
     def show_sort_menu(self):
         """Show dropdown menu with sort options when burger is clicked"""
+        from player.widgets import ShadowContextMenu
+        from player.mixins.visuals import resolve_menu_hover
         _theme = getattr(self.window(), 'theme', None)
-        _bg = getattr(_theme, 'main_panel_bg',      '26,26,26')
-        _bc = getattr(_theme, 'border_color',       '#333333')
-        _fg = getattr(_theme, 'font_color_primary', '#dddddd')
-        _px = getattr(_theme, 'font_size_primary',  14)
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background-color: rgb({_bg});
-                border: 1px solid {_bc};
-                border-radius: 12px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                background-color: transparent;
-                color: {_fg};
-                font-size: {_px}px;
-                padding: 8px 12px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: {resolve_menu_hover(_theme)};
-                color: {_fg};
-            }}
-            QMenu::icon {{
-                padding-left: 4px;
-            }}
-        """)
+        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14') if _theme else '14,14,14'
+        _bc  = getattr(_theme, 'border_color',         '#2a2a2a') if _theme else '#2a2a2a'
+        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd'
+        _fg2 = getattr(_theme, 'font_color_secondary', '#555555') if _theme else '#555555'
+        _px  = getattr(_theme, 'font_size_primary',    14)        if _theme else 14
+        _acc = getattr(_theme, 'accent',               '#cccccc') if _theme else '#cccccc'
+        _hov = resolve_menu_hover(_theme)
 
-        # Create actions for each sort type
-        self.create_sort_action(menu, 'random', 'Random')
-        self.create_sort_action(menu, 'latest', 'Latest')
-        self.create_sort_action(menu, 'alphabetical', 'Alphabetical')
-        self.create_sort_action(menu, 'song_count', 'Song Count')
+        menu = ShadowContextMenu(self)
+        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
 
-        menu.addSeparator()
+        def _sort_icon(sort_type):
+            is_asc = self.sort_states.get(sort_type, True)
+            suffix = 'a' if is_asc else 'd'
+            return f"img/sort-{sort_type}-{suffix}.png"
 
-        # Favorites filter (heart icon, no asc/desc)
-        heart_icon = self._get_tinted_icon(resource_path("img/heart.png"))
-        fav_action = QAction(heart_icon, "  Favourites", self)
-        fav_action.triggered.connect(lambda: self.toggle_sort_state('favorites'))
-        menu.addAction(fav_action)
+        for sort_type, label in [('random', 'Random'), ('latest', 'Latest'),
+                                   ('alphabetical', 'Alphabetical'), ('song_count', 'Song Count')]:
+            st = sort_type
+            menu.add_action(label, lambda s=st: self.toggle_sort_state(s),
+                            icon_path=_sort_icon(st))
 
-        # Compilations filter
-        comp_icon = self._get_tinted_icon(resource_path("img/comp.png"))
-        comp_action = QAction(comp_icon, "  Compilations", self)
-        comp_action.triggered.connect(lambda: self.toggle_sort_state('compilations'))
-        menu.addAction(comp_action)
-        
-        # Show menu below burger button
-        button_pos = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
-        menu.exec(button_pos)
+        menu.add_action('Favourites',    lambda: self.toggle_sort_state('favorites'),    icon_path='img/heart.png')
+        menu.add_action('Compilations',  lambda: self.toggle_sort_state('compilations'), icon_path='img/comp.png')
+
+        gp = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
+        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self.window())
 
     def update_cover(self, data):
         from PyQt6.QtGui import QPixmap
