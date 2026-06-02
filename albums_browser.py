@@ -1580,7 +1580,7 @@ class AlbumDetailView(QWidget):
                 secs     = dur_ms // 1000
                 duration = f"{secs // 60}:{secs % 60:02d}"
                 genre    = t.get('genre', '') or ''
-                plays    = str(t.get('play_count', '') or '')
+                plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
                 album    = t.get('album', '') or ''
                 item = QTreeWidgetItem([num, title, artist, heart, genre, duration, plays, album])
                 item.setData(0, Qt.ItemDataRole.UserRole, {'_track_idx': track_idx, 'id': str(t.get('id', ''))})

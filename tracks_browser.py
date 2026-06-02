@@ -3840,7 +3840,7 @@ class TracksBrowser(QWidget):
         self.refresh_track_bpm(song_id, rounded)
 
     def _show_track_info(self, track):
-        client = getattr(self, 'client', None)
+        client = getattr(self, 'client', None) or getattr(self.window(), 'navidrome_client', None)
         win = self.window()
         accent = getattr(getattr(win, 'theme', None), 'accent', None) or getattr(win, 'master_color', None) or '#1DB954'
         bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
