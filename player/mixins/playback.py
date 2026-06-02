@@ -306,11 +306,11 @@ class PlaybackMixin:
             track = self.playlist_data[idx]
             self.queued_next_index = -1  
 
-            # UI Updates
+            # UI Updates — update_indicator debounced so rapid clicking only runs once
             self.load_current_track_metadata_text_only()
-            self.update_indicator()
+            self._indicator_debounce.start()   # restarts 60ms window on each click
             self.update_window_title()
-            
+
             print(f"[TIMING] +{time.time() - t0:.3f}s | UI Text Updated")
 
             # Reset Seek Bar
@@ -334,24 +334,15 @@ class PlaybackMixin:
 
             self.visual_update_timer.start(350)
 
-            # Report now-playing to Navidrome so it appears in active sessions
+            # Report now-playing in background (was synchronous — blocked main thread!)
             track_id = track.get('id')
             if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
-                try:
-                    self.navidrome_client.scrobble(track_id, submission=False)
-                except Exception:
-                    pass
+                import threading as _t
+                _c = self.navidrome_client; _tid = track_id
+                _t.Thread(target=lambda: _c.scrobble(_tid, submission=False), daemon=True).start()
 
-            # Silently refresh metadata from Navidrome in case ID3 tags were updated since last load
-            if track_id and hasattr(self, 'navidrome_client') and self.navidrome_client:
-                from player.workers import SongRefreshWorker
-                old = getattr(self, '_song_refresh_worker', None)
-                if old:
-                    try: old.refreshed.disconnect()
-                    except: pass
-                self._song_refresh_worker = SongRefreshWorker(self.navidrome_client, track_id, idx)
-                self._song_refresh_worker.refreshed.connect(self._on_song_refreshed)
-                self._song_refresh_worker.start()
+            # Debounce metadata refresh so it only fires for the final clicked track
+            self._refresh_debounce.start()
 
             track['debug_t0'] = t0
             self._play_with_cast_sync(track)
@@ -988,6 +979,21 @@ class PlaybackMixin:
     def move_ghost_drag(self, global_pos):
         local_pos = self.mapFromGlobal(global_pos)
         self.ghost_label.move(local_pos)
+
+    def _deferred_song_refresh(self):
+        """Called after 200ms debounce — spawns metadata refresh only for the current track."""
+        idx = self.current_index
+        if not (0 <= idx < len(self.playlist_data)): return
+        track_id = self.playlist_data[idx].get('id')
+        if not track_id or not getattr(self, 'navidrome_client', None): return
+        from player.workers import SongRefreshWorker
+        old = getattr(self, '_song_refresh_worker', None)
+        if old:
+            try: old.refreshed.disconnect()
+            except: pass
+        self._song_refresh_worker = SongRefreshWorker(self.navidrome_client, track_id, idx)
+        self._song_refresh_worker.refreshed.connect(self._on_song_refreshed)
+        self._song_refresh_worker.start()
 
     def _on_song_refreshed(self, ridx, fresh):
         """Called on the main thread when SongRefreshWorker gets fresh metadata."""

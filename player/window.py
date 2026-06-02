@@ -448,6 +448,14 @@ class SonarPlayer(
         self._shuffle_queue = []
         self.temp_files = []
 
+        # Debounce timers for rapid track clicking
+        self._indicator_debounce = QTimer(self)
+        self._indicator_debounce.setSingleShot(True)
+        self._indicator_debounce.setInterval(60)
+        self._refresh_debounce = QTimer(self)
+        self._refresh_debounce.setSingleShot(True)
+        self._refresh_debounce.setInterval(200)
+
         self.search_context = {}  
         self.last_tab_index = 0    
 
@@ -566,6 +574,8 @@ class SonarPlayer(
             QTimer.singleShot(0, self._early_home_init)
         QTimer.singleShot(100, self.test_navidrome_fetch)
         QTimer.singleShot(0, self.reposition_nav_buttons)
+        self._indicator_debounce.timeout.connect(lambda: self.update_indicator(scroll_to_current=True))
+        self._refresh_debounce.timeout.connect(self._deferred_song_refresh)
         # --- Background downloader for playlist covers ---
         self.playlist_cover_worker = PlaylistCoverWorker(None)
         self.playlist_cover_worker.cover_downloaded.connect(self.tree.viewport().update)
