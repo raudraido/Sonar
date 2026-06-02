@@ -1569,8 +1569,8 @@ class AlbumDetailView(QWidget):
                 self.track_tree.addTopLevelItem(disc_item)
                 total_rows += 1
 
-            for track_idx, t in disc_groups[disc_num]:
-                num      = str(t.get('track') or track_idx + 1)
+            for disc_pos, (track_idx, t) in enumerate(disc_groups[disc_num], 1):
+                num      = str(t.get('track') or (disc_pos if multi_disc else track_idx + 1))
                 title    = t.get('title', '')
                 artist   = t.get('artist', '')
                 raw_star = t.get('starred', False)
