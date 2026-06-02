@@ -1414,6 +1414,7 @@ class AlbumDetailView(QWidget):
         self.search_container.text_changed.connect(self._filter_tracks)
         self.search_container.search_input.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.search_container.search_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.search_container.search_input.installEventFilter(self)
         _sbl.addWidget(self.search_container)
 
         # ── Track card ───────────────────────────────────────────────────────────
@@ -1665,10 +1666,16 @@ class AlbumDetailView(QWidget):
         count = self.track_tree.topLevelItemCount()
         if not count:
             return
-        row = self._track_delegate._kbd_row + delta
+        start = self._track_delegate._kbd_row
+        # If current row is hidden (search filter), start from beginning/end
+        if start >= 0 and self.track_tree.topLevelItem(start).isHidden():
+            start = -1 if delta > 0 else count
+        row = start + delta
         while 0 <= row < count:
-            data = self.track_tree.topLevelItem(row).data(0, Qt.ItemDataRole.UserRole)
-            if not (isinstance(data, dict) and data.get('_is_disc_header')):
+            item = self.track_tree.topLevelItem(row)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            is_header = isinstance(data, dict) and data.get('_is_disc_header')
+            if not is_header and not item.isHidden():
                 break
             row += delta
         if 0 <= row < count:
@@ -1696,6 +1703,19 @@ class AlbumDetailView(QWidget):
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
+        _sc = getattr(self, 'search_container', None)
+        si = getattr(_sc, 'search_input', None) if _sc else None
+        if si and obj is si and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Up:
+                self._move_kbd_selection(-1); return True
+            if key == Qt.Key.Key_Down:
+                self._move_kbd_selection(1); return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._play_kbd_selected(); return True
+            if key == Qt.Key.Key_Escape:
+                self.search_container.search_input.clear()
+                self._toggle_track_search(); return True
         if obj is self.track_tree and event.type() == QEvent.Type.KeyPress:
             key = event.key()
             mods = event.modifiers()
