@@ -3299,7 +3299,7 @@ class LibraryGridBrowser(QWidget):
         if self.true_server_count > 0:
             self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
             pending = getattr(self, '_pending_cached_chunk', None)
-            # Block chunk 0 BEFORE append_albums so visibleRangeChanged can't race-fetch it
+            _is_random = getattr(self, 'current_sort', 'latest') == 'random'
             if pending:
                 self.loaded_chunks.add(0)
             placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
@@ -3308,6 +3308,18 @@ class LibraryGridBrowser(QWidget):
             if pending:
                 self._pending_cached_chunk = None
                 self._on_chunk_loaded(pending, 0)
+                # For random sort: fetch a fresh set in background and cache it for
+                # next visit without replacing the current view (next-session refresh)
+                if _is_random:
+                    import threading as _t
+                    def _bg_refresh_random():
+                        try:
+                            fresh = self.client.get_album_list_sorted('random', size=50, offset=0)
+                            if fresh and self.client:
+                                self.client.stale_cache_set('albums_chunk_0_random', fresh)
+                        except Exception:
+                            pass
+                    _t.Thread(target=_bg_refresh_random, daemon=True).start()
             self.check_viewport_qml(0, 50)
 
     def fetch_chunk(self, chunk_index):
