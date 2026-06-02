@@ -16,7 +16,8 @@ from tracks_browser import MiddleClickScroller
 # Background workers
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PAGE = 50   # albums per fetch
+_PAGE        = 50   # albums per fetch for recent/most-played
+_RANDOM_PAGE = 100  # larger buffer for instant client-side reshuffles
 
 
 class _ShimmerDelegate(QStyledItemDelegate):
@@ -92,6 +93,29 @@ class _HomeGridDelegate(GridItemDelegate):
         super().paint(painter, opt, index)
 
 
+import os as _os, json as _json, sys as _sys
+
+def _home_cache_path():
+    base = getattr(_sys, '_MEIPASS', _os.path.dirname(_os.path.abspath(__file__)))
+    d = _os.path.join(base, 'app_data')
+    _os.makedirs(d, exist_ok=True)
+    return _os.path.join(d, 'home_cache.json')
+
+def _home_cache_read():
+    try:
+        with open(_home_cache_path(), 'r', encoding='utf-8') as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+def _home_cache_write(data: dict):
+    try:
+        with open(_home_cache_path(), 'w', encoding='utf-8') as f:
+            _json.dump(data, f)
+    except Exception:
+        pass
+
+
 class HomeLoaderWorker(QThread):
     # Each section emits independently as soon as its fetch completes
     recent_ready      = pyqtSignal(list)
@@ -105,27 +129,32 @@ class HomeLoaderWorker(QThread):
         self.client = client
 
     def run(self):
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import concurrent.futures
 
         try:
-            recent = random_mix = most_played = []
             if not self.client:
                 self.data_ready.emit([], [], [])
                 return
 
-            def _fetch(sort_type):
+            # Phase 1 — emit all sections from previous session immediately
+            cached = _home_cache_read()
+            if cached.get('recent'):
+                self.recent_ready.emit(cached['recent'])
+            if cached.get('random'):
+                self.random_ready.emit(cached['random'])
+            if cached.get('most_played'):
+                self.most_played_ready.emit(cached['most_played'])
+
+            # Phase 2 — fetch fresh data and update
+            def _fetch(sort_type, size=_PAGE):
                 return self.client.get_album_list_sorted(
-                    sort_type=sort_type, size=_PAGE, offset=0) or []
+                    sort_type=sort_type, size=size, offset=0) or []
 
             with ThreadPoolExecutor(max_workers=3) as pool:
                 f_recent      = pool.submit(_fetch, "newest")
-                f_random      = pool.submit(_fetch, "random")
+                f_random      = pool.submit(_fetch, "random", _RANDOM_PAGE)
                 f_most_played = pool.submit(_fetch, "frequent")
-
-                # Emit each section as soon as its future resolves
-                # (futures resolve roughly in parallel — emit order depends on server speed)
-                from concurrent.futures import as_completed, FIRST_COMPLETED
-                import concurrent.futures
 
                 futures_map = {
                     f_recent:      ('recent',      self.recent_ready),
@@ -133,11 +162,18 @@ class HomeLoaderWorker(QThread):
                     f_most_played: ('most_played', self.most_played_ready),
                 }
                 results = {}
-                for future in concurrent.futures.as_completed(futures_map):
+                for future in as_completed(futures_map):
                     key, signal = futures_map[future]
                     data = future.result() or []
                     results[key] = data
                     signal.emit(data)
+
+            # Persist all sections for next startup (random included for instant display)
+            _home_cache_write({
+                'recent':      results.get('recent', []),
+                'random':      results.get('random', []),
+                'most_played': results.get('most_played', []),
+            })
 
             self.data_ready.emit(
                 results.get('recent', []),
@@ -183,7 +219,7 @@ class RandomMixReloaderWorker(QThread):
         try:
             result = []
             if self.client:
-                result = self.client.get_album_list_sorted(sort_type="random", size=_PAGE, offset=0)
+                result = self.client.get_album_list_sorted(sort_type="random", size=_RANDOM_PAGE, offset=0)
             self.data_ready.emit(result or [])
         except Exception as e:
             print(f"[RandomMixReloader] Error: {e}")
@@ -953,7 +989,9 @@ class HomeView(QWidget):
         self._queue_covers(albums)
 
     def _on_random_loaded(self, albums):
-        self.random_row.populate(albums)
+        if albums:
+            self._random_buffer = list(albums)
+        self.random_row.populate(albums or getattr(self, '_random_buffer', []))
         self._queue_covers(albums)
 
     def _on_most_played_loaded(self, albums):
@@ -1144,8 +1182,21 @@ class HomeView(QWidget):
     # ── Random mix refresh ────────────────────────────────────────────────
 
     def refresh_random_mix(self):
-        btn = self.random_row.btn_refresh
-        btn.setEnabled(False)
+        import random as _rnd
+        buf = getattr(self, '_random_buffer', [])
+        if buf:
+            # Instant reshuffle from existing buffer — no network call
+            _rnd.shuffle(buf)
+            self.random_row.populate(buf)
+            self._queue_covers(buf)
+            # Every 3 reshuffles fetch a fresh batch in background
+            self._random_refresh_count = getattr(self, '_random_refresh_count', 0) + 1
+            if self._random_refresh_count % 3 == 0:
+                self._fetch_random_background()
+        else:
+            self._fetch_random_background()
+
+    def _fetch_random_background(self):
         if getattr(self, 'random_reloader', None) and self.random_reloader.isRunning():
             self._safe_discard_worker(self.random_reloader)
         self.random_reloader = RandomMixReloaderWorker(self.client)
@@ -1153,8 +1204,8 @@ class HomeView(QWidget):
         self.random_reloader.start()
 
     def _on_random_refreshed(self, new_mix):
-        self.random_row.btn_refresh.setEnabled(True)
         if new_mix:
+            self._random_buffer = list(new_mix)
             self.random_row.populate(new_mix)
             self._queue_covers(new_mix)
 

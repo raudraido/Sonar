@@ -171,8 +171,11 @@ class PersistenceMixin:
             def __init__(self, c): super().__init__(); self._c = c
             def run(self):
                 ok = self._c.ping()
-                if ok and hasattr(self._c, 'warm_artist_name_cache'):
-                    self._c.warm_artist_name_cache()
+                if ok:
+                    if hasattr(self._c, 'warm_artist_name_cache'):
+                        self._c.warm_artist_name_cache()
+                    if hasattr(self._c, 'authenticate_native'):
+                        self._c.authenticate_native()
                 self.done.emit(ok)
 
         self._ping_thread = _PingThread(client)
@@ -212,6 +215,16 @@ class PersistenceMixin:
             self.playlist_cover_worker.start()
 
     # --- Per-tab initialization (called lazily on first visit) ---
+
+    def _early_home_init(self):
+        """Start home tab loading immediately at startup without waiting for ping."""
+        client = self.navidrome_client
+        if not client or not hasattr(self, 'home_tab'):
+            return
+        if not hasattr(self, '_initialized_tabs'):
+            self._initialized_tabs = set()
+        if 'home' not in self._initialized_tabs:
+            self._init_tab_home(client)
 
     def _init_tab_home(self, client):
         self.home_tab.initialize(client)

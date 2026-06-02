@@ -3576,12 +3576,20 @@ class ArtistGridBrowser(QWidget):
         
         # 4. Inject Placeholders
         if total_count > 0:
+            pending = getattr(self, '_pending_cached_chunk', None)
+            if pending:
+                self.loaded_chunks.add(0)
             placeholders = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(total_count)]
             self.artist_model.append_artists(placeholders)
+            if pending:
+                self._pending_cached_chunk = None
+                self._on_chunk_loaded(pending, 0)
             self.check_viewport_qml(0, 50)
 
     def _on_initial_count_loaded(self, items, total_items, total_pages):
         self.true_server_count = total_items if total_items else 0
+        if self.true_server_count and self.client:
+            self.client.stale_cache_set('artists_count', self.true_server_count)
         self.load_artists_page()
 
     def _on_search_loaded(self, items, total_items, total_pages):
@@ -3600,6 +3608,9 @@ class ArtistGridBrowser(QWidget):
 
     def _on_chunk_loaded(self, artists, chunk_index):
         """Callback when a chunk of 50 artists arrives from the server."""
+        if chunk_index == 0 and artists and self.client and not getattr(self, 'current_query', ''):
+            _sort = getattr(self, 'current_sort', 'alphabetical')
+            self.client.stale_cache_set(f'artists_chunk_0_{_sort}', artists)
         is_expected = hasattr(self, 'active_chunk_workers') and chunk_index in self.active_chunk_workers
         if is_expected:
             worker = self.active_chunk_workers.pop(chunk_index)
@@ -3660,6 +3671,16 @@ class ArtistGridBrowser(QWidget):
             self.cover_worker = GridCoverWorker(client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
+            _sort = getattr(self, 'current_sort', 'alphabetical')
+            cached_count = client.stale_cache_get('artists_count')
+            cached_chunk = client.stale_cache_get(f'artists_chunk_0_{_sort}')
+            if cached_count and isinstance(cached_count, int) and cached_count > 0:
+                self.true_server_count = cached_count
+                self._stale_count_set = True
+            else:
+                self.true_server_count = 0
+                self._stale_count_set = False
+            self._pending_cached_chunk = cached_chunk or None
             self.refresh_grid()
 
     def refresh_grid(self):
@@ -3669,8 +3690,10 @@ class ArtistGridBrowser(QWidget):
         self._live_artists_cache = None
         self._live_artists_randomized = False
         
-        # 2. Clear the server count so it asks the server for the new total!
-        self.true_server_count = 0
+        # 2. Clear the server count unless stale cache provided it
+        if not getattr(self, '_stale_count_set', False):
+            self.true_server_count = 0
+        self._stale_count_set = False
         
         # 3. Brutally wipe the API cache for artists
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):

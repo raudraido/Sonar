@@ -561,6 +561,9 @@ class SonarPlayer(
         self.audio_engine.set_volume(self.last_volume)
         QTimer.singleShot(0, self.load_playlist)
 
+        # Start home tab immediately — don't wait for ping
+        if self.navidrome_client:
+            QTimer.singleShot(0, self._early_home_init)
         QTimer.singleShot(100, self.test_navidrome_fetch)
         QTimer.singleShot(0, self.reposition_nav_buttons)
         # --- Background downloader for playlist covers ---

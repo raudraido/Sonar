@@ -149,6 +149,24 @@ class SubsonicClient:
         except Exception as e:
             print(f"[DiskCache] Write failed for {key}: {e}")
 
+    def stale_cache_get(self, key):
+        """Read cached data without scan_status check — stale data is acceptable for instant UI."""
+        path = self._disk_cache_path(f'stale_{key}')
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def stale_cache_set(self, key, data):
+        """Write data for stale-while-revalidate use (no scan_status tag)."""
+        path = self._disk_cache_path(f'stale_{key}')
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
     def _disk_cache_delete(self, key):
         path = self._disk_cache_path(key)
         try:

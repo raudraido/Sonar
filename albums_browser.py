@@ -2802,6 +2802,8 @@ class LibraryGridBrowser(QWidget):
     def _on_initial_count_loaded(self, albums, total_count):
         """Saves the total library size and instantly restarts the grid generation."""
         self.true_server_count = total_count if total_count else 0
+        if self.true_server_count and self.client:
+            self.client.stale_cache_set('albums_count', self.true_server_count)
         self.load_albums_page()
 
     def _on_search_loaded(self, albums, total_count=0):
@@ -3139,6 +3141,10 @@ class LibraryGridBrowser(QWidget):
         self.album_model.append_albums(items)
 
     def _on_chunk_loaded(self, albums, chunk_index):
+        # Persist chunk 0 for fast next-session display (default sort only)
+        if chunk_index == 0 and albums and self.client and not getattr(self, 'current_query', ''):
+            _sort = getattr(self, 'current_sort', 'latest')
+            self.client.stale_cache_set(f'albums_chunk_0_{_sort}', albums)
         if hasattr(self, 'active_chunk_workers') and chunk_index in self.active_chunk_workers:
             worker = self.active_chunk_workers.pop(chunk_index)
             self._safe_discard_worker(worker)
@@ -3287,9 +3293,16 @@ class LibraryGridBrowser(QWidget):
 
         if self.true_server_count > 0:
             self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
+            pending = getattr(self, '_pending_cached_chunk', None)
+            # Block chunk 0 BEFORE append_albums so visibleRangeChanged can't race-fetch it
+            if pending:
+                self.loaded_chunks.add(0)
             placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
             self.album_model.clear()
             self.album_model.append_albums(placeholders)
+            if pending:
+                self._pending_cached_chunk = None
+                self._on_chunk_loaded(pending, 0)
             self.check_viewport_qml(0, 50)
 
     def fetch_chunk(self, chunk_index):
@@ -3346,12 +3359,24 @@ class LibraryGridBrowser(QWidget):
             self.cover_worker = GridCoverWorker(client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
-            
-            
+
+            # Stale-while-revalidate: show cached count+chunk instantly, refresh behind
+            _sort = getattr(self, 'current_sort', 'latest')
+            cached_count = client.stale_cache_get('albums_count')
+            cached_chunk = client.stale_cache_get(f'albums_chunk_0_{_sort}')
+            if cached_count and isinstance(cached_count, int) and cached_count > 0:
+                self.true_server_count = cached_count
+                self.total_items = cached_count   # prevent descending-sort reload in update_server_count_ui
+                self._stale_count_set = True
+            else:
+                self.true_server_count = 0
+                self._stale_count_set = False
+            self._pending_cached_chunk = cached_chunk or None
+
             self.count_worker = ServerCountWorker(client)
             self.count_worker.count_ready.connect(self.update_server_count_ui)
             self.count_worker.start()
-            
+
             self.refresh_grid()
             
         if hasattr(self, 'detail_view'):
@@ -3360,6 +3385,8 @@ class LibraryGridBrowser(QWidget):
     def update_server_count_ui(self, true_server_count):
         """Updates the status label with the instant server count."""
         self.true_server_count = true_server_count
+        if true_server_count and self.client:
+            self.client.stale_cache_set('albums_count', true_server_count)
         
         # Only update the base label if we are NOT currently searching
         if not getattr(self, 'current_query', ''):
@@ -3372,8 +3399,10 @@ class LibraryGridBrowser(QWidget):
             self.load_albums_page(reset=True)
     
     def refresh_grid(self):
-        # 1. Reset the server count so we ask the server exactly how many albums exist right now!
-        self.true_server_count = 0
+        # 1. Reset the server count unless stale cache provided it
+        if not getattr(self, '_stale_count_set', False):
+            self.true_server_count = 0
+        self._stale_count_set = False
         self.all_albums_cache = []
         self.all_albums_sort = None
         
