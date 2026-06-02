@@ -2104,6 +2104,7 @@ class AlbumDetailView(QWidget):
                 if _disk:
                     self._load_tracks(_disk)
                     self._mem_cache_put(str(_album_id), _disk)
+                    _pre_tracks = _disk
                     _pre_loaded = True
             except Exception:
                 pass
@@ -2129,6 +2130,14 @@ class AlbumDetailView(QWidget):
             time_str = f"{m//60} hr {m%60} min" if m >= 60 else f"{m} min {s} sec"
             year = str(_album_data.get('year', '')).replace('None', '')
             return detected, " • ".join(p for p in [year, f"{n} songs", time_str] if p)
+
+        # Show meta instantly from cached tracks — no need to wait for network
+        if _pre_tracks:
+            _detected, _meta_str = compute_meta(_pre_tracks)
+            if _detected:
+                self.lbl_artist.setText(_detected)
+            if _meta_str:
+                self.lbl_meta.setText(_meta_str)
 
         def _fetch_fresh():
             try:
