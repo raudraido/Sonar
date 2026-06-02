@@ -3501,7 +3501,8 @@ class TracksBrowser(QWidget):
         if not data or data.get('type') != 'track': return
         track = data['data']
         artist_name = track.get('album_artist') or track.get('artist')
-        album_data = {'id': track.get('albumId') or track.get('parent'), 'title': track.get('album'), 'artist': artist_name, 'coverArt': track.get('coverArt')}
+        album_data = {'id': track.get('albumId') or track.get('parent'), 'title': track.get('album'), 'artist': artist_name,
+                      'coverArt': track.get('coverArt') or track.get('cover_id', '')}
         if album_data['id']: self.switch_to_album_tab.emit(album_data)
 
     def eventFilter(self, obj, event):
@@ -3733,7 +3734,8 @@ class TracksBrowser(QWidget):
             artist = first_track.get('artist', '')
             album_id = first_track.get('albumId') or first_track.get('parent')
             album_data = {'id': album_id, 'title': first_track.get('album', ''),
-                          'artist': artist, 'coverArt': first_track.get('coverArt', '')}
+                          'artist': artist,
+                          'coverArt': first_track.get('coverArt') or first_track.get('cover_id', '')}
             menu.add_action('Go to Artist', lambda: self.switch_to_artist_tab.emit(artist) if artist else None,
                             enabled=bool(artist), icon_path='img/sub_artist.png')
             menu.add_action('Open Album',   lambda: self.switch_to_album_tab.emit(album_data) if album_id else None,

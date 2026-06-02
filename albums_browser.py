@@ -2017,7 +2017,8 @@ class AlbumDetailView(QWidget):
 
     def set_accent_color(self, color):
         if hasattr(self, 'lbl_artist'):
-            self.lbl_artist.set_color(color)
+            _sec = getattr(getattr(self.window(), 'theme', None), 'font_color_secondary', '#aaaaaa')
+            self.lbl_artist.set_color(_sec)
         if hasattr(self, '_track_header'):
             self._track_header.set_accent(color)
         if hasattr(self, 'header_container') and hasattr(self.header_container, 'set_border'):
@@ -2043,7 +2044,7 @@ class AlbumDetailView(QWidget):
             sec_color = getattr(theme, 'font_color_secondary','#aaaaaa') if theme else '#aaaaaa'
             if hasattr(self, 'lbl_title'):
                 pri_size = getattr(theme, 'font_size_primary', 17) if theme else 17
-                self.lbl_title.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: {pri_size + 15}px; background: transparent; margin: 0; padding: 0;")
+                self.lbl_title.setStyleSheet(f"color: {color}; font-weight: bold; font-size: {pri_size + 15}px; background: transparent; margin: 0; padding: 0;")
             if hasattr(self, 'lbl_meta'):
                 self.lbl_meta.setStyleSheet(f"color: {sec_color}; font-weight: bold; font-size: {sec_size}px;")
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")

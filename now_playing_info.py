@@ -1297,7 +1297,7 @@ class NowPlayingInfoTab(QWidget):
         album    = track.get('album', '')
         album_id = track.get('albumId') or track.get('album_id', '')
         year     = str(track.get('year', '') or '')
-        meta_fs  = self._font_size_secondary + 1
+        meta_fs  = self._font_size_primary
 
         meta_w  = QWidget()
         meta_w.setStyleSheet('background: transparent;')
@@ -1306,9 +1306,9 @@ class NowPlayingInfoTab(QWidget):
         meta_lo.setContentsMargins(0, 0, 0, 0)
         meta_lo.setSpacing(0)
 
-        _sep_style = f'color: {self._fg2}; font-size: {meta_fs}px; background: transparent;'
+        _sep_style = f'color: {self._fg2}; font-size: {meta_fs}px; font-weight: bold; background: transparent;'
         _lnk_style = (
-            f'QPushButton {{ color: {self._fg2}; font-size: {meta_fs}px; background: transparent;'
+            f'QPushButton {{ color: {self._fg2}; font-size: {meta_fs}px; font-weight: bold; background: transparent;'
             f' border: none; padding: 0; text-decoration: none; }}'
             f'QPushButton:hover {{ color: {self._fg}; text-decoration: underline; }}'
         )
