@@ -3083,6 +3083,14 @@ class LibraryGridBrowser(QWidget):
         if self.album_model.rowCount() == 0: return
         if getattr(self, 'current_sort', 'latest') == 'compilations': return
 
+        # Lazy placeholder expansion: grow model as user scrolls into new territory
+        total = getattr(self, 'true_server_count', 0)
+        current_rows = self.album_model.rowCount()
+        if total > current_rows and end_idx >= current_rows - 10:
+            expand_to = min(current_rows + 50, total)
+            extra = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(expand_to - current_rows)]
+            self.album_model.append_albums(extra)
+
 
 
         start_chunk = max(0, start_idx // 50)
@@ -3303,12 +3311,16 @@ class LibraryGridBrowser(QWidget):
             _is_random = getattr(self, 'current_sort', 'latest') == 'random'
             if pending:
                 self.loaded_chunks.add(0)
-            placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(self.true_server_count)]
+            initial = min(50, self.true_server_count)
+            placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(initial)]
             self.album_model.clear()
             self.album_model.append_albums(placeholders)
             if pending:
+                _cached = pending
                 self._pending_cached_chunk = None
-                self._on_chunk_loaded(pending, 0)
+                # Defer chunk injection one frame so skeleton renders first, then real data fills in
+                from PyQt6.QtCore import QTimer as _QT
+                _QT.singleShot(0, lambda: self._on_chunk_loaded(_cached, 0))
                 # For random sort: fetch a fresh set in background and cache it for
                 # next visit without replacing the current view (next-session refresh)
                 if _is_random:
@@ -3370,17 +3382,21 @@ class LibraryGridBrowser(QWidget):
         self.client = client
         if self.client:
             if self.cover_worker:
+                _sc('cover_worker.quit START')
                 self.cover_worker.stop()
                 self.cover_worker.cover_ready.disconnect()
                 self.cover_worker.quit()
                 self.cover_worker.wait(500)
+                _sc('cover_worker.quit DONE')
             self.cover_worker = GridCoverWorker(client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
+            _sc('cover_worker started')
 
             # Stale-while-revalidate: show cached count+chunk instantly, refresh behind
             _sort = getattr(self, 'current_sort', 'latest')
             cached_count = client.stale_cache_get('albums_count')
+            _sc('cache read')
             cached_chunk = client.stale_cache_get(f'albums_chunk_0_{_sort}')
             if cached_count and isinstance(cached_count, int) and cached_count > 0:
                 self.true_server_count = cached_count
@@ -3394,8 +3410,10 @@ class LibraryGridBrowser(QWidget):
             self.count_worker = ServerCountWorker(client)
             self.count_worker.count_ready.connect(self.update_server_count_ui)
             self.count_worker.start()
+            _sc('count_worker started')
 
             self.refresh_grid()
+            _sc('refresh_grid done')
             
         if hasattr(self, 'detail_view'):
             self.detail_view.client = client
@@ -3416,6 +3434,12 @@ class LibraryGridBrowser(QWidget):
             self.total_items = self.true_server_count
             self.load_albums_page(reset=True)
     
+    def show_loading(self):
+        """Instant visual feedback — clear grid and show loading state before data arrives."""
+        self.album_model.clear()
+        if hasattr(self, 'status_label'):
+            self.status_label.setText("Loading...")
+
     def refresh_grid(self):
         # 1. Reset the server count unless stale cache provided it
         if not getattr(self, '_stale_count_set', False):
@@ -3423,14 +3447,13 @@ class LibraryGridBrowser(QWidget):
         self._stale_count_set = False
         self.all_albums_cache = []
         self.all_albums_sort = None
-        
+
         # 2. Brutally wipe the API cache so we don't just reload the old albums from memory!
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):
-            # 👇 THE FIX: Search for 'albums_', not 'getAlbumList2'!
             keys_to_delete = [k for k in self.client._api_cache.cache.keys() if 'albums_' in str(k)]
             for k in keys_to_delete:
                 del self.client._api_cache.cache[k]
-                
+
         self.load_albums_page(reset=True)
 
     def go_to_root(self):

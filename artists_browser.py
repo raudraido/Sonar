@@ -3300,6 +3300,14 @@ class ArtistGridBrowser(QWidget):
     def check_viewport_qml(self, start_idx, end_idx):
         if len(self.artist_model.artists) == 0: return
 
+        # Lazy placeholder expansion
+        total = getattr(self, 'true_server_count', 0)
+        current_rows = len(self.artist_model.artists)
+        if total > current_rows and end_idx >= current_rows - 10:
+            expand_to = min(current_rows + 50, total)
+            extra = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(expand_to - current_rows)]
+            self.artist_model.append_artists(extra)
+
         start_chunk = max(0, start_idx // 50)
         end_chunk   = max(0, end_idx   // 50)
         visible_chunks = set(range(start_chunk, end_chunk + 1))
@@ -3569,11 +3577,14 @@ class ArtistGridBrowser(QWidget):
                 if not hasattr(self, 'active_chunk_workers'):
                     self.active_chunk_workers = {}
                 self.active_chunk_workers[0] = None  # satisfy is_expected check in _on_chunk_loaded
-            placeholders = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(total_count)]
+            initial = min(50, total_count)
+            placeholders = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(initial)]
             self.artist_model.append_artists(placeholders)
             if pending:
+                _cached = pending
                 self._pending_cached_chunk = None
-                self._on_chunk_loaded(pending, 0)
+                from PyQt6.QtCore import QTimer as _QT
+                _QT.singleShot(0, lambda: self._on_chunk_loaded(_cached, 0))
             self.check_viewport_qml(0, 50)
 
     def _on_initial_count_loaded(self, items, total_items, total_pages):
@@ -3666,6 +3677,12 @@ class ArtistGridBrowser(QWidget):
             cached_chunk = client.stale_cache_get(f'artists_chunk_0_{_sort}')
             self._pending_cached_chunk = cached_chunk or None
             self.refresh_grid()
+
+    def show_loading(self):
+        """Instant visual feedback — clear grid and show loading state before data arrives."""
+        self.artist_model.clear()
+        if hasattr(self, 'status_label'):
+            self.status_label.setText("Loading...")
 
     def refresh_grid(self):
         # 1. Clear the UI memory caches

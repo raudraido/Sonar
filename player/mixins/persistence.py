@@ -296,13 +296,25 @@ class PersistenceMixin:
         if not hasattr(self, '_initialized_tabs'):
             self._initialized_tabs = set()
 
-        # Defer init one frame so the tab switch renders before heavy work starts
+        # Show loading state immediately (same frame as click), then init next frame
         if widget is getattr(self, 'album_browser', None) and 'albums' not in self._initialized_tabs:
-            self._initialized_tabs.add('albums')  # reserve to prevent double-init
-            QTimer.singleShot(0, lambda: self._init_tab_albums(client))
+            self._initialized_tabs.add('albums')
+            if hasattr(self.album_browser, 'show_loading'):
+                self.album_browser.show_loading()
+            def _do_init_albums():
+                self.album_browser.set_client(client)
+                try: self.album_browser.switch_to_artist_tab.disconnect()
+                except: pass
+                self.album_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
+                self._initialized_tabs.add('albums')
+            QTimer.singleShot(0, _do_init_albums)
         elif widget is getattr(self, 'artist_browser', None) and 'artists' not in self._initialized_tabs:
             self._initialized_tabs.add('artists')
-            QTimer.singleShot(0, lambda: self._init_tab_artists(client))
+            if hasattr(self.artist_browser, 'show_loading'):
+                self.artist_browser.show_loading()
+            def _do_init_artists():
+                self._init_tab_artists(client)
+            QTimer.singleShot(0, _do_init_artists)
         elif widget is getattr(self, 'tracks_browser', None) and 'tracks' not in self._initialized_tabs:
             self._initialized_tabs.add('tracks')
             QTimer.singleShot(0, lambda: self._init_tab_tracks(client))
