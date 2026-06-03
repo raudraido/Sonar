@@ -3300,13 +3300,22 @@ class ArtistGridBrowser(QWidget):
     def check_viewport_qml(self, start_idx, end_idx):
         if len(self.artist_model.artists) == 0: return
 
-        # Lazy placeholder expansion
+        # Lazy placeholder expansion — deferred to avoid re-entrant beginInsertRows during QML layout.
         total = getattr(self, 'true_server_count', 0)
         current_rows = len(self.artist_model.artists)
         if total > current_rows and end_idx >= current_rows - 10:
-            expand_to = min(current_rows + 50, total)
-            extra = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(expand_to - current_rows)]
-            self.artist_model.append_artists(extra)
+            if not getattr(self, '_placeholder_expansion_pending', False):
+                self._placeholder_expansion_pending = True
+                def _expand():
+                    self._placeholder_expansion_pending = False
+                    rows_now = len(self.artist_model.artists)
+                    tot_now  = getattr(self, 'true_server_count', 0)
+                    if tot_now > rows_now:
+                        expand_to = min(rows_now + 50, tot_now)
+                        extra = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(expand_to - rows_now)]
+                        self.artist_model.append_artists(extra)
+                from PyQt6.QtCore import QTimer as _QT
+                _QT.singleShot(0, _expand)
 
         start_chunk = max(0, start_idx // 50)
         end_chunk   = max(0, end_idx   // 50)

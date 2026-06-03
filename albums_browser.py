@@ -3083,13 +3083,23 @@ class LibraryGridBrowser(QWidget):
         if self.album_model.rowCount() == 0: return
         if getattr(self, 'current_sort', 'latest') == 'compilations': return
 
-        # Lazy placeholder expansion: grow model as user scrolls into new territory
+        # Lazy placeholder expansion: grow model as user scrolls into new territory.
+        # Deferred via QTimer to avoid re-entrant beginInsertRows during QML layout.
         total = getattr(self, 'true_server_count', 0)
         current_rows = self.album_model.rowCount()
         if total > current_rows and end_idx >= current_rows - 10:
-            expand_to = min(current_rows + 50, total)
-            extra = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(expand_to - current_rows)]
-            self.album_model.append_albums(extra)
+            if not getattr(self, '_placeholder_expansion_pending', False):
+                self._placeholder_expansion_pending = True
+                def _expand():
+                    self._placeholder_expansion_pending = False
+                    rows_now = self.album_model.rowCount()
+                    tot_now  = getattr(self, 'true_server_count', 0)
+                    if tot_now > rows_now:
+                        expand_to = min(rows_now + 50, tot_now)
+                        extra = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(expand_to - rows_now)]
+                        self.album_model.append_albums(extra)
+                from PyQt6.QtCore import QTimer as _QT
+                _QT.singleShot(0, _expand)
 
 
 
@@ -3382,21 +3392,17 @@ class LibraryGridBrowser(QWidget):
         self.client = client
         if self.client:
             if self.cover_worker:
-                _sc('cover_worker.quit START')
                 self.cover_worker.stop()
                 self.cover_worker.cover_ready.disconnect()
                 self.cover_worker.quit()
                 self.cover_worker.wait(500)
-                _sc('cover_worker.quit DONE')
             self.cover_worker = GridCoverWorker(client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
-            _sc('cover_worker started')
 
             # Stale-while-revalidate: show cached count+chunk instantly, refresh behind
             _sort = getattr(self, 'current_sort', 'latest')
             cached_count = client.stale_cache_get('albums_count')
-            _sc('cache read')
             cached_chunk = client.stale_cache_get(f'albums_chunk_0_{_sort}')
             if cached_count and isinstance(cached_count, int) and cached_count > 0:
                 self.true_server_count = cached_count
@@ -3410,10 +3416,8 @@ class LibraryGridBrowser(QWidget):
             self.count_worker = ServerCountWorker(client)
             self.count_worker.count_ready.connect(self.update_server_count_ui)
             self.count_worker.start()
-            _sc('count_worker started')
 
             self.refresh_grid()
-            _sc('refresh_grid done')
             
         if hasattr(self, 'detail_view'):
             self.detail_view.client = client

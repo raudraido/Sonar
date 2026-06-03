@@ -486,37 +486,31 @@ class NowPlayingFooterWidget(QWidget):
     def _show_bpm_menu(self):
         if not self._current_bpm or self._current_bpm <= 0:
             return
-        from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QCursor
 
         def _fmt(v):
             s = f"{v:.2f}".rstrip('0').rstrip('.')
             return f"{s} BPM"
 
-        _theme = getattr(self.window(), 'theme', None)
+        win    = self.window()
+        _theme = getattr(win, 'theme', None)
         from player.mixins.visuals import resolve_menu_hover
         _bg  = getattr(_theme, 'main_panel_bg',      '14,14,14')
         _bc  = getattr(_theme, 'border_color',        '#444444')
         _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
         _fg2 = getattr(_theme, 'font_color_secondary','#555555')
-        _px  = getattr(_theme, 'font_size_primary',   14)
-        menu = QMenu(self)
-        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setStyleSheet(
-            f"QMenu {{ background-color: rgb({_bg}); color: {_fg}; font-size: {_px}px; border: 1px solid {_bc};"
-            "  border-radius: 12px; padding: 4px; }"
-            f"QMenu::item {{ padding: 6px 25px; border-radius: 4px; }}"
-            f"QMenu::item:selected {{ background-color: {resolve_menu_hover(_theme)}; color: {_fg}; }}"
-            f"QMenu::item:disabled {{ color: {_fg2}; }}"
-        )
+        _hov = resolve_menu_hover(_theme)
+        _px  = getattr(_theme, 'font_size_secondary', 12)
+        _acc = getattr(_theme, 'accent',              '#cccccc')
+
+        menu = ShadowContextMenu()
+        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
         for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
                              ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
             new_val = self._current_bpm * mult
-            menu.addAction(f"{label}  |  {_fmt(new_val)}").triggered.connect(
-                lambda checked=False, v=new_val: self.bpm_adjusted.emit(v)
-            )
-        menu.exec(QCursor.pos())
+            menu.add_action(f"{label}  |  {_fmt(new_val)}",
+                            callback=lambda v=new_val: self.bpm_adjusted.emit(v))
+        menu.exec_at(QCursor.pos(), window=win)
 
 
 
@@ -1389,7 +1383,7 @@ class SquareArtContainer(QWidget):
 
 class ShadowContextMenu(QFrame):
     """Universal shadow context menu — psysonic style: 0 12px 32px rgba(0,0,0,0.6)."""
-    _PAD = 36
+    _PAD = 20
 
     def __init__(self, parent=None, is_submenu: bool = False):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
@@ -1554,7 +1548,7 @@ class ShadowContextMenu(QFrame):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         pad = self._PAD
-        BLUR = 35; OY = 10; MAX_A = 45
+        BLUR = 16; OY = 6; MAX_A = 55
         pl = 4 if self._is_sub else pad
         content = QRectF(self.rect()).adjusted(pl, pad, -pad, -pad)
         p.setPen(Qt.PenStyle.NoPen)
