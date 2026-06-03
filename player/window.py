@@ -949,8 +949,8 @@ class SonarPlayer(
                 self.visualizer = AudioVisualizer(self.audio_engine)
                 self._vis_lo.addWidget(self.visualizer, 1)
                 saved_vis = self.settings.value('vis_mode')
-                if saved_vis:
-                    self.visualizer.vis_mode = saved_vis
+                if saved_vis is not None:
+                    self.visualizer.vis_mode = int(saved_vis)
                 if hasattr(self, 'theme'):
                     self.visualizer.bar_color = QColor(self.theme.accent)
                     self.visualizer.set_bg_color(self.theme.main_panel_bg)
