@@ -3029,6 +3029,7 @@ class ArtistGridBridge(QObject):
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
     skeletonBaseColorChanged  = pyqtSignal(str)
+    infoLineCountChanged      = pyqtSignal(int)
 
     def __init__(self, artist_model):
         super().__init__()

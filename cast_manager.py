@@ -28,43 +28,35 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QPixmap, QPainter
 
-# ── Optional protocol libraries ───────────────────────────────────────────
+# ── Optional protocol libraries — checked lazily so import cast_manager is instant
+# The actual heavy imports happen inside background-thread discovery functions.
 
-try:
-    import pychromecast
-    from pychromecast.discovery import CastBrowser, SimpleCastListener
-    _HAVE_CC = True
+def _check_have_cc():
+    try:
+        import importlib
+        importlib.util.find_spec('pychromecast')
+        return True
+    except Exception:
+        return False
 
-    # Monkey-patch older versions of pychromecast to fix a known mDNS bug
-    # that crashes discovery with: "cannot access local variable 'host'"
-    import pychromecast.discovery
-    if not getattr(pychromecast.discovery, '_patched_for_host_bug', False):
-        _orig_get_info = getattr(pychromecast.discovery, 'get_info_from_service', None)
-        if _orig_get_info:
-            def _safe_get_info(*args, **kwargs):
-                try:
-                    return _orig_get_info(*args, **kwargs)
-                except UnboundLocalError as e:
-                    if 'host' in str(e): return None
-                    raise
-            pychromecast.discovery.get_info_from_service = _safe_get_info
-            pychromecast.discovery._patched_for_host_bug = True
-except ImportError:
-    _HAVE_CC = False
+def _check_have_dlna():
+    try:
+        import importlib
+        return (importlib.util.find_spec('aiohttp') is not None and
+                importlib.util.find_spec('async_upnp_client') is not None)
+    except Exception:
+        return False
 
-try:
-    import aiohttp
-    from async_upnp_client.search import async_search
-    _HAVE_DLNA = True
-except ImportError:
-    _HAVE_DLNA = False
+def _check_have_ap():
+    try:
+        import importlib
+        return importlib.util.find_spec('pyatv') is not None
+    except Exception:
+        return False
 
-try:
-    import pyatv as _pyatv_mod   # noqa: F401 — just check presence
-    from airplay_manager import AirPlayDevice, AirPlayDeviceInfo, discover as _ap_discover
-    _HAVE_AP = True
-except ImportError:
-    _HAVE_AP = False
+_HAVE_CC   = _check_have_cc()
+_HAVE_DLNA = _check_have_dlna()
+_HAVE_AP   = _check_have_ap()
 
 
 # ── Dedicated asyncio loop (for DLNA async operations) ────────────────────
@@ -942,10 +934,11 @@ class _CastPopup(QFrame):
         # which always composite on top of regular child widgets.
         self.setWindowFlags(
             Qt.WindowType.Tool |
-            Qt.WindowType.FramelessWindowHint
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._anchor_bottom = None   # global Y of popup bottom edge, set in show_near
+        self._anchor_bottom = None
         self._on_close_cb = None
         self._active_ids  = set()
         self._rows: dict  = {}
@@ -954,11 +947,12 @@ class _CastPopup(QFrame):
         self.setObjectName('CastPopup')
         self.setMinimumWidth(320)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        # Background and border are painted in paintEvent so WA_TranslucentBackground works.
         self.setStyleSheet('QFrame#CastPopup { background: transparent; }')
 
+        _PAD = 28
+        self._PAD = _PAD
         self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(0, 0, 0, 8)
+        self._lay.setContentsMargins(_PAD, _PAD, _PAD, _PAD + 4)
         self._lay.setSpacing(0)
 
         # ── fixed header (updated in place on each refresh) ───────────────
@@ -1168,57 +1162,89 @@ class _CastPopup(QFrame):
             border_qcolor = QColor(getattr(theme, 'accent', '#cccccc')).darker(250)
         else:
             border_qcolor = QColor(getattr(theme, 'manual_border_color', '#2a2a2a'))
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12.0, 12.0)
-        painter.fillPath(path, QColor(r, g, b))
-        painter.setPen(QPen(border_qcolor, 1.0))
-        painter.drawPath(path)
-        painter.end()
 
-    def show_near(self, button):
-        from PyQt6.QtCore import QPoint, QTimer
-        from PyQt6.QtWidgets import QApplication
+        pad = self._PAD
+        content = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
 
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+
+        # Shadow rings (same style as ShadowContextMenu)
+        BLUR = 28; OY = 8; MAX_A = 40
+        for i in range(14, 0, -1):
+            t = i / 14
+            alpha = int(MAX_A * (1 - t) ** 2)
+            ex = BLUR * t
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(content.adjusted(-ex * .7, -ex * .4 + OY * (1-t),
+                                               ex * .7, ex + OY * t),
+                              10 + ex * .25, 10 + ex * .25)
+
+        # Background + border
+        p.setBrush(QColor(r, g, b))
+        p.setPen(QPen(border_qcolor, 1.0))
+        p.drawRoundedRect(content, 10, 10)
+        p.end()
+
+    def _anchor_to_button(self, button):
+        """Compute and apply position anchored above the button."""
+        from PyQt6.QtCore import QPoint
         if self.layout():
             self.layout().activate()
         hint = self.sizeHint()
-        w = max(hint.width(), self.minimumWidth(), 320)
-        h = hint.height() if hint.height() > 0 else 200
-
-        # Global coords — required because the popup is now a top-level Tool window.
+        w = max(hint.width() or self.width(), self.minimumWidth(), 320)
+        h = hint.height() if hint.height() > 0 else (self.height() or 200)
+        pad = getattr(self, '_PAD', 0)
         g = button.mapToGlobal(QPoint(0, 0))
-        x = g.x() + button.width() // 2 - w // 2
-        y = g.y() - h - 8
+        x = g.x() + button.width() // 2 - w // 2 + pad
+        y = g.y() - h - 8 + pad
         if self.parent():
             par = self.parent()
             pg  = par.mapToGlobal(QPoint(0, 0))
             x   = max(pg.x() + 8, min(x, pg.x() + par.width() - w - 8))
             y   = max(pg.y() + 8, y)
-
         self.resize(w, h)
         self.move(x, y)
-        self._anchor_bottom = y + h   # keep bottom edge fixed when height changes later
+        self._anchor_bottom = y + h
+
+    def show_near(self, button):
+        from PyQt6.QtCore import QPoint, QTimer
+        from PyQt6.QtWidgets import QApplication
+
+        self._anchor_btn = button
+        self._anchor_to_button(button)
         self.show()
         self.raise_()
+
+        # Follow the main window when it moves
+        win = button.window()
+        if win and win not in getattr(self, '_move_tracked', set()):
+            win.installEventFilter(self)
+            if not hasattr(self, '_move_tracked'):
+                self._move_tracked = set()
+            self._move_tracked.add(win)
 
         QTimer.singleShot(300, lambda: QApplication.instance().installEventFilter(self))
 
     def _reposition(self):
-        """Resize to sizeHint and re-anchor the bottom edge above the button."""
-        from PyQt6.QtCore import QPoint
-        self.layout().activate()
-        new_h = self.sizeHint().height()
-        if new_h <= 0:
-            new_h = self.height()
-        new_y = (self._anchor_bottom - new_h) if self._anchor_bottom is not None else self.y()
-        if self.parent():
-            par = self.parent()
-            pg  = par.mapToGlobal(QPoint(0, 0))
-            new_y = max(pg.y() + 8, new_y)
-        self.resize(self.width(), new_h)
-        self.move(self.x(), new_y)
+        """Resize to sizeHint and re-anchor above the button."""
+        btn = getattr(self, '_anchor_btn', None)
+        if btn:
+            self._anchor_to_button(btn)
+        else:
+            from PyQt6.QtCore import QPoint
+            self.layout().activate()
+            new_h = self.sizeHint().height()
+            if new_h <= 0:
+                new_h = self.height()
+            new_y = (self._anchor_bottom - new_h) if self._anchor_bottom is not None else self.y()
+            if self.parent():
+                par = self.parent()
+                pg  = par.mapToGlobal(QPoint(0, 0))
+                new_y = max(pg.y() + 8, new_y)
+            self.resize(self.width(), new_h)
+            self.move(self.x(), new_y)
 
     def _dismiss(self):
         from PyQt6.QtWidgets import QApplication
@@ -1227,8 +1253,14 @@ class _CastPopup(QFrame):
         if self._on_close_cb:
             self._on_close_cb()
 
-    def eventFilter(self, _, event):
+    def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent, QRect
+        if event.type() == QEvent.Type.Move:
+            # Main window moved — reposition popup to stay above cast button
+            btn = getattr(self, '_anchor_btn', None)
+            if btn and self.isVisible():
+                self._anchor_to_button(btn)
+            return False
         if event.type() == QEvent.Type.MouseButtonPress:
             pos = event.globalPosition().toPoint()
             tl  = self.mapToGlobal(self.rect().topLeft())
@@ -1279,8 +1311,8 @@ class CastManager:
         self._popup.volume_changed.connect(self._on_volume_changed)
         self._popup._on_close_cb = self._on_popup_hidden
 
-        if _HAVE_CC or _HAVE_DLNA or _HAVE_AP:
-            self._start_scan()
+        # Scan deferred to first show_picker() call — avoids blocking asyncio loop
+        # creation during __init__ which delays the popup from opening
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -1422,12 +1454,27 @@ class CastManager:
         self._pending_scans = max(0, self._pending_scans - 1)
         if self._pending_scans == 0:
             self._scan_time = _t.time()
-        # Feed the popup with newly discovered devices only while it's open
-        if self._popup.isVisible() and devices:
-            self._popup.add_devices(devices)
+        if self._popup.isVisible():
+            if devices:
+                self._popup.add_devices(devices)
+            elif self._pending_scans == 0:
+                # All scans finished with no devices — update status label
+                self._popup.add_devices([])
 
     def _discover_cc(self, bridge: _Bridge):
         try:
+            import pychromecast
+            import pychromecast.discovery
+            if not getattr(pychromecast.discovery, '_patched_for_host_bug', False):
+                _orig = getattr(pychromecast.discovery, 'get_info_from_service', None)
+                if _orig:
+                    def _safe(*a, **k):
+                        try: return _orig(*a, **k)
+                        except UnboundLocalError as e:
+                            if 'host' in str(e): return None
+                            raise
+                    pychromecast.discovery.get_info_from_service = _safe
+                    pychromecast.discovery._patched_for_host_bug = True
             chromecasts, browser = pychromecast.get_chromecasts(timeout=5)
             # Manager owns the browser; keep it alive until all cc.wait() finish.
             # Stop the old browser only if no Chromecast devices are currently active.
@@ -1453,6 +1500,8 @@ class CastManager:
             bridge.devices_found.emit([])
 
     async def _discover_dlna(self, bridge: _Bridge):
+        import aiohttp
+        from async_upnp_client.search import async_search
         devices = []
         seen_locations = set()
 
@@ -1515,6 +1564,7 @@ class CastManager:
 
     def _discover_airplay(self, bridge: _Bridge):
         try:
+            from airplay_manager import discover as _ap_discover
             ap_devices = _ap_discover(timeout=5.0)
             devices = [
                 DeviceInfo(
