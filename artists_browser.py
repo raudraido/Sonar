@@ -1,7 +1,7 @@
 import os
 import json
 import random
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller
 import math
 import re
 from collections import OrderedDict
@@ -534,7 +534,7 @@ class PopularTrackDelegate(QStyledItemDelegate):
         is_selected = option.state & QStyle.StateFlag.State_Selected
         is_hovered = option.state & QStyle.StateFlag.State_MouseOver
 
-        if index.column() == 1 and is_hovered:
+        if index.column() == 1 and (is_hovered or is_selected):
             view = option.widget
             vp_w = view.viewport().width() if view else option.rect.width()
             # The SongListWidget has no scrollbar; check parent QScrollArea instead
@@ -719,6 +719,10 @@ class SongListWidget(QTreeWidget):
         self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
         self.viewport().update()
         super().leaveEvent(event)
+
+    def currentChanged(self, current, previous):
+        super().currentChanged(current, previous)
+        self.viewport().update()
 
     def update_style(self, accent_color):
         self.track_delegate.update_color(accent_color)
@@ -1855,6 +1859,7 @@ class ArtistRichDetailView(QWidget):
         self.scroll.setWidget(self.content_widget)
         self.layout.addWidget(self.scroll)
         self.scroll.verticalScrollBar().valueChanged.connect(self.on_scroll)
+        SmoothScroller(self.scroll)
 
 
         # For the artist view, song_list has FocusPolicy.NoFocus so no child
