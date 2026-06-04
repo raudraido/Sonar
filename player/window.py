@@ -357,7 +357,6 @@ class _ResizeHandle(QWidget):
         self._drag_w         = None
 
         self.setFixedWidth(12)
-        self.setCursor(Qt.CursorShape.SizeHorCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAutoFillBackground(False)
 
@@ -387,7 +386,7 @@ class _ResizeHandle(QWidget):
     def enterEvent(self, event):
         self._hovered = True
         self._anim.stop(); self._anim.setEndValue(1.0); self._anim.start()
-        local_y = self.mapFromGlobal(event.globalPos()).y() if hasattr(event, 'globalPos') else self.height() // 2
+        local_y = int(event.position().y())
         self.setCursor(Qt.CursorShape.SizeHorCursor if self._near_dots(local_y) else Qt.CursorShape.ArrowCursor)
         self.update()
         super().enterEvent(event)

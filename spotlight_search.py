@@ -383,7 +383,6 @@ class SpotlightSearch(QWidget):
         self.container = QWidget(self)
         self.container.setFixedWidth(750)
         self.container.setObjectName("SpotlightContainer")
-        self.container.setStyleSheet("#SpotlightContainer { background-color: #0d0d0d; border-radius: 8px; border: 1px solid #2a2a2a; }")
         
         container_layout = QVBoxLayout(self.container)
         container_layout.setContentsMargins(0, 15, 0, 10)
@@ -405,8 +404,7 @@ class SpotlightSearch(QWidget):
         self.line.setFrameShape(QFrame.Shape.HLine)
         self.line.setFrameShadow(QFrame.Shadow.Plain)
         self.line.setFixedHeight(1)
-        self.line.setStyleSheet("background-color: #2a2a2a; border: none;")
-        self.line.hide() # 🟢 THE FIX: Hide it by default!
+        self.line.hide()
         container_layout.addWidget(self.line)
 
         self.list_widget = QListWidget()
@@ -462,6 +460,7 @@ class SpotlightSearch(QWidget):
         bc  = getattr(theme, 'border_color', '#2a2a2a')
         fc1 = getattr(theme, 'font_color_primary', '#dddddd')
         self.container.setStyleSheet(f"#SpotlightContainer {{ background-color: rgb({bg}); border-radius: 8px; border: 1px solid {bc}; }}")
+        self.line.setStyleSheet(f"background-color: {bc}; border: none;")
         self.input.setStyleSheet(f"""
             QLineEdit {{ background: transparent; color: {fc1}; font-size: 24px; border: none; padding-bottom: 5px; outline: none; }}
             QLineEdit:focus {{ border: none; outline: none; }}
