@@ -8,7 +8,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
                           QEasingCurve, QPoint)
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller
 from tracks_browser import MiddleClickScroller
 
 
@@ -915,6 +915,7 @@ class HomeView(QWidget):
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.omni_scroller = MiddleClickScroller(self.scroll)
+        SmoothScroller(self.scroll)
 
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)

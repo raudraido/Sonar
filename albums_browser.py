@@ -1,6 +1,6 @@
 import time
 import os
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
 import sys
 import random
 import re
@@ -1463,6 +1463,7 @@ class AlbumDetailView(QWidget):
         self.scroll_area.setWidget(_scroll_content)
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._update_track_right_margin)
         self.omni_scroller = MiddleClickScroller(self.scroll_area)
+        SmoothScroller(self.scroll_area)
 
         main_layout.addWidget(self.scroll_area, 1)
 

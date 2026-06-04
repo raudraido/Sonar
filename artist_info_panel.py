@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QScrollBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QSize
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath
 
 
@@ -228,6 +228,7 @@ class ArtistInfoPanel(QScrollArea):
         self.verticalScrollBar().valueChanged.connect(self._overlay_sb.setValue)
         self.verticalScrollBar().rangeChanged.connect(self._sync_overlay_sb)
         self._scroll_reveal = install_scroll_reveal(self.viewport(), self._overlay_sb)
+        SmoothScroller(self)
 
         self._root = QWidget()
         self._root.setStyleSheet("background: transparent;")

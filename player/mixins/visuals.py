@@ -57,6 +57,59 @@ def install_scroll_reveal(viewport, scrollbar):
     return f
 
 
+class SmoothScroller(QObject):
+    """
+    Smooth wheel-scroll for any QAbstractScrollArea (QScrollArea, QListWidget,
+    QTreeWidget, QTreeView, etc.).
+
+    Usage:
+        SmoothScroller(my_widget)
+
+    Parents itself to the widget so it is cleaned up automatically.
+    Also syncs the internal target whenever the scrollbar moves externally
+    (drag, keyboard navigation, programmatic setValue) so the user can always
+    scroll to any position without the animation fighting back.
+    """
+    _PIXELS_PER_NOTCH = 180  # 60 px * speed 3.0
+    _EASING = 0.25           # fraction of remaining distance applied per 16 ms frame
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        if isinstance(widget, QAbstractItemView):
+            widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._w = widget
+        self._target = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+        widget.viewport().installEventFilter(self)
+        widget.verticalScrollBar().valueChanged.connect(self._on_external_move)
+
+    def _tick(self):
+        sb = self._w.verticalScrollBar()
+        diff = self._target - sb.value()
+        if abs(diff) < 0.5:
+            sb.setValue(int(self._target))
+            self._timer.stop()
+        else:
+            sb.setValue(int(sb.value() + diff * self._EASING))
+
+    def _on_external_move(self, value: int):
+        if not self._timer.isActive():
+            self._target = float(value)
+
+    def eventFilter(self, obj, event):
+        if obj is self._w.viewport() and event.type() == QEvent.Type.Wheel:
+            sb = self._w.verticalScrollBar()
+            delta = event.angleDelta().y()
+            step = -(delta / 120.0) * self._PIXELS_PER_NOTCH
+            self._target = max(sb.minimum(), min(sb.maximum(), self._target + step))
+            if not self._timer.isActive():
+                self._timer.start()
+            return True
+        return super().eventFilter(obj, event)
+
+
 def resolve_active_hover(theme) -> 'QColor':
     """Return the active-hover halo colour (tab bar + tracklist keyboard halo)."""
     if getattr(theme, 'active_hover_auto', True):

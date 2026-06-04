@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QThread, QTimer,
                           QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl, QPoint)
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
@@ -386,6 +386,7 @@ class PlaylistDetailView(QWidget):
         # Finish setting up the single track list
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
+        SmoothScroller(self.scroll_area)
         self.track_list.tree._ext_sb = self.scroll_area.verticalScrollBar()
         self.track_list.tree.installEventFilter(self)
 

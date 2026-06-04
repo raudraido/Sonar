@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QRectF, QPoint, QSettings
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QAction, QPen, QMovie, QPixmap, QIcon
 import os
 import re
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
 from player import resource_path
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
@@ -619,6 +619,7 @@ class QueuePanel(QWidget):
         self._list.setDropIndicatorShown(True)
         self._list.model().rowsMoved.connect(self._on_rows_moved)
         self._update_list_style()
+        SmoothScroller(self._list)
 
         col.addWidget(self._list)
         col.addWidget(self._lyrics_panel)

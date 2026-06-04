@@ -178,7 +178,7 @@ class _GenrePopup(QFrame):
         self.selection_changed.emit(set())
 from albums_browser import GridCoverWorker, _TrackListDelegate, _TrackHeader, resource_path
 from now_playing_info import _Card
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, SmoothScroller
 
 
 class _SortableTrackHeader(_TrackHeader):
@@ -364,6 +364,7 @@ class FavoritesView(QWidget):
         self._layout.setSpacing(10)
         self.scroll.setWidget(content)
         main.addWidget(self.scroll)
+        SmoothScroller(self.scroll)
 
         # ── Artists row ───────────────────────────────────────────────────
         self._artists_row = HomeAlbumRowWidget('Artists')
@@ -542,6 +543,7 @@ class FavoritesView(QWidget):
         self._track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
         self._track_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._track_tree.customContextMenuRequested.connect(self._show_context_menu)
+        SmoothScroller(self._track_tree)
 
         self._track_card = _Card()
         _tcl = QVBoxLayout(self._track_card)
