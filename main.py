@@ -99,7 +99,7 @@ if __name__ == '__main__':
     # Must be set before any QQuickWidget/QML engine is created.
     _screen_hz = (app.primaryScreen().refreshRate() if app.primaryScreen() else 60.0)
     _anim_ms = max(1, round(1000 / _screen_hz))
-    print(f'[Display] Refresh rate: {_screen_hz:.1f}Hz → QML animation interval: {_anim_ms}ms', flush=True)
+    print(f'[Display] Refresh rate: {_screen_hz:.1f}Hz, QML animation interval: {_anim_ms}ms', flush=True)
     os.environ["QML_ANIMATION_DRIVER_TARGET_ELAPSED_MS"] = str(_anim_ms)  # always override
 
     app.setStyle("Fusion")

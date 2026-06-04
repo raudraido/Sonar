@@ -85,6 +85,8 @@ Rectangle {
                 var minY = -grid.topMargin
                 var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)
                 grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
+                grid._animating = true
+                if (!smoothScrollTimer.running) smoothScrollTimer.start()
                 wheel.accepted = true
             }
         }
@@ -144,19 +146,30 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
 
         property real targetY: 0
+        property bool _animating: false
 
         Timer {
+            id: smoothScrollTimer
             interval: 16
-            running: Math.abs(grid.contentY - grid.targetY) > 0.5
             repeat: true
             onTriggered: {
-                grid.contentY += (grid.targetY - grid.contentY) * 0.25
+                var diff = grid.targetY - grid.contentY
+                if (Math.abs(diff) < 0.5) {
+                    grid.contentY = grid.targetY
+                    grid._animating = false
+                    smoothScrollTimer.stop()
+                } else {
+                    grid.contentY += diff * 0.25
+                }
             }
         }
 
         Timer { interval: 200; running: true; repeat: false; onTriggered: grid.forceLayout() }
 
-        onContentYChanged: { reportScroll(); root.isScrollActive = true; scrollHideTimer.restart() }
+        onContentYChanged: {
+            reportScroll(); root.isScrollActive = true; scrollHideTimer.restart()
+            if (!grid._animating) grid.targetY = grid.contentY
+        }
         onHeightChanged: reportScroll()
 
         function reportScroll() {
