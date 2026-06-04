@@ -568,29 +568,77 @@ class FooterClickableLabel(QLabel):
 
 
 
-class TriangleTooltip(QLabel):
+class TriangleTooltip(QWidget):
+    """Tooltip — transparent outer window + styled inner label + drop shadow."""
+
+    # shadow margin so drop shadow fits inside the transparent window
+    _SH = 16
+
     def __init__(self, parent=None, show_triangle=True):
-        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint |
+                         Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.show_triangle = show_triangle
         self.hide()
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setContentsMargins(10, 5, 10, 10 if show_triangle else 5) 
-        self.setFont(QFont('Sans Serif', 12, QFont.Weight.Bold))
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        bottom_margin = -6 if self.show_triangle else 0
-        rect = self.rect().adjusted(1, 1, -1, bottom_margin)
-        painter.setBrush(QColor("#0d0d0d"))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(rect, 10, 10)
-        if self.show_triangle:
-            triangle = QPolygon([QPoint(self.width()//2-6, rect.bottom()), QPoint(self.width()//2+6, rect.bottom()), QPoint(self.width()//2, self.height()-1)])
-            painter.setBrush(QColor("#0d0d0d")); painter.drawPolygon(triangle)
-        painter.setPen(QColor("#ffffff")); painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.text())
+        from PyQt6.QtWidgets import QHBoxLayout, QLabel, QGraphicsDropShadowEffect
+        lay = QHBoxLayout(self)
+        sh = self._SH
+        lay.setContentsMargins(sh, sh, sh, sh)
+        lay.setSpacing(0)
+
+        self._lbl = QLabel()
+        self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl.setContentsMargins(8, 4, 8, 4)
+        lay.addWidget(self._lbl)
+
+        # Shadow on the inner label — stays within the transparent outer window
+        eff = QGraphicsDropShadowEffect(self._lbl)
+        eff.setBlurRadius(12)
+        eff.setOffset(0, 4)
+        eff.setColor(QColor(0, 0, 0, 153))   # rgba(0,0,0,0.6) — psysonic exact
+        self._lbl.setGraphicsEffect(eff)
+
+    @staticmethod
+    def _get_theme():
+        from PyQt6.QtWidgets import QApplication
+        for w in QApplication.topLevelWidgets():
+            t = getattr(w, 'theme', None)
+            if t: return t
+        return None
+
+    def text(self):
+        return self._lbl.text()
+
+    def setText(self, text):
+        self._lbl.setText(text)
+
+    def _apply_theme(self):
+        t = self._get_theme()
+        fg = getattr(t, 'font_color_secondary', '#999999') if t else '#999999'
+        px = getattr(t, 'font_size_primary',    14)        if t else 14
+        bg = getattr(t, 'main_panel_bg',  '20,20,20')  if t else '20,20,20'
+        if t and getattr(t, 'auto_border_from_accent', True):
+            bc = QColor(getattr(t, 'accent', '#cccccc')).darker(250).name()
+        else:
+            bc = getattr(t, 'manual_border_color', '#2a2a2a') if t else '#2a2a2a'
+        self._lbl.setStyleSheet(
+            f'color: {fg}; font-size: {px}px; background: rgb({bg});'
+            f' border: 1px solid {bc}; border-radius: 6px;'
+        )
+
+    def show(self):
+        self._apply_theme()
+        super().show()
+
+    def show_at(self, pos, text):
+        self._lbl.setText(text)
+        self._apply_theme()
+        self.adjustSize()
+        self.move(pos)
+        super().show()
+        self.raise_()
 
 
 

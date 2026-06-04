@@ -233,41 +233,75 @@ from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
 
 
 class _TooltipLabel(_QFrame):
-    """Custom tooltip popup with column-header matching style."""
+    """Custom tooltip popup with painted shadow + text."""
+    _PAD = 12
+
     def __init__(self):
-        super().__init__(None, _Qt2.WindowType.ToolTip | _Qt2.WindowType.FramelessWindowHint | _Qt2.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(_Qt2.WidgetAttribute.WA_TranslucentBackground, False)
+        super().__init__(None, _Qt2.WindowType.ToolTip | _Qt2.WindowType.FramelessWindowHint |
+                         _Qt2.WindowType.WindowStaysOnTopHint | _Qt2.WindowType.NoDropShadowWindowHint)
         self.setAttribute(_Qt2.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #1a1a1a;
-                border: 1px solid #444;
-                border-radius: 4px;
-                padding: 0px;
-            }
-        """)
-        from PyQt6.QtWidgets import QVBoxLayout, QLabel
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 4, 8, 4)
-        self._lbl = QLabel(self)
-        self._lbl.setStyleSheet("color: #888888; background: transparent; border: none; font-weight: bold;")
-        f = self._lbl.font()
-        f.setBold(True)
-        f.setPixelSize(11)
-        self._lbl.setFont(f)
-        lay.addWidget(self._lbl)
+        self.setAttribute(_Qt2.WidgetAttribute.WA_TranslucentBackground)
+        self._text  = ''
+        self._fg    = '#999999'
+        self._px    = 14
+        self._bg    = (20, 20, 20)
+        self._bc    = '#2a2a2a'
+
+    @staticmethod
+    def _get_theme():
+        from PyQt6.QtWidgets import QApplication
+        for w in QApplication.topLevelWidgets():
+            t = getattr(w, 'theme', None)
+            if t: return t
+        return None
+
+    def paintEvent(self, _):
+        from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics
+        from PyQt6.QtCore import QRectF, Qt as _Qt3
+        r, g, b = self._bg
+        bc = QColor(self._bc)
+        pad = self._PAD
+        content = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(_Qt3.PenStyle.NoPen)
+        for i in range(10, 0, -1):
+            t2 = i / 10; ex = 10 * t2
+            p.setBrush(QColor(0, 0, 0, int(80 * (1 - t2) ** 2)))
+            p.drawRoundedRect(content.adjusted(-ex*.6, -ex*.3+5*(1-t2), ex*.6, ex+5*t2), 6, 6)
+        p.setBrush(QColor(r, g, b))
+        p.setPen(QPen(bc, 1))
+        p.drawRoundedRect(content, 6, 6)
+        f = QFont(); f.setPixelSize(self._px)
+        p.setFont(f)
+        p.setPen(QColor(self._fg))
+        p.drawText(content.adjusted(10, 5, -10, -5),
+                   _Qt3.AlignmentFlag.AlignCenter, self._text)
+        p.end()
 
     def show_at(self, pos, text):
-        self._lbl.setText(text)
-        
-        # 1. Move off-screen, show, and adjust size to prevent center-screen ghosting
-        self.move(-9999, -9999)
-        self.show()
-        self._lbl.adjustSize()
-        self.adjustSize()
-        
-        # 2. Teleport to the actual mouse/widget coordinates
-        self.move(pos)
+        t = self._get_theme()
+        self._fg   = getattr(t, 'font_color_secondary', '#999999') if t else '#999999'
+        self._px   = getattr(t, 'font_size_primary',    14)        if t else 14
+        bg_str = getattr(t, 'main_panel_bg', '20,20,20') if t else '20,20,20'
+        try: self._bg = tuple(int(x) for x in bg_str.split(','))
+        except: self._bg = (20, 20, 20)
+        if t and getattr(t, 'auto_border_from_accent', True):
+            from PyQt6.QtGui import QColor as _QC
+            self._bc = _QC(getattr(t, 'accent', '#cccccc')).darker(250).name()
+        else:
+            self._bc = getattr(t, 'manual_border_color', '#2a2a2a') if t else '#2a2a2a'
+        self._text = text
+        # Measure text to set fixed size
+        from PyQt6.QtGui import QFont, QFontMetrics
+        f = QFont(); f.setPixelSize(self._px)
+        fm = QFontMetrics(f)
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+        pad = self._PAD
+        self.setFixedSize(tw + pad*2 + 20, th + pad*2 + 10)
+        self.move(pos.x(), pos.y())
+        super(_TooltipLabel, self).show()
         self.raise_()
 
 

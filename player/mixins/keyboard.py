@@ -379,8 +379,9 @@ class KeyboardMixin:
                 global_point = source.mapToGlobal(QPoint(rect.width() // 2, -10))
                 tip_w = tip.width()
                 tip_h = tip.height()
+                sh = getattr(tip, '_SH', 0)
                 tip_x = global_point.x() - tip_w // 2
-                tip_y = global_point.y() - tip_h
+                tip_y = global_point.y() - tip_h + sh
 
                 screen_rect = QApplication.instance().primaryScreen().availableGeometry()
                 if tip_y < screen_rect.y():
