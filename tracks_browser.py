@@ -955,10 +955,35 @@ class _TrackTree(QTreeWidget):
         self._hov_row = -1
         self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
+        # Smooth scrolling — pixel-level scrolling + exponential approach timer
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._scroll_target = 0.0
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setInterval(16)
+        self._scroll_timer.timeout.connect(self._smooth_scroll_tick)
+
+    def _smooth_scroll_tick(self):
+        sb = self.verticalScrollBar()
+        diff = self._scroll_target - sb.value()
+        if abs(diff) < 0.5:
+            sb.setValue(int(self._scroll_target))
+            self._scroll_timer.stop()
+        else:
+            sb.setValue(int(sb.value() + diff * 0.25))
 
     def eventFilter(self, obj, event):
         if obj is self.viewport():
             t = event.type()
+            if t == QEvent.Type.Wheel:
+                sb = self.verticalScrollBar()
+                delta = event.angleDelta().y()
+                pixels_per_notch = 60 * 3.0
+                step = -(delta / 120.0) * pixels_per_notch
+                self._scroll_target = max(sb.minimum(),
+                    min(sb.maximum(), self._scroll_target + step))
+                if not self._scroll_timer.isActive():
+                    self._scroll_timer.start()
+                return True
             if t == QEvent.Type.MouseMove:
                 row = self.indexAt(event.pos()).row()
                 if row != self._hov_row:

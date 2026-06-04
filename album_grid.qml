@@ -80,20 +80,12 @@ Rectangle {
             acceptedButtons: Qt.NoButton 
             
             onWheel: (wheel) => {
-                // Change this to 2.0, 3.0, 4.0 etc. to dial in your perfect speed!
-                var scrollSpeed = 3.0; 
-                
-                // Calculate the exact pixel jump
-                var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed;
-                var newY = grid.contentY - pixelScroll;
-                
-                var minY = -grid.topMargin;
-                var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height);
-                
-                grid.contentY = Math.max(minY, Math.min(newY, maxY));
-                
-                // CRITICAL: This tells Qt "I handled the scroll, stop using the default speed!"
-                wheel.accepted = true; 
+                var scrollSpeed = 3.0
+                var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed
+                var minY = -grid.topMargin
+                var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)
+                grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
+                wheel.accepted = true
             }
         }
         
@@ -150,6 +142,17 @@ Rectangle {
         model: albumModel
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+
+        property real targetY: 0
+
+        Timer {
+            interval: 16
+            running: Math.abs(grid.contentY - grid.targetY) > 0.5
+            repeat: true
+            onTriggered: {
+                grid.contentY += (grid.targetY - grid.contentY) * 0.25
+            }
+        }
 
         Timer { interval: 200; running: true; repeat: false; onTriggered: grid.forceLayout() }
 

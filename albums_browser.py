@@ -2184,15 +2184,11 @@ class AlbumDetailView(QWidget):
                 raw_fresh = self.client.get_album_tracks(_album_id, force_refresh=True)
                 if not raw_fresh: return
 
-                # Album star status — read from the same response already cached by get_album_tracks
+                # Album star status — read from stale_cache saved by get_album_tracks
                 try:
-                    _cached_resp = self.client._disk_cache_get(f"album_tracks_{_album_id}")
-                    # _parse_song_data already set 'starred' per track correctly from getAlbum
-                    # For the album's own star status, check the album_data passed in
-                    album_starred = bool(
-                        _album_data.get('starred') or _album_data.get('favorite')
-                    )
-                    self._album_star_ready.emit(album_starred)
+                    _star = self.client.stale_cache_get(f'album_starred_{_album_id}')
+                    if _star is not None:
+                        self._album_star_ready.emit(bool(_star))
                 except Exception: pass
                 # Enrich starred — use session cache (fetched once, not per album open)
                 try:
@@ -2213,7 +2209,12 @@ class AlbumDetailView(QWidget):
 
         threading.Thread(target=_fetch_fresh, daemon=True).start()
             
-        is_fav = album_data.get('starred', False) or album_data.get('favorite', False)
+        # Prefer cached starred status (from last getAlbum); fall back to album_data
+        _cached_star = self.client.stale_cache_get(f'album_starred_{_album_id}')
+        if _cached_star is not None:
+            is_fav = bool(_cached_star)
+        else:
+            is_fav = bool(album_data.get('starred') or album_data.get('favorite'))
         self.set_header_heart_state(is_fav)
         
         # 3. FAST COVER ART
@@ -3089,11 +3090,11 @@ class LibraryGridBrowser(QWidget):
         if self.album_model.rowCount() == 0: return
         if getattr(self, 'current_sort', 'latest') == 'compilations': return
 
-        # Lazy placeholder expansion: grow model as user scrolls into new territory.
-        # Deferred via QTimer to avoid re-entrant beginInsertRows during QML layout.
+        # Lazy placeholder expansion — triggered 2 rows ahead of visible edge,
+        # deferred 80ms so it never fires during active scroll frames.
         total = getattr(self, 'true_server_count', 0)
         current_rows = self.album_model.rowCount()
-        if total > current_rows and end_idx >= current_rows - 10:
+        if total > current_rows and end_idx >= current_rows - 20:
             if not getattr(self, '_placeholder_expansion_pending', False):
                 self._placeholder_expansion_pending = True
                 def _expand():
@@ -3101,11 +3102,11 @@ class LibraryGridBrowser(QWidget):
                     rows_now = self.album_model.rowCount()
                     tot_now  = getattr(self, 'true_server_count', 0)
                     if tot_now > rows_now:
-                        expand_to = min(rows_now + 50, tot_now)
+                        expand_to = min(rows_now + 100, tot_now)
                         extra = [{'type': 'placeholder', 'title': ''} for _ in range(expand_to - rows_now)]
                         self.album_model.append_albums(extra)
                 from PyQt6.QtCore import QTimer as _QT
-                _QT.singleShot(0, _expand)
+                _QT.singleShot(80, _expand)
 
 
 

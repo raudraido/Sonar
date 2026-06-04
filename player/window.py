@@ -387,22 +387,32 @@ class _ResizeHandle(QWidget):
     def enterEvent(self, event):
         self._hovered = True
         self._anim.stop(); self._anim.setEndValue(1.0); self._anim.start()
+        local_y = self.mapFromGlobal(event.globalPos()).y() if hasattr(event, 'globalPos') else self.height() // 2
+        self.setCursor(Qt.CursorShape.SizeHorCursor if self._near_dots(local_y) else Qt.CursorShape.ArrowCursor)
         self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hovered = False
         self._anim.stop(); self._anim.setEndValue(self._DEFAULT_OPACITY); self._anim.start()
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.update()
         super().leaveEvent(event)
 
+    def _near_dots(self, y: int) -> bool:
+        """True when y is within 20px of the dots centre."""
+        return abs(y - self.height() // 2) <= 20
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self._near_dots(int(event.position().y())):
             self._drag_x = event.globalPosition().x()
             self._drag_w = self._target.width()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        # Update cursor based on position
+        self.setCursor(Qt.CursorShape.SizeHorCursor if self._near_dots(int(event.position().y()))
+                       else Qt.CursorShape.ArrowCursor)
         if self._drag_x is None:
             return
         dx = (event.globalPosition().x() - self._drag_x) * self._sign

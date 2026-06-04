@@ -1217,7 +1217,9 @@ class SubsonicClient:
                 
             
             self._disk_cache_set(key, tracks)
-            
+            # Cache album's own starred status alongside the tracks
+            self.stale_cache_set(f'album_starred_{album_id}', 'starred' in album_info)
+
             return tracks
         except Exception as e:
             print(f"Error getting tracks: {e}")
