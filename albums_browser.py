@@ -84,6 +84,7 @@ class GridBridge(QObject):
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
     skeletonBaseColorChanged  = pyqtSignal(str)
+    infoLineCountChanged      = pyqtSignal(int)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
     indexChanged = pyqtSignal(int)
@@ -203,7 +204,9 @@ class AlbumModel(QAbstractListModel):
     def data(self, index, role):
         if not index.isValid(): return None
         a = self.albums[index.row()]
-        if role == self.TITLE_ROLE: return a.get('title') or a.get('name') or 'Unknown'
+        if role == self.TITLE_ROLE:
+            if a.get('type') == 'placeholder': return ''
+            return a.get('title') or a.get('name') or 'Unknown'
         if role == self.ARTIST_ROLE: return a.get('artist') or a.get('albumArtist') or ''
         if role == self.YEAR_ROLE: return str(a.get('year') or a.get('minYear') or a.get('maxYear') or '').replace('None', '')
         if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
@@ -3096,7 +3099,7 @@ class LibraryGridBrowser(QWidget):
                     tot_now  = getattr(self, 'true_server_count', 0)
                     if tot_now > rows_now:
                         expand_to = min(rows_now + 50, tot_now)
-                        extra = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(expand_to - rows_now)]
+                        extra = [{'type': 'placeholder', 'title': ''} for _ in range(expand_to - rows_now)]
                         self.album_model.append_albums(extra)
                 from PyQt6.QtCore import QTimer as _QT
                 _QT.singleShot(0, _expand)
@@ -3322,7 +3325,7 @@ class LibraryGridBrowser(QWidget):
             if pending:
                 self.loaded_chunks.add(0)
             initial = min(50, self.true_server_count)
-            placeholders = [{'type': 'placeholder', 'title': 'Loading...'} for _ in range(initial)]
+            placeholders = [{'type': 'placeholder', 'title': ''} for _ in range(initial)]
             self.album_model.clear()
             self.album_model.append_albums(placeholders)
             if pending:
@@ -3439,8 +3442,12 @@ class LibraryGridBrowser(QWidget):
             self.load_albums_page(reset=True)
     
     def show_loading(self):
-        """Instant visual feedback — clear grid and show loading state before data arrives."""
+        """Instant visual feedback — show animated skeleton grid before data arrives."""
         self.album_model.clear()
+        # Empty title triggers SkeletonCard (animated) in the QML grid
+        self.album_model.append_albums(
+            [{'type': 'placeholder', 'title': '', 'cover_id': ''} for _ in range(20)]
+        )
         if hasattr(self, 'status_label'):
             self.status_label.setText("Loading...")
 

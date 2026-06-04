@@ -1051,14 +1051,34 @@ class NoFocusDelegate(QStyledItemDelegate):
 class SkeletonDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, base_color="#282828"):
         super().__init__(parent)
+        self._phase = 0.0
         self.set_base_color(base_color)
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)   # ~25 fps
+
+    def _tick(self):
+        import math
+        self._phase = (self._phase + 0.04) % 1.0
+        p = self.parent()
+        if p:
+            p.viewport().update()
 
     def set_base_color(self, hex_color: str):
         c = QColor(hex_color)
-        luma = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
-        self._pill_color = QColor(luma + 18, luma + 18, luma + 18)
+        self._base_r = min(255, c.red()   + 18)
+        self._base_g = min(255, c.green() + 18)
+        self._base_b = min(255, c.blue()  + 18)
 
     def paint(self, painter, option, index):
+        import math
+        phase  = (self._phase + index.row() * 0.18) % 1.0
+        factor = 1.0 + 0.12 * math.sin(phase * 2 * math.pi)
+        r = min(255, int(self._base_r * factor))
+        g = min(255, int(self._base_g * factor))
+        b = min(255, int(self._base_b * factor))
+        pill_color = QColor(r, g, b)
+
         painter.save()
         painter.setPen(QColor(255, 255, 255, 10))
         painter.drawLine(option.rect.bottomLeft(), option.rect.bottomRight())
@@ -1067,7 +1087,7 @@ class SkeletonDelegate(QStyledItemDelegate):
         col = index.column()
 
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._pill_color)
+        painter.setBrush(pill_color)
         
         h = 12
         y = rect.top() + (rect.height() - h) // 2

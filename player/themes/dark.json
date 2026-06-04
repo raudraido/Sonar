@@ -9,7 +9,7 @@
   "main_panel_bg": "28,30,39",
   "header_panel_bg": "28,30,39",
   "now_playing_card_bg": "#232631",
-  "skeleton_base": "#282828",
+  "skeleton_base": "#354b5f",
   "app_font": "Segoe UI",
   "font_size_primary": 15,
   "font_size_secondary": 13,

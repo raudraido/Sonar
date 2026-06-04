@@ -307,14 +307,14 @@ class PersistenceMixin:
                 except: pass
                 self.album_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
                 self._initialized_tabs.add('albums')
-            QTimer.singleShot(0, _do_init_albums)
+            QTimer.singleShot(50, _do_init_albums)
         elif widget is getattr(self, 'artist_browser', None) and 'artists' not in self._initialized_tabs:
             self._initialized_tabs.add('artists')
             if hasattr(self.artist_browser, 'show_loading'):
                 self.artist_browser.show_loading()
             def _do_init_artists():
                 self._init_tab_artists(client)
-            QTimer.singleShot(0, _do_init_artists)
+            QTimer.singleShot(16, _do_init_artists)
         elif widget is getattr(self, 'tracks_browser', None) and 'tracks' not in self._initialized_tabs:
             self._initialized_tabs.add('tracks')
             QTimer.singleShot(0, lambda: self._init_tab_tracks(client))

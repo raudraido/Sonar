@@ -1,39 +1,63 @@
 import QtQuick
 
 Item {
-    property int pillCount: 2
+    property int    pillCount: 2
     property string baseColor: "#2a2a2a"
+    property int    cardIndex: 0
+
+    // Widths cycle per pill so they look naturally varied
+    readonly property var pillWidths: [0.72, 0.50, 0.60, 0.40, 0.65]
 
     Rectangle {
-        id: coverPlaceholder
-        anchors.left: parent.left
+        id: cover
+        anchors.left:  parent.left
         anchors.right: parent.right
-        anchors.top: parent.top
+        anchors.top:   parent.top
         height: width
         radius: 8
-        color: baseColor
+        color:  baseColor
+
+        Rectangle {
+            anchors.fill: parent
+            radius:       parent.radius
+            color:        "white"
+            opacity:      0
+            SequentialAnimation on opacity {
+                running: true; loops: -1
+                NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
+            }
+        }
     }
 
     Column {
-        anchors.top: coverPlaceholder.bottom
+        anchors.top:       cover.bottom
         anchors.topMargin: 10
-        anchors.left: parent.left
-        anchors.right: parent.right
+        anchors.left:      parent.left
+        anchors.right:     parent.right
         spacing: 6
 
-        Rectangle {
-            width: parent.width * 0.75
-            height: 11
-            radius: 5
-            color: baseColor
-        }
+        Repeater {
+            model: pillCount
 
-        Rectangle {
-            width: parent.width * 0.5
-            height: 9
-            radius: 4
-            color: Qt.darker(baseColor, 1.15)
-            visible: pillCount >= 2
+            Rectangle {
+                width:  parent.width * pillWidths[index % pillWidths.length]
+                height: index === 0 ? 11 : 9
+                radius: index === 0 ? 5 : 4
+                color:  index === 0 ? baseColor : Qt.darker(baseColor, 1.15)
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius:       parent.radius
+                    color:        "white"
+                    opacity:      0
+                    SequentialAnimation on opacity {
+                        running: true; loops: -1
+                        NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
         }
     }
 }

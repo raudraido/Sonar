@@ -28,7 +28,9 @@ class _ShimmerDelegate(QStyledItemDelegate):
         self._phase    = 0.0
         self._viewport = viewport
         c = QColor(base_color)
-        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
+        self._base_r = c.red()
+        self._base_g = c.green()
+        self._base_b = c.blue()
         self._timer    = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(40)   # ~25 fps
@@ -55,17 +57,22 @@ class _ShimmerDelegate(QStyledItemDelegate):
         card_h   = w             # square card
         cx, cy   = rect.x() + padding, rect.y() + padding
 
-        phase      = (self._phase + index.row() * 0.18) % 1.0
-        brightness = int(self._base + 22 * math.sin(phase * 2 * math.pi))
-        dim        = max(0, brightness - 12)
+        phase  = (self._phase + index.row() * 0.18) % 1.0
+        factor = 1.0 + 0.12 * math.sin(phase * 2 * math.pi)
+        r = min(255, int(self._base_r * factor))
+        g = min(255, int(self._base_g * factor))
+        b = min(255, int(self._base_b * factor))
+        dr = max(0, int(r * 0.85))
+        dg = max(0, int(g * 0.85))
+        db = max(0, int(b * 0.85))
 
         # Album art placeholder
-        painter.setBrush(QBrush(QColor(brightness, brightness, brightness)))
+        painter.setBrush(QBrush(QColor(r, g, b)))
         painter.drawRoundedRect(QRectF(cx, cy, w, card_h), 6, 6)
 
         # Title pill
         pill_y = cy + card_h + 7
-        painter.setBrush(QBrush(QColor(dim, dim, dim)))
+        painter.setBrush(QBrush(QColor(dr, dg, db)))
         painter.drawRoundedRect(QRectF(cx, pill_y,      w * 0.75, 9),  5, 5)
         painter.drawRoundedRect(QRectF(cx, pill_y + 15, w * 0.50, 7),  4, 4)
 
@@ -620,7 +627,8 @@ class HomeAlbumRowWidget(QWidget):
             if isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
                 sk = getattr(theme, 'skeleton_base', '#282828')
                 c = QColor(sk)
-                self.list_widget.itemDelegate()._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
+                d = self.list_widget.itemDelegate()
+                d._base_r, d._base_g, d._base_b = c.red(), c.green(), c.blue()
         self.list_widget.viewport().update()
 
     # ── Resize ────────────────────────────────────────────────────────────

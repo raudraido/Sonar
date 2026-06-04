@@ -28,6 +28,7 @@ Rectangle {
     property string fontColorPrimary:   "#eeeeee"
     property string fontColorSecondary: "#aaaaaa"
     property string skeletonBaseColor:  "#282828"
+    property int    infoLineCount:      3
 
     Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
@@ -40,6 +41,7 @@ Rectangle {
         function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
         function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
         function onSkeletonBaseColorChanged(color) { root.skeletonBaseColor = color }
+        function onInfoLineCountChanged(count)     { root.infoLineCount = count }
 
         // 👇 🟢 CATCH THE KILL SIGNAL FROM PYTHON
         function onCancelScroll() {
@@ -182,8 +184,9 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    pillCount: 1
+                    pillCount: root.infoLineCount
                     baseColor: root.skeletonBaseColor
+                    cardIndex: index
                 }
 
                 Rectangle {

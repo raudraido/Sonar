@@ -2976,7 +2976,9 @@ class ArtistModel(QAbstractListModel):
     def data(self, index, role):
         if not index.isValid(): return None
         a = self.artists[index.row()]
-        if role == self.NAME_ROLE:        return a.get('name') or a.get('artist') or 'Unknown'
+        if role == self.NAME_ROLE:
+            if a.get('type') == 'placeholder': return ''
+            return a.get('name') or a.get('artist') or 'Unknown'
         if role == self.COVER_ID_ROLE:    return a.get('coverId_forced') or a.get('cover_id') or ''
         if role == self.RAW_DATA_ROLE:    return a
         if role == self.IS_LOADING_ROLE:  return a.get('type') == 'placeholder'
@@ -3312,7 +3314,7 @@ class ArtistGridBrowser(QWidget):
                     tot_now  = getattr(self, 'true_server_count', 0)
                     if tot_now > rows_now:
                         expand_to = min(rows_now + 50, tot_now)
-                        extra = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(expand_to - rows_now)]
+                        extra = [{'type': 'placeholder', 'name': ''} for _ in range(expand_to - rows_now)]
                         self.artist_model.append_artists(extra)
                 from PyQt6.QtCore import QTimer as _QT
                 _QT.singleShot(0, _expand)
@@ -3587,7 +3589,7 @@ class ArtistGridBrowser(QWidget):
                     self.active_chunk_workers = {}
                 self.active_chunk_workers[0] = None  # satisfy is_expected check in _on_chunk_loaded
             initial = min(50, total_count)
-            placeholders = [{'type': 'placeholder', 'name': 'Loading...'} for _ in range(initial)]
+            placeholders = [{'type': 'placeholder', 'name': ''} for _ in range(initial)]
             self.artist_model.append_artists(placeholders)
             if pending:
                 _cached = pending
@@ -3688,8 +3690,11 @@ class ArtistGridBrowser(QWidget):
             self.refresh_grid()
 
     def show_loading(self):
-        """Instant visual feedback — clear grid and show loading state before data arrives."""
+        """Instant visual feedback — show animated skeleton grid before data arrives."""
         self.artist_model.clear()
+        self.artist_model.append_artists(
+            [{'type': 'placeholder', 'name': '', 'cover_id': ''} for _ in range(20)]
+        )
         if hasattr(self, 'status_label'):
             self.status_label.setText("Loading...")
 
