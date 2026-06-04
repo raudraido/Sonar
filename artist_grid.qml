@@ -76,7 +76,7 @@ Rectangle {
             acceptedButtons: Qt.NoButton
 
             onWheel: (wheel) => {
-                var scrollSpeed = 3.0
+                var scrollSpeed = 2.0
                 var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed
                 var minY = -grid.topMargin
                 var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)

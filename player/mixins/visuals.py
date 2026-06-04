@@ -70,7 +70,7 @@ class SmoothScroller(QObject):
     (drag, keyboard navigation, programmatic setValue) so the user can always
     scroll to any position without the animation fighting back.
     """
-    _PIXELS_PER_NOTCH = 180  # 60 px * speed 3.0
+    _PIXELS_PER_NOTCH = 120  # 60 px * speed 2.0
     _EASING = 0.25           # fraction of remaining distance applied per 16 ms frame
 
     def __init__(self, widget):
