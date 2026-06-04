@@ -1183,7 +1183,7 @@ class SonarPlayer(
         self.cast_btn.setFlat(True)
         self.cast_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cast_btn.setStyleSheet("background: transparent; border: none;")
-        self.cast_btn.setToolTip("")
+        self.cast_btn.setToolTip("Cast to device")
         self.cast_btn.clicked.connect(self._on_cast_clicked)
 
         self.settings_btn = QPushButton("")

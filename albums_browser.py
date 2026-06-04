@@ -1289,6 +1289,7 @@ class AlbumDetailView(QWidget):
         self.btn_play.setIcon(QIcon(resource_path("img/play.png")))  # tinted in set_accent_color
         self.btn_play.setIconSize(QSize(18, 18))
         self.btn_play.ensure_glow()
+        self.btn_play.setToolTip("Play Album (Ctrl+Enter)")
         self.btn_play.clicked.connect(self.play_clicked.emit)
         
         _icon_btn_style = (
@@ -1302,6 +1303,7 @@ class AlbumDetailView(QWidget):
         self.btn_shuffle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_shuffle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_shuffle.setStyleSheet(_icon_btn_style)
+        self.btn_shuffle.setToolTip("Shuffle")
         self.btn_shuffle.clicked.connect(self.shuffle_clicked.emit)
 
         self.btn_like = QPushButton()
@@ -1312,6 +1314,7 @@ class AlbumDetailView(QWidget):
         self.btn_like.setStyleSheet(_icon_btn_style)
         self.btn_like.setIcon(QIcon(self._make_heart_pix(resource_path('img/heart.png'), '#666666', size=22)))
         self.btn_like.setIconSize(QSize(22, 22))
+        self.btn_like.setToolTip("Add to Favorites")
         self.btn_like.clicked.connect(self.toggle_header_heart)
         
         btn_layout.addWidget(self.btn_play)

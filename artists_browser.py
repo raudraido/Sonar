@@ -1732,7 +1732,7 @@ class ArtistRichDetailView(QWidget):
         self.btn_play.ensure_glow()
         self.btn_play.clicked.connect(self.play_current_artist_tracks)
         btn_layout.addWidget(self.btn_play)
-        self.btn_play.setToolTip("Play All Tracks (Ctrl+↵)")
+        self.btn_play.setToolTip("Play all tracks (Ctrl+Enter)")
 
         _icon_btn_style = (
             'QPushButton { background: transparent; border: none; border-radius: 4px; }'
@@ -1745,7 +1745,7 @@ class ArtistRichDetailView(QWidget):
         self.btn_like.setFixedSize(36, 36)
         self.btn_like.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_like.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_like.setToolTip('Favorite artist')
+        self.btn_like.setToolTip("Add to Favorites")
         self.btn_like.setStyleSheet(_icon_btn_style)
         self.btn_like.setIcon(_tint_icon('img/heart.png', '#666666'))
         self.btn_like.setIconSize(QSize(22, 22))
