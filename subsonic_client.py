@@ -1060,29 +1060,22 @@ class SubsonicClient:
             display_genre = raw_genre
 
         return {
-            'id': s.get('id'),
-            'title': s.get('title', 'Unknown Title'),
-            'artist': display_artist,
-            'artist_id': artist_id,
-            'album': s.get('album', 'Unknown Album'),
-            'albumId': s.get('albumId'), 
-            'created': s.get('createdAt') or s.get('created'),
-            'album_artist': s.get('albumArtist') or s.get('album_artist'), 
+            **s,
+            # Normalized / computed overrides
+            'artist':      display_artist,
+            'artist_id':   artist_id,
+            'album_artist': s.get('albumArtist') or s.get('album_artist'),
             'trackNumber': int(s.get('track') or s.get('trackNumber') or 0),
-            'discNumber': int(s.get('discNumber', 1) or 1),
-            'duration': dur_str,
+            'discNumber':  int(s.get('discNumber', 1) or 1),
+            'duration':    dur_str,
             'duration_ms': sec * 1000,
-            'stream_url': self._build_stream_url(s.get('id')),
-            'cover_id': s.get('coverArt') or s.get('cover_id') or s.get('id'),
-            'starred': 'starred' in s or 'favorite' in s,
-            'path': s.get('path'),
-            'genre': display_genre,
-            'year': str(s.get('year', ''))[:4],
-            'play_count': s.get('playCount', 0),
-            'bitRate':     s.get('bitRate', 0),
-            'bpm':         s.get('bpm', 0),
-            'samplingRate': s.get('samplingRate') or s.get('sampling_rate'),
-            'bitDepth':    s.get('bitDepth') or s.get('bit_depth'),
+            'stream_url':  self._build_stream_url(s.get('id')),
+            'cover_id':    s.get('coverArt') or s.get('cover_id') or s.get('id'),
+            'starred':     'starred' in s or 'favorite' in s,
+            'genre':       display_genre,
+            'year':        str(s.get('year', ''))[:4],
+            'play_count':  s.get('playCount', 0),
+            'created':     s.get('createdAt') or s.get('created'),
         }
 
     def _build_stream_url(self, song_id):

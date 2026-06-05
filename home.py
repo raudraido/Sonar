@@ -1146,15 +1146,11 @@ class HomeView(QWidget):
     # ── Recently Added refresh ────────────────────────────────────────────
 
     def refresh_recent(self):
-        import time as _t; _t0 = _t.monotonic()
-        print(f'[RECENT] clicked t=0')
         btn = self.recent_row.btn_refresh
         if btn.loading:
             return
         btn.start_spin()
-        print(f'[RECENT] after start_spin t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         self.recent_row.show_skeleton()
-        print(f'[RECENT] after show_skeleton t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         if getattr(self, 'recent_reloader', None) and self.recent_reloader.isRunning():
             self._safe_discard_worker(self.recent_reloader)
         self.recent_reloader = HomePageWorker(self.client, "newest", 0)
@@ -1170,25 +1166,19 @@ class HomeView(QWidget):
     # ── Random mix refresh ────────────────────────────────────────────────
 
     def refresh_random_mix(self):
-        import random as _rnd, time as _t; _t0 = _t.monotonic()
-        print(f'[RANDOM] clicked t=0')
+        import random as _rnd
         btn = self.random_row.btn_refresh
         if btn and btn.loading:
             return
         btn.start_spin()
-        print(f'[RANDOM] after start_spin t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         self.random_row.show_skeleton()
-        print(f'[RANDOM] after show_skeleton t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         buf = getattr(self, '_random_buffer', [])
         self._random_refresh_count = getattr(self, '_random_refresh_count', 0) + 1
         if buf:
             _rnd.shuffle(buf)
             def _populate():
-                print(f'[RANDOM] _populate fired t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
                 self.random_row.populate(buf)
-                print(f'[RANDOM] populate done t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
                 self._queue_covers(buf)
-                print(f'[RANDOM] queue_covers done t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
                 if self._random_refresh_count % 3 == 0:
                     self._fetch_random_background()
                 else:
