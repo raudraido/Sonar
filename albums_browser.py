@@ -3305,6 +3305,7 @@ class LibraryGridBrowser(QWidget):
         query = getattr(self, 'current_query', '')
 
         if query:
+            self.show_loading()
             worker = LivePageWorker(self.client, sort_type='newest', size=500, offset=0, query=query)
             worker.page_ready.connect(self._on_search_loaded)
             worker.start()
@@ -3312,6 +3313,7 @@ class LibraryGridBrowser(QWidget):
             return
 
         if getattr(self, 'current_sort', 'latest') == 'compilations':
+            self.show_loading()
             if hasattr(self, '_compilations_worker') and self._compilations_worker.isRunning():
                 self._compilations_worker.is_cancelled = True
             self._compilations_worker = CompilationsWorker(self.client)

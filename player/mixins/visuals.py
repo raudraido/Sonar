@@ -7,7 +7,7 @@ import sys
 import time
 from version import __version__
 
-from PyQt6.QtWidgets import QAbstractItemView, QApplication, QLabel, QListWidget
+from PyQt6.QtWidgets import QAbstractItemView, QAbstractButton, QApplication, QLabel, QListWidget
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette, QImage
 
@@ -93,6 +93,98 @@ class CoverDecodeWorker(QThread):
                 x = (img.width()  - side) // 2
                 y = (img.height() - side) // 2
                 self.decoded.emit(cover_id, img.copy(x, y, side, side))
+
+
+class SpinRefreshButton(QAbstractButton):
+    """
+    A refresh button that spins its icon while loading.
+    Usage:
+        btn = SpinRefreshButton(icon_path, icon_size=18, btn_size=32, color='#ffffff')
+        btn.start_spin()   # start animation
+        btn._do_stop()     # stop after 600ms minimum
+    """
+    def __init__(self, icon_path: str, icon_size: int = 14, btn_size: int = 30,
+                 color: str = '#ffffff', parent=None):
+        super().__init__(parent)
+        self._icon_path = icon_path
+        self._icon_size = icon_size
+        self._color     = QColor(color)
+        self._icon_pix  = QPixmap()
+        self._angle     = 0.0
+        self.loading    = False
+        self.setFixedSize(btn_size, btn_size)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def set_color(self, color: str):
+        self._color    = QColor(color)
+        self._icon_pix = QPixmap()
+        self.update()
+
+    def _build_icon(self):
+        base = QPixmap(self._icon_path)
+        if base.isNull():
+            return QPixmap()
+        s = self._icon_size
+        scaled = base.scaled(s, s, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        pix = QPixmap(scaled.size())
+        pix.fill(Qt.GlobalColor.transparent)
+        from PyQt6.QtGui import QPainter as _P
+        p = _P(pix)
+        p.drawPixmap(0, 0, scaled)
+        p.setCompositionMode(_P.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(pix.rect(), self._color)
+        p.end()
+        return pix
+
+    def _spin_tick(self):
+        if not self.loading:
+            return
+        self._angle = (self._angle + 4.5) % 360
+        self.repaint()
+        QTimer.singleShot(16, self._spin_tick)
+
+    def start_spin(self):
+        import time as _t
+        self._t0    = _t.monotonic()
+        self.loading = True
+        self.repaint()
+        QTimer.singleShot(16, self._spin_tick)
+
+    def _do_stop(self):
+        import time as _t
+        elapsed_ms = (_t.monotonic() - self._t0) * 1000
+        remaining  = int(600 - elapsed_ms)
+        if remaining > 0:
+            QTimer.singleShot(remaining, self._finish_stop)
+        else:
+            self._finish_stop()
+
+    def _finish_stop(self):
+        self.loading = False
+        self._angle  = 0.0
+        self.repaint()
+
+    def paintEvent(self, _):
+        from PyQt6.QtGui import QPainter as _P
+        p = _P(self)
+        p.setRenderHint(_P.RenderHint.Antialiasing)
+        if self.underMouse():
+            _theme = getattr(self.window(), 'theme', None)
+            p.setBrush(QColor(resolve_menu_hover(_theme)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(self.rect(), 6, 6)
+        if self._icon_pix.isNull():
+            self._icon_pix = self._build_icon()
+        if not self._icon_pix.isNull():
+            cx = self.width()  // 2
+            cy = self.height() // 2
+            p.translate(cx, cy)
+            p.rotate(self._angle)
+            p.drawPixmap(-self._icon_pix.width() // 2,
+                         -self._icon_pix.height() // 2, self._icon_pix)
+        p.end()
 
 
 def install_scroll_reveal(viewport, scrollbar):

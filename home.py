@@ -8,7 +8,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
                           QEasingCurve, QPoint)
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush, QImage
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker, SpinRefreshButton
 from tracks_browser import MiddleClickScroller
 
 
@@ -277,87 +277,12 @@ class _ArrowButton(QAbstractButton):
         p.end()
 
 
-class _RefreshButton(QAbstractButton):
-    def __init__(self, color, parent=None):
-        super().__init__(parent)
-        self._color = QColor(color)
-        self._icon_pix = QPixmap()
-        self._angle = 0.0
-        self.loading = False
-        self.setFixedSize(30, 30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-
-    def _spin_tick(self):
-        import time as _t
-        if not self.loading:
-            print(f'[SPIN] tick but loading=False at +{(_t.monotonic()-self._t0)*1000:.0f}ms')
-            return
-        if self._angle == 0.0:
-            print(f'[SPIN] first visible frame at +{(_t.monotonic()-self._t0)*1000:.0f}ms')
-        self._angle = (self._angle + 4.5) % 360
-        self.repaint()
-        QTimer.singleShot(16, self._spin_tick)
-
-    def start_spin(self):
-        import time as _t
-        self._t0 = _t.monotonic()
-        self.loading = True
-        self.repaint()
-        QTimer.singleShot(16, self._spin_tick)
-
-    def _do_stop(self):
-        import time as _t
-        elapsed_ms = (_t.monotonic() - self._t0) * 1000
-        remaining = int(600 - elapsed_ms)
-        if remaining > 0:
-            QTimer.singleShot(remaining, self._finish_stop)
-        else:
-            self._finish_stop()
-
-    def _finish_stop(self):
-        self.loading = False
-        self._angle = 0.0
-        self.repaint()
-
-    def set_color(self, color):
-        self._color = QColor(color)
-        self._icon_pix = QPixmap()
-        self.update()
-
-    def _build_icon(self, size):
-        base = QPixmap(resource_path("img/refresh.png"))
-        if base.isNull():
-            return QPixmap()
-        scaled = base.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
-        pix = QPixmap(scaled.size())
-        pix.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pix)
-        p.drawPixmap(0, 0, scaled)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(pix.rect(), self._color)
-        p.end()
-        return pix
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.underMouse() and self.isEnabled():
-            _theme = getattr(self.window(), 'theme', None)
-            p.setBrush(QColor(resolve_menu_hover(_theme)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 12, 12)
-        icon_size = 14
-        if self._icon_pix.isNull():
-            self._icon_pix = self._build_icon(icon_size)
-        if not self._icon_pix.isNull():
-            cx = self.width()  // 2
-            cy = self.height() // 2
-            p.translate(cx, cy)
-            p.rotate(self._angle)
-            p.drawPixmap(-self._icon_pix.width() // 2, -self._icon_pix.height() // 2, self._icon_pix)
-        p.end()
+def _RefreshButton(color, parent=None):
+    """Factory — returns a SpinRefreshButton configured for the home tab."""
+    return SpinRefreshButton(
+        icon_path=resource_path("img/refresh.png"),
+        icon_size=14, btn_size=30, color=color, parent=parent
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

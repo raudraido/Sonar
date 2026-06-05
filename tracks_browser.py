@@ -1,6 +1,6 @@
 import re
 import os
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller, SpinRefreshButton
 import time
 import json
 import math
@@ -2167,14 +2167,10 @@ class TracksBrowser(QWidget):
         self.play_filtered_btn.released.connect(self._on_play_filtered_released)
 
         # --- REFRESH BUTTON ---
-        self.refresh_btn = QPushButton()
+        self.refresh_btn = SpinRefreshButton(
+            icon_path=resource_path("img/refresh.png"),
+            icon_size=18, btn_size=32, color='#ffffff')
         self.refresh_btn.setToolTip("Refresh library from server")
-        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.refresh_btn.setFixedSize(32, 32)
-        self.refresh_btn.setFlat(True)
-        self.refresh_btn.setIcon(QIcon(resource_path("img/refresh.png")))
-        self.refresh_btn.setIconSize(QSize(18, 18))
-        self.refresh_btn.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 4px; } QPushButton:hover { background: rgba(255, 255, 255, 0.1); }")
         self.refresh_btn.clicked.connect(self._refresh_library)
 
         # 🟢 CLEAN HEADER ASSEMBLY
@@ -2387,7 +2383,7 @@ class TracksBrowser(QWidget):
         """Trigger a server scan then re-fetch when done."""
         if not self.client:
             return
-        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.start_spin()
         self.refresh_btn.setToolTip("Scanning library…")
         self._scan_done.connect(self._on_scan_finished)
 
@@ -2416,7 +2412,7 @@ class TracksBrowser(QWidget):
         try: self.client._page_cache.clear()
         except: pass
         self._col_filter_values = {}  # invalidate popup cache; keep _col_id_map so active filters still resolve
-        self.refresh_btn.setEnabled(True)
+        self.refresh_btn._do_stop()
         self.refresh_btn.setToolTip("Refresh library from server")
         self.load_from_db(reset=True)
     
@@ -4082,18 +4078,7 @@ class TracksBrowser(QWidget):
                 if h or in_album: self.burger_btn.hide()
 
             if hasattr(self, 'refresh_btn'):
-                _hov = resolve_menu_hover(getattr(self.window(), 'theme', None))
-                self.refresh_btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; border-radius: 4px; }} QPushButton:hover {{ background: {_hov}; }}")
-                try:
-                    pixmap = QPixmap(resource_path("img/refresh.png")).scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    if not pixmap.isNull():
-                        painter = QPainter(pixmap)
-                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                        painter.fillRect(pixmap.rect(), QColor(color))
-                        painter.end()
-                        self.refresh_btn.setIcon(QIcon(pixmap))
-                except Exception as e:
-                    print(f"Error tinting refresh icon: {e}")
+                self.refresh_btn.set_color(color)
 
             if hasattr(self, 'clear_filters_btn'):
                 h = self.clear_filters_btn.isHidden()
