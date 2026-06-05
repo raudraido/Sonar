@@ -264,6 +264,12 @@ class PlaylistTree(QTreeWidget):
         drag.exec(supportedActions)
         self.sig_drag_ended.emit()
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            super().dragEnterEvent(event)
+
     def dragMoveEvent(self, event):
         pos    = event.position().toPoint()
         target = pos - getattr(self, '_hot_spot_vector', QPoint(0,0))
@@ -301,6 +307,10 @@ class PlaylistTree(QTreeWidget):
                     
             event.accept()
             self.orderChanged.emit()
+        elif event.mimeData().hasUrls():
+            win = self.window()
+            if hasattr(win, 'dropEvent'):
+                win.dropEvent(event)
         else:
             super().dropEvent(event)
 

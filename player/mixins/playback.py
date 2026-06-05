@@ -200,6 +200,7 @@ class PlaybackMixin:
         self.update_window_title()
         if hasattr(self, '_queue_tree_panel'):
             self._queue_tree_panel.update_status()
+        self._refresh_queue_panel()
 
         # 3. Drip-feed remaining chunks without blocking the event loop.
         remaining = all_items[self._BATCH_CHUNK:]

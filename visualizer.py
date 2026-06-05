@@ -723,7 +723,7 @@ class AudioVisualizer(QWidget):
         painter.setPen(QPen(QColor(0, 0, 0, 45), 2.0,
                             Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(tail + off, tip + off)
-        painter.setPen(QPen(QColor(18, 15, 10), 1.5,
+        painter.setPen(QPen(QColor(0x2e, 0x1e, 0x1a), 1.5,
                             Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(tail, tip)
 
@@ -802,7 +802,7 @@ class AudioVisualizer(QWidget):
         now  = _time.monotonic()
         rms  = getattr(self, '_raw_vu_rms', 0.0)
 
-        ALPHA_K = -math.log(0.948) * 60.0
+        ALPHA_K = -math.log(0.9) * 60.0
         dt_e    = min(now - getattr(self, '_elec2_t', now - 0.016), 0.1)
         self._elec2_t = now
         alpha = math.exp(-ALPHA_K * dt_e)
@@ -815,39 +815,45 @@ class AudioVisualizer(QWidget):
         # Calibrated from image pixel analysis:
         # pivot_left=(311,340), R=273px, left_angle=-45.2°, right_angle=+36.1°
         # t-values derived from acoustic VU law + measured tick spacing
-        DOUK_MARKS = [
-            (-60, 0.000), (-50, 0.075), (-40, 0.170), (-30, 0.290),
-            (-20, 0.435), (-10, 0.595), (  0, 0.755), (  4, 0.900),
-            (  6, 1.000),
-        ]
-        LEFT_A  = math.radians(-41.4)
-        RIGHT_A = math.radians( 45.0)
+        _BASE = [(-60, 0.000), (-50, 0.075), (-40, 0.170), (-30, 0.290), (-20, 0.435), (-10, 0.595)]
+        # Per-needle 0, +4, +6 — tune independently
+        _LEFT_MARKS  = _BASE + [(0, 0.755), (4, 0.865), (6, 0.950)]
+        _RIGHT_MARKS = _BASE + [(0, 0.760), (4, 0.870), (6, 0.955)]
+
+        LEFT_A = math.radians(-41.4)
+        RIGHT_A = math.radians(45.0)
         SPAN_A  = RIGHT_A - LEFT_A
 
-        def db2a_douk(d):
+        def db2a(d, marks):
             d = max(-60.0, min(6.0, d))
-            for i in range(len(DOUK_MARKS) - 1):
-                d0, t0 = DOUK_MARKS[i]; d1, t1 = DOUK_MARKS[i + 1]
+            for i in range(len(marks) - 1):
+                d0, t0 = marks[i]; d1, t1 = marks[i + 1]
                 if d0 <= d <= d1:
                     f = (d - d0) / (d1 - d0)
                     return LEFT_A + (t0 + f * (t1 - t0)) * SPAN_A
-            return RIGHT_A
+            return LEFT_A + marks[-1][1] * SPAN_A
 
-        target_a = db2a_douk(db)
-        NEEDLE_K = -math.log(1.0 - 0.25) * 60.0
+        # Shared physics driven by left marks; right needle gets its own target angle
+        target_left  = db2a(db, _LEFT_MARKS)
+        target_right = db2a(db, _RIGHT_MARKS)
+        NEEDLE_K_ATTACK  = -math.log(1.0 - 0.45) * 60.0   # rise speed
+        NEEDLE_K_RELEASE = -math.log(1.0 - 0.45) * 60.0   # fallback speed — tune this
 
         if not hasattr(self, '_ndl2_base_pos'):
-            self._ndl2_base_pos    = target_a
-            self._ndl2_base_target = target_a
+            self._ndl2_base_pos    = target_left
+            self._ndl2_base_target = target_left
             self._ndl2_base_t      = now
-        if target_a != self._ndl2_base_target:
+        if target_left != self._ndl2_base_target:
+            _k  = NEEDLE_K_ATTACK if target_left > self._ndl2_base_target else NEEDLE_K_RELEASE
             e   = now - self._ndl2_base_t
-            cur = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-NEEDLE_K * e)
+            cur = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-_k * e)
             self._ndl2_base_pos    = cur
-            self._ndl2_base_target = target_a
+            self._ndl2_base_target = target_left
             self._ndl2_base_t      = now
-        e        = now - self._ndl2_base_t
-        needle_a = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-NEEDLE_K * e)
+        _k        = NEEDLE_K_ATTACK if self._ndl2_base_target >= self._ndl2_base_pos else NEEDLE_K_RELEASE
+        e         = now - self._ndl2_base_t
+        needle_left  = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-_k * e)
+        needle_right = needle_left + (target_right - target_left)
 
         from PyQt6.QtCore import QPointF
         from PyQt6.QtGui import QPen
@@ -856,20 +862,22 @@ class AudioVisualizer(QWidget):
         R   = 230.0 * s
         cpy = oy + 380.0 * s
 
-        for cpx_img in (309.0, 1209.0):
+        for cpx_img, ndl in ((309.0, needle_left), (1209.0, needle_right)):
+            a     = min(ndl, db2a(6.0, (_LEFT_MARKS if cpx_img == 309.0 else _RIGHT_MARKS)))
             cpx   = ox + cpx_img * s
-            tip_x = cpx + R * math.sin(needle_a)
-            tip_y = cpy - R * math.cos(needle_a)
+            tip_x = cpx + R * math.sin(a)
+            tip_y = cpy - R * math.cos(a)
             # Shadow
             painter.setPen(QPen(QColor(0, 0, 0, 60), max(1.0, s * 2.5),
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(QPointF(cpx + s, cpy + s), QPointF(tip_x + s, tip_y + s))
             # Needle
-            painter.setPen(QPen(QColor(15, 10, 5), max(1.0, s * 2.0),
+            painter.setPen(QPen(QColor(0x2e, 0x1e, 0x1a), max(1.0, s * 2.0),
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(QPointF(cpx, cpy), QPointF(tip_x, tip_y))
+
             # Pivot dot
-            painter.setBrush(QColor(15, 10, 5))
+            painter.setBrush(QColor(0x2e, 0x1e, 0x1a))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(cpx, cpy), 5.0 * s, 5.0 * s)
 
