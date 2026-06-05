@@ -1,7 +1,7 @@
 import os
 import json
 import random
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 import math
 import re
 from collections import OrderedDict
@@ -1642,10 +1642,11 @@ class ArtistRichDetailView(QWidget):
     
     def __init__(self):
         super().__init__()
-        
-        
 
-        self.current_accent = "#888888" 
+        self.current_accent = "#888888"
+        self._decode_worker = CoverDecodeWorker(self)
+        self._decode_worker.decoded.connect(self._on_cover_decoded)
+        self._decode_worker.start() 
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
@@ -2897,49 +2898,45 @@ class ArtistRichDetailView(QWidget):
         self._play_artist_worker.start()
    
     def apply_cover(self, cover_id, image_data):
-        from PyQt6.QtGui import QPixmap, QIcon
-        from PyQt6.QtCore import Qt
+        is_header  = getattr(self, 'current_header_cover_id', None) == str(cover_id)
+        has_items  = cover_id in getattr(self, 'pending_items', {})
+        has_qml    = cover_id in getattr(self, 'pending_qml_sections', {})
 
-        is_header = getattr(self, 'current_header_cover_id', None) == str(cover_id)
-
-        # Fast bail: nothing waiting for this cover and it's not the detail header
-        if (cover_id not in getattr(self, 'pending_items', {}) and
-                cover_id not in getattr(self, 'pending_qml_sections', {}) and
-                not is_header):
+        if not (is_header or has_items or has_qml):
             return
 
-        pixmap = QPixmap()
-        pixmap.loadFromData(image_data)
-        
-        if not pixmap.isNull():
-            square_pix = pixmap.scaled(400, 400, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            crop_x = (square_pix.width() - 400) // 2
-            crop_y = (square_pix.height() - 400) // 2
-            square_pix = square_pix.copy(crop_x, crop_y, 400, 400)
-            
-            icon = QIcon(square_pix)
-            
-            if cover_id in getattr(self, 'pending_items', {}):
-                items = self.pending_items[cover_id]
-                for item in items:
-                    try:
-                        from PyQt6.QtWidgets import QTreeWidgetItem
-                        if isinstance(item, QTreeWidgetItem):
-                            item.setIcon(1, icon)
-                        else:
-                            item.setIcon(icon)
-                    except: pass
-                del self.pending_items[cover_id]
-
-        if cover_id in getattr(self, 'pending_qml_sections', {}):
+        # QML sections only need raw bytes — store sync (instant)
+        if has_qml:
             for section in self.pending_qml_sections[cover_id]:
                 try:
                     section.apply_cover(cover_id, image_data)
-                except: pass
+                except Exception:
+                    pass
             del self.pending_qml_sections[cover_id]
 
-        if is_header and not pixmap.isNull():
-            self.set_header_image(pixmap)
+        # Pixmap work (decode + scale) goes to background thread
+        if is_header or has_items:
+            self._decode_worker.enqueue(cover_id, image_data, side=400)
+
+    def _on_cover_decoded(self, cover_id: str, img):
+        from PyQt6.QtGui import QPixmap, QIcon
+        pix  = QPixmap.fromImage(img)
+        icon = QIcon(pix)
+
+        if cover_id in getattr(self, 'pending_items', {}):
+            from PyQt6.QtWidgets import QTreeWidgetItem
+            for item in self.pending_items[cover_id]:
+                try:
+                    if isinstance(item, QTreeWidgetItem):
+                        item.setIcon(1, icon)
+                    else:
+                        item.setIcon(icon)
+                except Exception:
+                    pass
+            del self.pending_items[cover_id]
+
+        if getattr(self, 'current_header_cover_id', None) == str(cover_id):
+            self.set_header_image(pix)
             cid = str(cover_id)
             import threading
             def _fetch_full(cid=cid):
@@ -2953,11 +2950,12 @@ class ArtistRichDetailView(QWidget):
                         if data:
                             CoverCache.instance().save_full(cid, data)
                     if data and getattr(self, 'current_header_cover_id', None) == cid:
-                        from PyQt6.QtGui import QPixmap as _QP
-                        from PyQt6.QtCore import QTimer
-                        full_pix = _QP()
-                        full_pix.loadFromData(data)
-                        if not full_pix.isNull():
+                        from PyQt6.QtGui import QImage as _QI, QPixmap as _QP
+                        from PyQt6.QtCore import QTimer, Qt
+                        full_img = _QI()
+                        full_img.loadFromData(data)
+                        if not full_img.isNull():
+                            full_pix = _QP.fromImage(full_img)
                             QTimer.singleShot(0, lambda p=full_pix: self.set_header_image(p))
                 except Exception:
                     pass
@@ -3881,13 +3879,9 @@ class ArtistGridBrowser(QWidget):
         if hasattr(self, 'artist_model'):
             self.artist_model.update_cover(str(cover_id))
 
-        # Also apply to the artist detail header if it matches
-        from PyQt6.QtGui import QPixmap
-        pixmap = QPixmap()
-        pixmap.loadFromData(image_data)
-        if not pixmap.isNull():
-            if getattr(self, 'current_header_cover_id', None) == str(cover_id):
-                self.artist_view.set_header_image(pixmap)
+        # Artist detail header — decode off main thread
+        if getattr(self, 'current_header_cover_id', None) == str(cover_id):
+            self.artist_view._decode_worker.enqueue(cover_id, image_data, side=400)
 
     def _qml_bg_color(self):
         r, g, b = (int(x) for x in getattr(self, '_bg_color', '14,14,14').split(','))

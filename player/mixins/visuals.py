@@ -8,8 +8,8 @@ import time
 from version import __version__
 
 from PyQt6.QtWidgets import QAbstractItemView, QApplication, QLabel, QListWidget
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette, QImage
 
 from player import resource_path
 from player.workers import BlurWorker, BPMWorker, CoverLoaderWorker
@@ -48,6 +48,51 @@ class _ScrollRevealFilter(QObject):
     def _hide(self):
         self._active = False
         self._sb.setStyleSheet(self._saved_style)
+
+
+class CoverDecodeWorker(QThread):
+    """
+    Decodes raw cover bytes to a cropped square QImage off the main thread.
+    Emit enqueue(cover_id, bytes) to queue work; connect decoded signal for results.
+    """
+    decoded = pyqtSignal(str, QImage)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        import threading
+        self._queue = []
+        self._lock  = threading.Lock()
+        self._wake  = threading.Event()
+        self._running = True
+
+    def enqueue(self, cover_id: str, data: bytes, side: int = 300):
+        with self._lock:
+            self._queue.append((cover_id, data, side))
+        self._wake.set()
+
+    def stop(self):
+        self._running = False
+        self._wake.set()
+
+    def run(self):
+        while self._running:
+            self._wake.wait()
+            self._wake.clear()
+            while True:
+                with self._lock:
+                    if not self._queue:
+                        break
+                    cover_id, data, side = self._queue.pop(0)
+                img = QImage()
+                img.loadFromData(data)
+                if img.isNull():
+                    continue
+                img = img.scaled(side, side,
+                                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                 Qt.TransformationMode.SmoothTransformation)
+                x = (img.width()  - side) // 2
+                y = (img.height() - side) // 2
+                self.decoded.emit(cover_id, img.copy(x, y, side, side))
 
 
 def install_scroll_reveal(viewport, scrollbar):

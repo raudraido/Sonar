@@ -6,9 +6,9 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
                           QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
                           QEasingCurve, QPoint)
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush, QImage
 from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 from tracks_browser import MiddleClickScroller
 
 
@@ -282,13 +282,47 @@ class _RefreshButton(QAbstractButton):
         super().__init__(parent)
         self._color = QColor(color)
         self._icon_pix = QPixmap()
+        self._angle = 0.0
+        self.loading = False
         self.setFixedSize(30, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
 
+    def _spin_tick(self):
+        import time as _t
+        if not self.loading:
+            print(f'[SPIN] tick but loading=False at +{(_t.monotonic()-self._t0)*1000:.0f}ms')
+            return
+        if self._angle == 0.0:
+            print(f'[SPIN] first visible frame at +{(_t.monotonic()-self._t0)*1000:.0f}ms')
+        self._angle = (self._angle + 4.5) % 360
+        self.repaint()
+        QTimer.singleShot(16, self._spin_tick)
+
+    def start_spin(self):
+        import time as _t
+        self._t0 = _t.monotonic()
+        self.loading = True
+        self.repaint()
+        QTimer.singleShot(16, self._spin_tick)
+
+    def _do_stop(self):
+        import time as _t
+        elapsed_ms = (_t.monotonic() - self._t0) * 1000
+        remaining = int(600 - elapsed_ms)
+        if remaining > 0:
+            QTimer.singleShot(remaining, self._finish_stop)
+        else:
+            self._finish_stop()
+
+    def _finish_stop(self):
+        self.loading = False
+        self._angle = 0.0
+        self.repaint()
+
     def set_color(self, color):
         self._color = QColor(color)
-        self._icon_pix = QPixmap()  # cleared; rebuilt lazily in paintEvent
+        self._icon_pix = QPixmap()
         self.update()
 
     def _build_icon(self, size):
@@ -309,7 +343,7 @@ class _RefreshButton(QAbstractButton):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.underMouse():
+        if self.underMouse() and self.isEnabled():
             _theme = getattr(self.window(), 'theme', None)
             p.setBrush(QColor(resolve_menu_hover(_theme)))
             p.setPen(Qt.PenStyle.NoPen)
@@ -318,9 +352,11 @@ class _RefreshButton(QAbstractButton):
         if self._icon_pix.isNull():
             self._icon_pix = self._build_icon(icon_size)
         if not self._icon_pix.isNull():
-            x = (self.width()  - self._icon_pix.width())  // 2
-            y = (self.height() - self._icon_pix.height()) // 2
-            p.drawPixmap(x, y, self._icon_pix)
+            cx = self.width()  // 2
+            cy = self.height() // 2
+            p.translate(cx, cy)
+            p.rotate(self._angle)
+            p.drawPixmap(-self._icon_pix.width() // 2, -self._icon_pix.height() // 2, self._icon_pix)
         p.end()
 
 
@@ -570,20 +606,24 @@ class HomeAlbumRowWidget(QWidget):
         self._render_page()
 
     def apply_cover(self, cover_id, image_data):
+        # Legacy path — kept for callers that still pass raw bytes.
+        # Decoding happens here synchronously; prefer apply_cover_pixmap.
         cid = str(cover_id)
-        pix = QPixmap()
-        pix.loadFromData(image_data)
-        if pix.isNull():
+        img = QImage()
+        img.loadFromData(image_data)
+        if img.isNull():
             return
-        # Crop to square at a fixed cache resolution
         side = 300
-        pix = pix.scaled(side, side,
+        img = img.scaled(side, side,
                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                          Qt.TransformationMode.SmoothTransformation)
-        x = (pix.width()  - side) // 2
-        y = (pix.height() - side) // 2
-        self._pix_cache[cid] = pix.copy(x, y, side, side)
-        # Update any visible item that uses this cover
+        x = (img.width()  - side) // 2
+        y = (img.height() - side) // 2
+        self.apply_cover_pixmap(cid, QPixmap.fromImage(img.copy(x, y, side, side)))
+
+    def apply_cover_pixmap(self, cover_id, pix: QPixmap):
+        cid = str(cover_id)
+        self._pix_cache[cid] = pix
         cw = self._cell_w()
         for i in range(self.list_widget.count()):
             item  = self.list_widget.item(i)
@@ -1012,10 +1052,16 @@ class HomeView(QWidget):
         pass
 
     def _queue_covers(self, albums):
+        # Append directly to the worker queue — skip the per-cover disk read on the
+        # main thread (GridCoverWorker.queue_cover does a get_thumb per item which
+        # adds ~5ms × N of blocking disk I/O). The worker thread checks the cache
+        # anyway before downloading.
+        if not self.cover_worker:
+            return
         for album in albums:
-            cid = album.get('cover_id') or album.get('coverArt') or album.get('id')
-            if cid and self.cover_worker:
-                self.cover_worker.queue_cover(cid)
+            cid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
+            if cid and cid not in self.cover_worker.queue:
+                self.cover_worker.queue.append(cid)
 
     def _load_more_recent(self, offset):
         w = HomePageWorker(self.client, "newest", offset)
@@ -1054,6 +1100,7 @@ class HomeView(QWidget):
             setattr(self, attr, None)
 
     def apply_cover(self, cover_id, image_data):
+        # Legacy path — new path goes through _decode_worker → _on_cover_decoded
         self.recent_row.apply_cover(cover_id, image_data)
         self.random_row.apply_cover(cover_id, image_data)
         self.most_played_row.apply_cover(cover_id, image_data)
@@ -1174,8 +1221,15 @@ class HomeView(QWidget):
     # ── Recently Added refresh ────────────────────────────────────────────
 
     def refresh_recent(self):
+        import time as _t; _t0 = _t.monotonic()
+        print(f'[RECENT] clicked t=0')
         btn = self.recent_row.btn_refresh
-        btn.setEnabled(False)
+        if btn.loading:
+            return
+        btn.start_spin()
+        print(f'[RECENT] after start_spin t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
+        self.recent_row.show_skeleton()
+        print(f'[RECENT] after show_skeleton t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         if getattr(self, 'recent_reloader', None) and self.recent_reloader.isRunning():
             self._safe_discard_worker(self.recent_reloader)
         self.recent_reloader = HomePageWorker(self.client, "newest", 0)
@@ -1183,7 +1237,7 @@ class HomeView(QWidget):
         self.recent_reloader.start()
 
     def _on_recent_refreshed(self, new_albums):
-        self.recent_row.btn_refresh.setEnabled(True)
+        self.recent_row.btn_refresh._do_stop()
         if new_albums:
             self.recent_row.populate(new_albums)
             self._queue_covers(new_albums)
@@ -1191,17 +1245,30 @@ class HomeView(QWidget):
     # ── Random mix refresh ────────────────────────────────────────────────
 
     def refresh_random_mix(self):
-        import random as _rnd
+        import random as _rnd, time as _t; _t0 = _t.monotonic()
+        print(f'[RANDOM] clicked t=0')
+        btn = self.random_row.btn_refresh
+        if btn and btn.loading:
+            return
+        btn.start_spin()
+        print(f'[RANDOM] after start_spin t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
+        self.random_row.show_skeleton()
+        print(f'[RANDOM] after show_skeleton t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
         buf = getattr(self, '_random_buffer', [])
+        self._random_refresh_count = getattr(self, '_random_refresh_count', 0) + 1
         if buf:
-            # Instant reshuffle from existing buffer — no network call
             _rnd.shuffle(buf)
-            self.random_row.populate(buf)
-            self._queue_covers(buf)
-            # Every 3 reshuffles fetch a fresh batch in background
-            self._random_refresh_count = getattr(self, '_random_refresh_count', 0) + 1
-            if self._random_refresh_count % 3 == 0:
-                self._fetch_random_background()
+            def _populate():
+                print(f'[RANDOM] _populate fired t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
+                self.random_row.populate(buf)
+                print(f'[RANDOM] populate done t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
+                self._queue_covers(buf)
+                print(f'[RANDOM] queue_covers done t=+{(_t.monotonic()-_t0)*1000:.0f}ms')
+                if self._random_refresh_count % 3 == 0:
+                    self._fetch_random_background()
+                else:
+                    btn._do_stop()
+            QTimer.singleShot(50, _populate)
         else:
             self._fetch_random_background()
 
@@ -1213,6 +1280,8 @@ class HomeView(QWidget):
         self.random_reloader.start()
 
     def _on_random_refreshed(self, new_mix):
+        btn = self.random_row.btn_refresh
+        if btn: btn._do_stop()
         if new_mix:
             self._random_buffer = list(new_mix)
             self.random_row.populate(new_mix)
@@ -1222,8 +1291,18 @@ class HomeView(QWidget):
 
     def _start_cover_worker(self):
         self.cover_worker = GridCoverWorker(self.client)
-        self.cover_worker.cover_ready.connect(self.apply_cover)
+        self._decode_worker = CoverDecodeWorker(self)
+        self._decode_worker.decoded.connect(self._on_cover_decoded)
+        self._decode_worker.start()
+        self.cover_worker.cover_ready.connect(
+            lambda cid, data: self._decode_worker.enqueue(cid, data))
         self.cover_worker.start()
+
+    def _on_cover_decoded(self, cover_id: str, img: QImage):
+        pix = QPixmap.fromImage(img)
+        self.recent_row.apply_cover_pixmap(cover_id, pix)
+        self.random_row.apply_cover_pixmap(cover_id, pix)
+        self.most_played_row.apply_cover_pixmap(cover_id, pix)
 
     def _safe_discard_worker(self, worker):
         if not worker:

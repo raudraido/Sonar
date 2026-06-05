@@ -15,7 +15,9 @@
       "PowerShell(git stash pop)",
       "Bash(dir \"C:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\UsersraidoDesktoppsysonic_ref\")",
       "Bash(find /home/raudraido/psysonic/src -name \"*GenreFilterBar*\" -o -name \"*genreFilter*\")",
-      "Read(//home/raudraido/psysonic/src/**)"
+      "Read(//home/raudraido/psysonic/src/**)",
+      "Bash(python main.py)",
+      "Bash(taskkill /F /IM python.exe /T)"
     ]
   }
 }
