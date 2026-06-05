@@ -3666,7 +3666,7 @@ class ArtistGridBrowser(QWidget):
             )
 
         if hasattr(self, 'cover_worker') and self.cover_worker:
-            self.cover_worker.load_urgent(covers_to_queue)
+            self.cover_worker.queue_batch(covers_to_queue, priority=True)
 
     def resizeEvent(self, event): 
         super().resizeEvent(event)

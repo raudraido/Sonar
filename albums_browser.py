@@ -511,6 +511,16 @@ class GridCoverWorker(QThread):
                 self.queue.remove(cid)
             self.queue.insert(0, cid)
 
+    def queue_batch(self, cover_ids, priority=False):
+        """Queue covers without any main-thread disk reads — worker handles cache checks."""
+        for cid in (reversed(cover_ids) if priority else cover_ids):
+            cid = str(cid)
+            if cid not in self.queue:
+                if priority:
+                    self.queue.insert(0, cid)
+                else:
+                    self.queue.append(cid)
+
     def run(self):
         with ThreadPoolExecutor(max_workers=_COVER_WORKERS) as executor:
             futures = []
@@ -3213,8 +3223,7 @@ class LibraryGridBrowser(QWidget):
         )
         
         if hasattr(self, 'cover_worker') and self.cover_worker:
-            for cid in reversed(covers_to_queue):
-                self.cover_worker.queue_cover(cid, priority=True)
+            self.cover_worker.queue_batch(covers_to_queue, priority=True)
 
     def _on_song_count_loaded(self, albums, total, cache_key):
         """Called when the full sorted list is ready. Caches it and repopulates in chunks."""
