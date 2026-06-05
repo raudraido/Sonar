@@ -81,6 +81,17 @@ class AudioVisualizer(QWidget):
         self._vu_frame     = QPixmap(resource_path("img/vuM_frame.png"))
         self._vu_bg_scaled    = QPixmap()
         self._vu_frame_scaled = QPixmap()
+        self._douk_frame   = QPixmap(resource_path("img/new_vu_frame.png"))
+        self._douk_left    = QPixmap(resource_path("img/new_vu_left.png"))
+        self._douk_right   = QPixmap(resource_path("img/new_vu_right.png"))
+        self._douk_knob    = QPixmap(resource_path("img/vu_gain_knob_inner.png"))
+        self._douk_scaled_frame = QPixmap()
+        self._douk_scaled_left  = QPixmap()
+        self._douk_scaled_right = QPixmap()
+        self._douk_scaled_w = 0
+        self._douk_scaled_h = 0
+        self._knob_drag_y   = None   # mouse y at drag start
+        self._knob_drag_ref = None   # ref level at drag start
         self._raw_vis_data = []
         self._vu_debug_frame = 0
         _s = QSettings("Icosahedron", "Visualizer")
@@ -223,7 +234,7 @@ class AudioVisualizer(QWidget):
         _ref_lay.addWidget(self.lbl_ref_level, 1)
         _ref_lay.addWidget(self.btn_ref_plus)
 
-        self._ref_container.setVisible(self.vis_mode == 1)
+        self._ref_container.setVisible(self.vis_mode in (1, 2))
 
         # Apply initial button style with default color
         self.set_master_color(self.master_color.name())
@@ -336,8 +347,8 @@ class AudioVisualizer(QWidget):
         return super().eventFilter(obj, event)
 
     def toggle_mode(self):
-        self.vis_mode = (self.vis_mode + 1) % 2
-        self._ref_container.setVisible(self.vis_mode == 1)
+        self.vis_mode = (self.vis_mode + 1) % 3
+        self._ref_container.setVisible(self.vis_mode in (1, 2))
         self.update()
 
     def resizeEvent(self, event):
@@ -360,6 +371,7 @@ class AudioVisualizer(QWidget):
             ch = sh
         else:
             ch = H
+
         cy = (H - ch) // 2
         # Only position toggle button when it hasn't been re-parented to _SectionWidget
         if self.btn_toggle_vis.parent() is self:
@@ -386,8 +398,55 @@ class AudioVisualizer(QWidget):
         super().leaveEvent(event)
 
 
+    def _knob_rect(self):
+        """Returns the knob hit area in widget coords (used for mode 2)."""
+        if self.vis_mode != 2 or self._douk_scaled_w == 0:
+            return None
+        scale = self._douk_scaled_w / 1540.0
+        ox = (self.width()  - self._douk_scaled_w) // 2
+        oy = (self.height() - self._douk_scaled_h) // 2
+        kx = ox + 660.0 * scale
+        ky = oy + 168.0 * scale
+        kr = 43.0 * scale
+        return (kx, ky, kr)
+
+    def mousePressEvent(self, event):
+        if self.vis_mode == 2:
+            hit = self._knob_rect()
+            if hit:
+                kx, ky, kr = hit
+                dx = event.position().x() - kx
+                dy = event.position().y() - ky
+                if dx*dx + dy*dy <= (kr*1.4)**2:
+                    self._knob_drag_y   = event.position().y()
+                    self._knob_drag_ref = self._vu_ref_level
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._knob_drag_y is not None:
+            dy = self._knob_drag_y - event.position().y()  # drag up = increase
+            delta = int(dy / 6)
+            new_val = max(-18, min(0, self._knob_drag_ref + delta))
+            if new_val != self._vu_ref_level:
+                self._vu_ref_level = new_val
+                self._update_ref_btn_text()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._knob_drag_y is not None:
+            QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+            self._knob_drag_y   = None
+            self._knob_drag_ref = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def wheelEvent(self, event):
-        if self.vis_mode != 1:
+        if self.vis_mode not in (1, 2):
             super().wheelEvent(event)
             return
         step = 1 if event.angleDelta().y() > 0 else -1
@@ -470,8 +529,10 @@ class AudioVisualizer(QWidget):
     def reset(self):
         """Clear bars instantly; let VU needle decay naturally to zero."""
         self.vis_data = [0.0] * self.num_bars
-        # Clear the last-audio timestamp so _render_tick starts decaying immediately
-        self._last_vu_t = 0.0
+        self._last_vu_t   = 0.0   # triggers _render_tick decay immediately
+        self._ndl_base_pos    = getattr(self, '_ndl_base_pos', -math.radians(30.5))
+        self._ndl_base_target = -math.radians(30.5)  # park target at minimum
+        self._ndl_base_t      = __import__('time').monotonic()
         self.update()
     # -----------------------------
     
@@ -522,8 +583,12 @@ class AudioVisualizer(QWidget):
 
         if self.vis_mode == 0:
             self._paint_bars(painter, cw, ch)
-        else:
+        elif self.vis_mode == 1:
             self._paint_vu_meter(painter, cw, ch)
+        else:
+            painter.restore()               # undo the (cx,cy) translate
+            painter.save()
+            self._paint_dual_vu(painter, full_w, full_h)
 
         painter.restore()
         painter.end()
@@ -607,41 +672,45 @@ class AudioVisualizer(QWidget):
                     return angle
             return HALF_SPAN + EXTRA_SPAN
 
-        # Grab the raw time-domain RMS from C++
-        rms_instant = getattr(self, '_raw_vu_rms', 0.0)
-
-        # ── Frame delta — normalise to 60 fps so needle speed is resolution-independent
         import time as _time
         now = _time.monotonic()
-        dt  = min(now - getattr(self, '_vu_last_t', now - 0.016), 0.1)  # cap at 100ms
-        self._vu_last_t = now
-        dt_factor = dt / 0.016667  # 1.0 at 60 fps, 2.0 at 30 fps, etc.
 
-        # ── 1. Electrical Smoothing (The Circuit) ───────────────────────────────
-        # ALPHA is tuned for 60 fps; scale per-frame coefficient to elapsed time.
-        ALPHA_60 = 0.948
-        alpha = ALPHA_60 ** dt_factor
+        # ── 1. Electrical smoothing — runs at audio callback rate in update_vu_data.
+        #    Here we just read the smoothed value.
+        rms_instant = getattr(self, '_raw_vu_rms', 0.0)
+        ALPHA_K = -math.log(0.948) * 60.0   # decay constant ≈ 3.22 /s (tuned at 60 fps)
+        dt_elec = min(now - getattr(self, '_elec_last_t', now - 0.016), 0.1)
+        self._elec_last_t = now
+        alpha = math.exp(-ALPHA_K * dt_elec)
         if not hasattr(self, '_vu_rms'):
             self._vu_rms = 0.0
         self._vu_rms = alpha * self._vu_rms + (1.0 - alpha) * rms_instant
 
         db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + (-self._vu_ref_level)
+        target_a  = db2a(max(-20.0, min(3.0, db_level)))
 
-        # Calculate exactly where the audio wants the needle to point
-        target_a = db2a(max(-20.0, min(3.0, db_level)))
+        # ── 2. Analytical needle position — continuous exponential decay.
+        #    K derived from NEEDLE_SPEED_60=0.25 at 60 fps:
+        #      per-frame decay = (1-0.25) = 0.75  →  K = -ln(0.75)*60 ≈ 17.3 /s
+        #    pos(t) = target + (base_pos - base_target) * e^(-K * elapsed)
+        #    Re-anchor base whenever target changes to preserve continuity.
+        NEEDLE_K = -math.log(1.0 - 0.25) * 60.0   # ≈ 17.3 /s
 
-        # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
-        # NEEDLE_SPEED is tuned for 60 fps; scale to actual elapsed time so the
-        # needle moves the same physical speed regardless of window size / frame rate.
-        NEEDLE_SPEED_60 = 0.25
-        needle_speed = 1.0 - (1.0 - NEEDLE_SPEED_60) ** dt_factor
+        if not hasattr(self, '_ndl_base_pos'):
+            self._ndl_base_pos    = target_a
+            self._ndl_base_target = target_a
+            self._ndl_base_t      = now
 
-        if not hasattr(self, '_current_a'):
-            self._current_a = target_a
-        self._current_a += (target_a - self._current_a) * needle_speed
-        
-        # Feed the smoothed angle to the drawing function
-        needle_a = self._current_a
+        # Re-anchor when target moves (keeps previous velocity)
+        if target_a != getattr(self, '_ndl_base_target', target_a):
+            elapsed = now - self._ndl_base_t
+            cur = self._ndl_base_target + (self._ndl_base_pos - self._ndl_base_target) * math.exp(-NEEDLE_K * elapsed)
+            self._ndl_base_pos    = cur
+            self._ndl_base_target = target_a
+            self._ndl_base_t      = now
+
+        elapsed = now - self._ndl_base_t
+        needle_a = self._ndl_base_target + (self._ndl_base_pos - self._ndl_base_target) * math.exp(-NEEDLE_K * elapsed)
 
         # ── Needle + Pivot (clipped to image bounds) ──────────────────────────
         painter.save()
@@ -676,3 +745,131 @@ class AudioVisualizer(QWidget):
             painter.setClipPath(path)
             painter.drawPixmap(dx, dy, _frame)
             painter.restore()
+
+    # ── Dual Douk-style VU meter (image-based) ────────────────────────────────
+
+    def _paint_dual_vu(self, painter, W, H):
+        if self._douk_frame.isNull():
+            return
+
+        iw, ih = self._douk_frame.width(), self._douk_frame.height()
+        scale  = min(W / iw, H / ih) * 0.70
+        sw, sh = int(iw * scale), int(ih * scale)
+
+        # Re-scale all three layers only when size changes
+        if sw != self._douk_scaled_w or sh != self._douk_scaled_h:
+            self._douk_scaled_frame = self._douk_frame.scaled(
+                sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            self._douk_scaled_left  = self._douk_left.scaled(
+                sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            self._douk_scaled_right = self._douk_right.scaled(
+                sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            self._douk_scaled_w = sw
+            self._douk_scaled_h = sh
+
+        ox = (W - sw) // 2
+        oy = (H - sh) // 2
+
+        # Composite: frame → left face → right face
+        painter.drawPixmap(ox, oy, self._douk_scaled_frame)
+        painter.drawPixmap(ox, oy, self._douk_scaled_left)
+        painter.drawPixmap(ox, oy, self._douk_scaled_right)
+
+        # ── Rotatable GAIN knob ───────────────────────────────────────────────
+        # Knob center in 1540×516 image: (719, 169), inner radius 43px
+        # Rotation: -135° at -18 dBFS, 0° at -9 dBFS, +135° at 0 dBFS
+        if not self._douk_knob.isNull():
+            knob_angle = (self._vu_ref_level + 9) * 15.0
+            knob_r     = 43.0 * scale
+            knob_size  = max(2, int(knob_r * 2))
+            scaled_knob = self._douk_knob.scaled(
+                knob_size, knob_size,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            kx = ox + 660.0 * scale
+            ky = oy + 168.0 * scale
+            painter.save()
+            painter.translate(kx, ky)
+            painter.rotate(knob_angle)
+            painter.drawPixmap(int(-knob_r), int(-knob_r), scaled_knob)
+            painter.restore()
+
+        # ── Needle physics ────────────────────────────────────────────────────
+        import time as _time
+        now  = _time.monotonic()
+        rms  = getattr(self, '_raw_vu_rms', 0.0)
+
+        ALPHA_K = -math.log(0.948) * 60.0
+        dt_e    = min(now - getattr(self, '_elec2_t', now - 0.016), 0.1)
+        self._elec2_t = now
+        alpha = math.exp(-ALPHA_K * dt_e)
+        if not hasattr(self, '_vu_rms2'):
+            self._vu_rms2 = 0.0
+        self._vu_rms2 = alpha * self._vu_rms2 + (1.0 - alpha) * rms
+
+        db = 20.0 * math.log10(max(self._vu_rms2, 1e-9)) + (-self._vu_ref_level)
+
+        # Calibrated from image pixel analysis:
+        # pivot_left=(311,340), R=273px, left_angle=-45.2°, right_angle=+36.1°
+        # t-values derived from acoustic VU law + measured tick spacing
+        DOUK_MARKS = [
+            (-60, 0.000), (-50, 0.075), (-40, 0.170), (-30, 0.290),
+            (-20, 0.435), (-10, 0.595), (  0, 0.755), (  4, 0.900),
+            (  6, 1.000),
+        ]
+        LEFT_A  = math.radians(-41.4)
+        RIGHT_A = math.radians( 45.0)
+        SPAN_A  = RIGHT_A - LEFT_A
+
+        def db2a_douk(d):
+            d = max(-60.0, min(6.0, d))
+            for i in range(len(DOUK_MARKS) - 1):
+                d0, t0 = DOUK_MARKS[i]; d1, t1 = DOUK_MARKS[i + 1]
+                if d0 <= d <= d1:
+                    f = (d - d0) / (d1 - d0)
+                    return LEFT_A + (t0 + f * (t1 - t0)) * SPAN_A
+            return RIGHT_A
+
+        target_a = db2a_douk(db)
+        NEEDLE_K = -math.log(1.0 - 0.25) * 60.0
+
+        if not hasattr(self, '_ndl2_base_pos'):
+            self._ndl2_base_pos    = target_a
+            self._ndl2_base_target = target_a
+            self._ndl2_base_t      = now
+        if target_a != self._ndl2_base_target:
+            e   = now - self._ndl2_base_t
+            cur = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-NEEDLE_K * e)
+            self._ndl2_base_pos    = cur
+            self._ndl2_base_target = target_a
+            self._ndl2_base_t      = now
+        e        = now - self._ndl2_base_t
+        needle_a = self._ndl2_base_target + (self._ndl2_base_pos - self._ndl2_base_target) * math.exp(-NEEDLE_K * e)
+
+        from PyQt6.QtCore import QPointF
+        from PyQt6.QtGui import QPen
+
+        s   = sw / 1540.0
+        R   = 230.0 * s
+        cpy = oy + 380.0 * s
+
+        for cpx_img in (309.0, 1209.0):
+            cpx   = ox + cpx_img * s
+            tip_x = cpx + R * math.sin(needle_a)
+            tip_y = cpy - R * math.cos(needle_a)
+            # Shadow
+            painter.setPen(QPen(QColor(0, 0, 0, 60), max(1.0, s * 2.5),
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(cpx + s, cpy + s), QPointF(tip_x + s, tip_y + s))
+            # Needle
+            painter.setPen(QPen(QColor(15, 10, 5), max(1.0, s * 2.0),
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(cpx, cpy), QPointF(tip_x, tip_y))
+            # Pivot dot
+            painter.setBrush(QColor(15, 10, 5))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cpx, cpy), 5.0 * s, 5.0 * s)
+
