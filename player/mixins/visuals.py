@@ -236,7 +236,7 @@ class SmoothScroller(QObject):
             self._target = float(value)
 
     def eventFilter(self, obj, event):
-        if obj is self._w.viewport() and event.type() == QEvent.Type.Wheel:
+        if event.type() == QEvent.Type.Wheel:
             sb = self._w.verticalScrollBar()
             delta = event.angleDelta().y()
             step = -(delta / 120.0) * self._PIXELS_PER_NOTCH
@@ -729,7 +729,16 @@ class VisualsMixin:
                     if widget:
                         idx = self.tabs.indexOf(widget)
                         if idx >= 0:
-                            self.tab_bar.setTabIcon(idx, get_cached_icon(img, mc))
+                            icon = get_cached_icon(img, mc)
+                            # Always keep _stored_icons current with the tinted icon
+                            self.tab_bar._stored_icons[idx] = icon
+                            if self.tab_bar.tabText(idx):
+                                # Full mode — set icon on tab normally
+                                self.tab_bar.setTabIcon(idx, icon)
+                            else:
+                                # Icon-only mode — overlay draws from _stored_icons;
+                                # don't also set it on the tab or it renders twice
+                                self.tab_bar.update()
 
             if hasattr(self, '_now_playing_panel') and hasattr(self._now_playing_panel, 'apply_theme'):
                 self._now_playing_panel.apply_theme(self.theme)

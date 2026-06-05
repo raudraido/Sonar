@@ -2,13 +2,13 @@ import os
 import sys
 import math
 
-from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect, QLabel, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect, QLabel, QHBoxLayout, QApplication
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QLinearGradient, QRadialGradient,
     QPen, QGradient, QPainterPath,
     QIcon, QPixmap
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent, QSettings
+from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent, QSettings, QTimer
 
 
 import os
@@ -137,6 +137,14 @@ class AudioVisualizer(QWidget):
 
         self.audio_engine.visualizerDataReady.connect(self.update_data)
         self.audio_engine.vuDataReady.connect(self.update_vu_data)
+
+        # Vsync-locked render timer — drives all repaints at the screen refresh rate
+        screen = QApplication.primaryScreen()
+        hz = screen.refreshRate() if screen else 60.0
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(max(1, round(1000.0 / hz)))
+        self._render_timer.timeout.connect(self._render_tick)
+        self._render_timer.start()
 
         # 4. GHOST TOGGLE BUTTON SETUP
         self.btn_toggle_vis = QPushButton(self)
@@ -439,26 +447,31 @@ class AudioVisualizer(QWidget):
             else:
                 self.vis_data[i] = cur * DECAY + target * (1.0 - DECAY)
 
+    def _render_tick(self):
+        import time as _t
+        now = _t.monotonic()
+        last = getattr(self, '_last_vu_t', now)
+        if now - last > 0.05:  # no audio data for >50ms → decay toward zero
+            dt = now - getattr(self, '_render_last_t', now - 0.016)
+            dt = min(dt, 0.1)
+            # half-life of 400ms — needle falls naturally over ~1s
+            decay = 0.5 ** (dt / 0.4)
+            self._raw_vu_rms = getattr(self, '_raw_vu_rms', 0.0) * decay
+        self._render_last_t = now
         self.update()
 
-    
     def update_vu_data(self, true_rms: float):
         if not getattr(self, 'visualizer_enabled', True):
             return
-
-        # Store the clean time-domain RMS
+        import time as _t
         self._raw_vu_rms = true_rms
-
-        # Only trigger a repaint if we are actually looking at the VU meter
-        if self.vis_mode == 1:
-            self.update()
+        self._last_vu_t = _t.monotonic()
 
     def reset(self):
-        """Zero all bar heights, VU smoothing, and needle position instantly."""
-        self.vis_data    = [0.0] * self.num_bars
-        self._raw_vu_rms = 0.0
-        self._vu_rms     = 0.0
-        self._current_a  = -math.radians(30.5)  # leftmost needle angle (–20 dB)
+        """Clear bars instantly; let VU needle decay naturally to zero."""
+        self.vis_data = [0.0] * self.num_bars
+        # Clear the last-audio timestamp so _render_tick starts decaying immediately
+        self._last_vu_t = 0.0
         self.update()
     # -----------------------------
     
@@ -597,29 +610,35 @@ class AudioVisualizer(QWidget):
         # Grab the raw time-domain RMS from C++
         rms_instant = getattr(self, '_raw_vu_rms', 0.0)
 
+        # ── Frame delta — normalise to 60 fps so needle speed is resolution-independent
+        import time as _time
+        now = _time.monotonic()
+        dt  = min(now - getattr(self, '_vu_last_t', now - 0.016), 0.1)  # cap at 100ms
+        self._vu_last_t = now
+        dt_factor = dt / 0.016667  # 1.0 at 60 fps, 2.0 at 30 fps, etc.
+
         # ── 1. Electrical Smoothing (The Circuit) ───────────────────────────────
-        ALPHA = 0.948
+        # ALPHA is tuned for 60 fps; scale per-frame coefficient to elapsed time.
+        ALPHA_60 = 0.948
+        alpha = ALPHA_60 ** dt_factor
         if not hasattr(self, '_vu_rms'):
             self._vu_rms = 0.0
-            
-        self._vu_rms = ALPHA * self._vu_rms + (1.0 - ALPHA) * rms_instant
-        
+        self._vu_rms = alpha * self._vu_rms + (1.0 - alpha) * rms_instant
+
         db_level = 20.0 * math.log10(max(self._vu_rms, 1e-9)) + (-self._vu_ref_level)
 
         # Calculate exactly where the audio wants the needle to point
-        target_a  = db2a(max(-20.0, min(3.0, db_level)))
+        target_a = db2a(max(-20.0, min(3.0, db_level)))
 
         # ── 2. Mechanical Smoothing (The Physical Needle) ───────────────────────
-        # This determines how "heavy" the needle is. 
-        # Lower number = heavier/smoother. Higher number = lighter/faster.
-        NEEDLE_SPEED = 0.3 
+        # NEEDLE_SPEED is tuned for 60 fps; scale to actual elapsed time so the
+        # needle moves the same physical speed regardless of window size / frame rate.
+        NEEDLE_SPEED_60 = 0.25
+        needle_speed = 1.0 - (1.0 - NEEDLE_SPEED_60) ** dt_factor
 
         if not hasattr(self, '_current_a'):
             self._current_a = target_a
-            
-        # The needle glides toward the target instead of snapping to it instantly,
-        # completely destroying any high-frequency micro-vibrations.
-        self._current_a += (target_a - self._current_a) * NEEDLE_SPEED
+        self._current_a += (target_a - self._current_a) * needle_speed
         
         # Feed the smoothed angle to the drawing function
         needle_a = self._current_a

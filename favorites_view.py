@@ -354,7 +354,7 @@ class FavoritesView(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll_reveal = None
 
         content = QWidget()
@@ -364,7 +364,7 @@ class FavoritesView(QWidget):
         self._layout.setSpacing(10)
         self.scroll.setWidget(content)
         main.addWidget(self.scroll)
-        SmoothScroller(self.scroll)
+        self._smooth_scroller = SmoothScroller(self.scroll)
 
         # ── Artists row ───────────────────────────────────────────────────
         self._artists_row = HomeAlbumRowWidget('Artists')
@@ -389,6 +389,10 @@ class FavoritesView(QWidget):
         self._top_row.delegate.show_play_btn    = False
         self._top_row.set_draggable(False)
         self._layout.addWidget(self._top_row)
+
+        # Route wheel events on all carousel list widgets to the outer scroll area
+        for _row in (self._artists_row, self._albums_row, self._top_row):
+            _row.list_widget.viewport().installEventFilter(self._smooth_scroller)
 
         # ── Favorite Songs header ─────────────────────────────────────────
         self._selected_genres: set = set()
@@ -543,7 +547,8 @@ class FavoritesView(QWidget):
         self._track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
         self._track_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._track_tree.customContextMenuRequested.connect(self._show_context_menu)
-        SmoothScroller(self._track_tree)
+        # Route wheel events on the track tree directly to the outer scroll area
+        self._track_tree.viewport().installEventFilter(self._smooth_scroller)
 
         self._track_card = _Card()
         _tcl = QVBoxLayout(self._track_card)
