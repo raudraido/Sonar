@@ -2349,14 +2349,14 @@ class TracksBrowser(QWidget):
             state_str = self._settings.value('tracks_sort_state')
             if state_str:
                 state = json.loads(state_str)
-                self.sort_col = state.get('col', 4) # Default to ALBUM (Column 4)
+                self.sort_col = state.get('col', 11)
                 self.sort_order = Qt.SortOrder.AscendingOrder if state.get('order', 0) == 0 else Qt.SortOrder.DescendingOrder
             else:
-                self.sort_col = 4
-                self.sort_order = Qt.SortOrder.AscendingOrder
+                self.sort_col = 11
+                self.sort_order = Qt.SortOrder.DescendingOrder
         except:
-            self.sort_col = 4
-            self.sort_order = Qt.SortOrder.AscendingOrder
+            self.sort_col = 11
+            self.sort_order = Qt.SortOrder.DescendingOrder
     
    
 
@@ -3085,22 +3085,23 @@ class TracksBrowser(QWidget):
                         self.tree.header().resizeSection(i, self.col_min_widths.get(i, 80))
                     self.tree.setColumnHidden(2, True)
                     self.tree.setColumnHidden(3, True)
-                    self.tree.setColumnHidden(11, True)
                     self.tree.setColumnHidden(12, True)
                 self._col_resize_guard = False
             else:
                 self._col_resize_guard = True
                 self.tree.setColumnHidden(2, True)
                 self.tree.setColumnHidden(3, True)
-                self.tree.setColumnHidden(11, True)
                 self.tree.setColumnHidden(12, True)
+                for col, w in {0: 39, 4: 205, 5: 70, 6: 111, 7: 88, 8: 70, 9: 75, 10: 55, 11: 103}.items():
+                    self.tree.header().resizeSection(col, w)
                 self._col_resize_guard = False
         except:
             self._col_resize_guard = True
             self.tree.setColumnHidden(2, True)
             self.tree.setColumnHidden(3, True)
-            self.tree.setColumnHidden(11, True)
             self.tree.setColumnHidden(12, True)
+            for col, w in {0: 39, 4: 205, 5: 70, 6: 111, 7: 88, 8: 70, 9: 75, 10: 55, 11: 103}.items():
+                self.tree.header().resizeSection(col, w)
             self._col_resize_guard = False
 
 
