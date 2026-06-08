@@ -1565,9 +1565,59 @@ class AlbumDetailBridge(QObject):
     def coverClicked(self):
         self._view._show_cover_zoom()
 
+    @pyqtSlot(str, int, int)
+    def showTooltip(self, text: str, x: int, y: int):
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QPoint
+        # Cancel any pending debounced hide (spurious Leave → Enter cycle)
+        t = getattr(self, '_tip_hide_timer', None)
+        if t and t.isActive():
+            t.stop()
+        for w in QApplication.topLevelWidgets():
+            tf = getattr(w, '_tooltip_filter', None)
+            if tf:
+                tf._qml_mode = True
+                tf._ensure_tip().show_at(QPoint(x, y), text)
+                break
+
+    @pyqtSlot()
+    def hideTooltip(self):
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QTimer
+        def _do_hide():
+            for w in QApplication.topLevelWidgets():
+                tf = getattr(w, '_tooltip_filter', None)
+                if tf:
+                    tf._qml_mode = False
+                    if tf._tip and tf._tip.isVisible():
+                        tf._tip.hide()
+                    break
+        t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(_do_hide)
+        t.start(120)
+        self._tip_hide_timer = t
+
     @pyqtSlot(int, float, float)
     def trackContextMenuRequested(self, track_idx: int, global_x: float, global_y: float):
         self._view._show_track_context_menu_at(track_idx, int(global_x), int(global_y))
+
+    @pyqtSlot()
+    def favHeaderClicked(self):
+        self._view.fav_header_clicked.emit()
+
+    @pyqtSlot(result='QVariantList')
+    def getColWidths(self):
+        from PyQt6.QtCore import QSettings
+        saved = QSettings().value('album_detail/track_col_widths')
+        if isinstance(saved, dict):
+            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60))]
+        return [160, 68, 72, 60]
+
+    @pyqtSlot(int, int, int, int)
+    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int):
+        from PyQt6.QtCore import QSettings
+        QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays})
 
 
 class AlbumDetailView(QWidget):
@@ -1579,6 +1629,7 @@ class AlbumDetailView(QWidget):
     track_play_signal = pyqtSignal(list, int)
     track_artist_clicked = pyqtSignal(str)
     favorite_toggled = pyqtSignal(str, bool)   # track_id, is_fav
+    fav_header_clicked = pyqtSignal()
     genre_clicked = pyqtSignal(str)
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
@@ -1829,44 +1880,12 @@ class AlbumDetailView(QWidget):
         data = self._cover_provider.cache.get(cid) if cid else None
         if not data:
             return
-        from PyQt6.QtWidgets import QDialog, QLabel, QVBoxLayout, QSizePolicy
-        from PyQt6.QtGui import QPixmap, QKeyEvent
-        from PyQt6.QtCore import Qt
-
-        main = self.window()
-
-        class _ZoomDialog(QDialog):
-            def __init__(self, parent, pix):
-                super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-                self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-                self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-                self.setModal(True)
-                bg = QLabel(self)
-                bg.setStyleSheet("background: rgba(0,0,0,0.80); border-radius: 0;")
-                img_lbl = QLabel(self)
-                img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                avail = parent.size()
-                max_w = int(avail.width()  * 0.80)
-                max_h = int(avail.height() * 0.82)
-                scaled = pix.scaled(max_w, max_h,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation)
-                img_lbl.setPixmap(scaled)
-                lo = QVBoxLayout(self)
-                lo.setContentsMargins(0, 0, 0, 0)
-                lo.addWidget(img_lbl, 0, Qt.AlignmentFlag.AlignCenter)
-                bg.resize(avail)
-                self.resize(avail)
-
-            def mousePressEvent(self, e): self.close()
-            def keyPressEvent(self, e):
-                if e.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Space):
-                    self.close()
-
+        from PyQt6.QtGui import QPixmap
+        from now_playing_info import _CoverOverlay
         pix = QPixmap()
         pix.loadFromData(data)
-        dlg = _ZoomDialog(main, pix)
-        dlg.exec()
+        main = self.window()
+        _CoverOverlay(pix, main, cover_id=cid, client=getattr(self, 'client', None))
 
     def _fetch_cover(self, cid: str):
         if not getattr(self, 'client', None): return

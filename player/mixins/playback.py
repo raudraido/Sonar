@@ -583,7 +583,7 @@ class PlaybackMixin:
             self.seek_bar.current_index = 0.0
             self.seek_bar.update()
 
-        if hasattr(self, 'visualizer'):
+        if getattr(self, 'visualizer', None):
             self.visualizer.reset()
 
         self.refresh_ui_styles(scroll_to_current=False)

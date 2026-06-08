@@ -11,6 +11,8 @@ import keyring
 import ctypes
 import platform
 import threading
+import faulthandler
+faulthandler.enable()
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
@@ -33,7 +35,9 @@ _FONT_NOISE = (
 def _qt_msg_handler(msg_type, _ctx, message):
     if any(s in message for s in _FONT_NOISE):
         return
-    if msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg):
+    if msg_type == QtMsgType.QtFatalMsg:
+        print(f'Qt FATAL: {message}', file=sys.stderr, flush=True)
+    elif msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg):
         print(f'Qt: {message}', file=sys.stderr)
 
 qInstallMessageHandler(_qt_msg_handler)

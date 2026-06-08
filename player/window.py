@@ -308,7 +308,8 @@ class _TooltipLabel(_QFrame):
 class _TooltipFilter(_QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._tip = None
+        self._tip      = None
+        self._qml_mode = False  # True while a QML-driven tooltip is visible
 
     def _ensure_tip(self):
         if self._tip is None:
@@ -333,6 +334,9 @@ class _TooltipFilter(_QObject):
                 return False
         if event.type() in (_QEvent2.Type.Leave, _QEvent2.Type.MouseButtonPress,
                             _QEvent2.Type.KeyPress, _QEvent2.Type.WindowDeactivate):
+            if self._qml_mode:
+                # QML tooltip: onExited/hideTooltip() drives hiding, not events.
+                return False
             if self._tip and self._tip.isVisible():
                 self._tip.hide()
         return False

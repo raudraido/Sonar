@@ -6,7 +6,7 @@ import tempfile
 import requests
 import threading
 
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QMetaObject, Qt
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Qt
 
 
 class AudioEngine(QObject):
@@ -241,12 +241,13 @@ class AudioEngine(QObject):
         self.is_playing = False
         QMetaObject.invokeMethod(self.update_timer, "stop", Qt.ConnectionType.QueuedConnection)
 
+    @pyqtSlot()
     def stop(self):
         if self.lib:
             self.lib.stop()
         self.is_playing = False
+        self.update_timer.stop()
         self.positionChanged.emit(0)
-        QMetaObject.invokeMethod(self.update_timer, "stop", Qt.ConnectionType.QueuedConnection)
 
     def seek(self, ms: int):
         if self.lib:

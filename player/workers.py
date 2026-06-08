@@ -13,7 +13,7 @@ import requests
 import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QMetaObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
 from io import BytesIO
@@ -151,7 +151,10 @@ class PlaybackManager(QThread):
                 self._stop_flag = True
                 if self.active_download_thread and self.active_download_thread.is_alive():
                     self.active_download_thread.join(timeout=0.2)
-                self.audio_engine.stop()
+                QMetaObject.invokeMethod(
+                    self.audio_engine, "stop",
+                    Qt.ConnectionType.BlockingQueuedConnection
+                )
                 self._stop_flag = False
 
             # Check obsolescence only for play commands

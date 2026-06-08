@@ -29,14 +29,29 @@ Rectangle {
     property string searchText:    ""
 
     // ── Column widths ──────────────────────────────────────────────────────────
-    readonly property int colNum:    44
-    readonly property int colArtist: 160
-    readonly property int colFav:    44
-    readonly property int colDur:    72
-    readonly property int colPlays:  60
+    readonly property int colNum:  44
+    property int colFav:  68
+    property int colArtist: 160
+    property int colDur:    72
+    property int colPlays:  60
 
     function colTitleW(avail) {
         return Math.max(80, avail - colNum - colArtist - colFav - colDur - colPlays - 8)
+    }
+
+    // ── Column width persistence ───────────────────────────────────────────────
+    Timer {
+        id: colSaveTimer
+        interval: 400; repeat: false
+        onTriggered: albumBridge.saveColWidths(root.colArtist, root.colFav, root.colDur, root.colPlays)
+    }
+
+    Component.onCompleted: {
+        var w = albumBridge.getColWidths()
+        root.colArtist = w[0]
+        root.colFav    = w[1]
+        root.colDur    = w[2]
+        root.colPlays  = w[3]
     }
 
     // ── Bridge connections ─────────────────────────────────────────────────────
@@ -298,7 +313,7 @@ Rectangle {
                         Text {
                             text: root.albumMeta
                             color: root.textSecondary
-                            font.pixelSize: root.fontSizeSecondary
+                            font.pixelSize: root.fontSizeSecondary; font.bold: true
                             font.family: root.fontFamily; renderType: Text.NativeRendering
                             visible: root.albumMeta !== "" && root.albumMeta !== "Loading..."
                         }
@@ -374,6 +389,8 @@ Rectangle {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.playClicked()
+                                    onEntered: qmlTip.show("Play Album (Ctrl+Enter)", this)
+                                    onExited:  qmlTip.hide()
                                 }
                             }
 
@@ -396,6 +413,8 @@ Rectangle {
                                     id: shuffleHover; anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.shuffleClicked()
+                                    onEntered: qmlTip.show("Shuffle", this)
+                                    onExited:  qmlTip.hide()
                                 }
                             }
 
@@ -420,6 +439,8 @@ Rectangle {
                                     id: likeHover; anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.albumFavoriteClicked()
+                                    onEntered: qmlTip.show("Add to Favorite Albums", this)
+                                    onExited:  qmlTip.hide()
                                 }
                             }
                         }
@@ -427,36 +448,107 @@ Rectangle {
                 }
             }
 
-            Item { width: parent.width; height: 16 }
+            Item { width: parent.width; height: 10 }
 
-            // ── TRACK LIST HEADER ────────────────────────────────────────────
+            // ── TRACKLIST CARD ───────────────────────────────────────────────
             Item {
-                id: colHeader
-                width: parent.width; height: 36
-
-                Row {
-                    x: 4; height: parent.height; width: parent.width - 8
-                    property string colStyle: root.textSecondary
-                    property int    fSize:    root.fontSizeSecondary - 1
-
-                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colFav; height: parent.height; text: "♥"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colDur; height: parent.height; text: "TIME"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                }
-                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.textSecondary; opacity: 0.15 }
-            }
-
-            // ── TRACK ROWS ───────────────────────────────────────────────────
-            ListView {
-                id: trackList
+                id: tracklistCard
                 width: parent.width
-                height: contentHeight
-                interactive: false
-                model: trackModel
-                spacing: 0
+                height: 12 + colHeader.height + trackList.height + 12
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: 1
+                }
+
+                // ── TRACK LIST HEADER ────────────────────────────────────────
+                Item {
+                    id: colHeader
+                    x: 16; y: 12
+                    width: parent.width - 32; height: 36
+
+                    Row {
+                        x: 4; height: parent.height; width: parent.width - 8
+                        property string colStyle: root.textSecondary
+                        property int    fSize:    root.fontSizeSecondary - 1
+
+                        Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Item {
+                            width: root.colFav; height: parent.height
+                            Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: albumBridge.favHeaderClicked() }
+                        }
+                        Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    }
+                    // ── Column resize handles — visible 2px line + 12px drag zone ──
+                    MouseArea {
+                        x: parent.width - root.colFav - root.colDur - root.colPlays - 18
+                        y: 0; width: 12; height: parent.height; z: 10
+                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                        property real _pressX: 0; property int _pressW: 0
+                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colArtist }
+                        onPositionChanged: if (pressed) {
+                            root.colArtist = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                            colSaveTimer.restart()
+                        }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    }
+
+                    MouseArea {
+                        x: parent.width - root.colDur - root.colPlays - 18
+                        y: 0; width: 12; height: parent.height; z: 10
+                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                        property real _pressX: 0; property int _pressW: 0
+                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colFav }
+                        onPositionChanged: if (pressed) {
+                            root.colFav = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                            colSaveTimer.restart()
+                        }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    }
+
+                    MouseArea {
+                        x: parent.width - root.colPlays - 18
+                        y: 0; width: 12; height: parent.height; z: 10
+                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                        property real _pressX: 0; property int _pressW: 0
+                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colDur }
+                        onPositionChanged: if (pressed) {
+                            root.colDur = Math.max(44, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                            colSaveTimer.restart()
+                        }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    }
+
+                    MouseArea {
+                        x: parent.width - 18
+                        y: 0; width: 12; height: parent.height; z: 10
+                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                        property real _pressX: 0; property int _pressW: 0
+                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colPlays }
+                        onPositionChanged: if (pressed) {
+                            root.colPlays = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                            colSaveTimer.restart()
+                        }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    }
+                }
+
+                // ── TRACK ROWS ───────────────────────────────────────────────
+                ListView {
+                    id: trackList
+                    x: 16; y: colHeader.y + colHeader.height
+                    width: parent.width - 32
+                    height: contentHeight
+                    interactive: false
+                    model: trackModel
+                    spacing: 0
 
                 delegate: Item {
                     id: trackRow
@@ -496,7 +588,6 @@ Rectangle {
                             font.pixelSize: root.fontSizeSecondary; font.bold: true
                             font.family: root.fontFamily; renderType: Text.NativeRendering
                         }
-                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.textSecondary; opacity: 0.12 }
                     }
 
                     // ── Track row ────────────────────────────────────────────
@@ -554,7 +645,7 @@ Rectangle {
                                 verticalAlignment: Text.AlignVCenter
                                 text: trackRow.trkTitle
                                 color: isPlaying ? root.accentColor : root.textPrimary
-                                font.pixelSize: root.fontSizePrimary; font.bold: isPlaying
+                                font.pixelSize: root.fontSizePrimary; font.bold: true
                                 elide: Text.ElideRight; font.family: root.fontFamily; renderType: Text.NativeRendering
                             }
 
@@ -574,13 +665,14 @@ Rectangle {
                                             property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
                                             property bool hov: false
                                             text: modelData
-                                            color: isSep ? root.textSecondary : (hov ? root.accentColor : root.textSecondary)
+                                            opacity: isSep ? 0.4 : 1.0
+                                            color: !isSep && hov ? root.accentColor : root.textSecondary
                                             font.pixelSize: root.fontSizeSecondary
                                             font.underline: !isSep && hov
                                             font.family: root.fontFamily; renderType: Text.NativeRendering
                                             MouseArea {
                                                 anchors.fill: parent; hoverEnabled: true
-                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor; z: 5
+                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
                                                 onEntered: parent.hov = true
                                                 onExited:  parent.hov = false
                                                 onClicked: mouse => { albumBridge.trackArtistClicked(parent.text); mouse.accepted = true }
@@ -593,18 +685,19 @@ Rectangle {
                             // Favorite
                             Item {
                                 width: root.colFav; height: parent.height
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: trackRow.isFav ? "♥" : "♡"
-                                    color: trackRow.isFav ? "#E91E63" : (favHov.containsMouse ? root.accentColor : root.textSecondary)
-                                    font.pixelSize: 15; font.family: root.fontFamily; renderType: Text.NativeRendering
+                                Image {
+                                    anchors.centerIn: parent; width: 16; height: 16
+                                    source: trackRow.isFav
+                                        ? "image://albumicons/heart_filled_E91E63"
+                                        : "image://albumicons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
+                                    cache: false; mipmap: true; smooth: true
                                     scale: favHov.containsMouse ? 1.2 : 1.0
                                     Behavior on scale { NumberAnimation { duration: 100 } }
-                                    MouseArea {
-                                        id: favHov; anchors.fill: parent; hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor; z: 5
-                                        onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
-                                    }
+                                }
+                                MouseArea {
+                                    id: favHov; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor; z: 5
+                                    onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
                                 }
                             }
 
@@ -627,27 +720,54 @@ Rectangle {
                         }
 
                         // Row mouse handler
+                        HoverHandler { onHoveredChanged: trackRow.rowHov = hovered }
                         MouseArea {
-                            anchors.fill: parent; hoverEnabled: true
+                            anchors.fill: parent; hoverEnabled: false
                             acceptedButtons: Qt.LeftButton | Qt.RightButton; z: 2
-                            onEntered: trackRow.rowHov = true
-                            onExited:  trackRow.rowHov = false
+                            propagateComposedEvents: true
                             onClicked: mouse => {
                                 if (mouse.button === Qt.RightButton) {
                                     var gp = mapToGlobal(mouse.x, mouse.y)
                                     albumBridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
+                                    mouse.accepted = true
                                 } else {
-                                    albumBridge.trackPlayClicked(trackRow.trkIdx)
+                                    mouse.accepted = false
                                 }
-                                mouse.accepted = true
                             }
                             onDoubleClicked: albumBridge.trackPlayClicked(trackRow.trkIdx)
                         }
                     }
                 }
             }
+            }
 
             Item { width: parent.width; height: 32 }
         }
+    }
+
+    // ── Shared tooltip overlay ─────────────────────────────────────────────────
+    Rectangle {
+        id: qmlTip
+        visible: false; z: 999
+        radius: 6
+        color: root.cardBgColor
+        border.color: Qt.darker(root.accentColor, 2.5)
+        border.width: 1
+        width: _tipText.implicitWidth + 28; height: _tipText.implicitHeight + 18
+        Text {
+            id: _tipText
+            anchors.centerIn: parent
+            color: root.textSecondary
+            font.pixelSize: root.fontSizePrimary
+            font.family: root.fontFamily; renderType: Text.NativeRendering
+        }
+        function show(txt, item) {
+            _tipText.text = txt
+            var pt = item.mapToItem(root, item.width / 2, item.height + 4)
+            x = Math.max(4, Math.min(pt.x - width / 2, root.width - width - 4))
+            y = pt.y
+            visible = true
+        }
+        function hide() { visible = false }
     }
 }
