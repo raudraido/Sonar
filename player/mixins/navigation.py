@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QApplication, QAbstractItemView, QPushButton, QListW
 from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel, QPoint
 
 from player.workers import SyncCheckWorker
-from home import _ArrowButton
+from home_widgets import _ArrowButton
 
 class NavigationMixin:
     def setup_global_navigation(self):

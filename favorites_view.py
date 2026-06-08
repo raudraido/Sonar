@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QRect
 from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter, QCursor
 
-from home import HomeAlbumRowWidget
+from home_widgets import HomeAlbumRowWidget
 from tracks_browser import _checkmark_svg_path
 from player.widgets import ShadowContextMenu as _ShadowContextMenu
 

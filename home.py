@@ -1,110 +1,36 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QScrollArea, QPushButton,
-                             QListWidget, QListWidgetItem, QAbstractItemView,
-                             QAbstractButton, QFrame, QGraphicsOpacityEffect,
-                             QApplication, QStyledItemDelegate, QStyleOptionViewItem)
-from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
-                          QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
-                          QEasingCurve, QPoint)
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush, QImage
-from albums_browser import GridCoverWorker, GridItemDelegate, resource_path
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker, SpinRefreshButton
-from tracks_browser import MiddleClickScroller
+"""
+home.py — QML-based home tab (horizontally scrolling album rows).
+
+Workers and disk-cache helpers are unchanged.  All PyQt widget code
+(HomeAlbumRowWidget, _ShimmerDelegate, _ArrowButton, etc.) is replaced by
+home.qml + the thin Python bridge/model/provider classes below.
+"""
+import os as _os
+import sys as _sys
+import json as _json
+import time
+import random as _rnd
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QSettings, QTimer,
+                          QAbstractListModel, QModelIndex,
+                          QObject, pyqtSlot, QUrl)
+from PyQt6.QtGui  import QImage, QPainter, QPainterPath, QColor
+from PyQt6.QtCore import QRectF
+from PyQt6.QtQuick import QQuickImageProvider
+from PyQt6.QtQuickWidgets import QQuickWidget
+
+from albums_browser import GridCoverWorker, resource_path
+
+_PAGE        = 50
+_RANDOM_PAGE = 100
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Background workers
-# ─────────────────────────────────────────────────────────────────────────────
-
-_PAGE        = 50   # albums per fetch for recent/most-played
-_RANDOM_PAGE = 100  # larger buffer for instant client-side reshuffles
-
-
-class _ShimmerDelegate(QStyledItemDelegate):
-    """Paints animated shimmer cards for skeleton placeholder items."""
-
-    def __init__(self, viewport, base_color="#282828"):
-        super().__init__(viewport)
-        self._phase    = 0.0
-        self._viewport = viewport
-        c = QColor(base_color)
-        self._base_r = c.red()
-        self._base_g = c.green()
-        self._base_b = c.blue()
-        self._timer    = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(40)   # ~25 fps
-
-    def _tick(self):
-        import math
-        self._phase = (self._phase + 0.04) % 1.0
-        self._viewport.update()
-
-    def paint(self, painter, option, index):
-        album = index.data(Qt.ItemDataRole.UserRole)
-        if not (isinstance(album, dict) and album.get('_skeleton')):
-            super().paint(painter, option, index)
-            return
-
-        import math
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        rect     = option.rect
-        padding  = 8
-        w        = rect.width()  - padding * 2
-        card_h   = w             # square card
-        cx, cy   = rect.x() + padding, rect.y() + padding
-
-        phase  = (self._phase + index.row() * 0.18) % 1.0
-        factor = 1.0 + 0.12 * math.sin(phase * 2 * math.pi)
-        r = min(255, int(self._base_r * factor))
-        g = min(255, int(self._base_g * factor))
-        b = min(255, int(self._base_b * factor))
-        dr = max(0, int(r * 0.85))
-        dg = max(0, int(g * 0.85))
-        db = max(0, int(b * 0.85))
-
-        # Album art placeholder
-        painter.setBrush(QBrush(QColor(r, g, b)))
-        painter.drawRoundedRect(QRectF(cx, cy, w, card_h), 6, 6)
-
-        # Title pill
-        pill_y = cy + card_h + 7
-        painter.setBrush(QBrush(QColor(dr, dg, db)))
-        painter.drawRoundedRect(QRectF(cx, pill_y,      w * 0.75, 9),  5, 5)
-        painter.drawRoundedRect(QRectF(cx, pill_y + 15, w * 0.50, 7),  4, 4)
-
-        painter.restore()
-
-    def stop(self):
-        self._timer.stop()
-
-
-class _HomeGridDelegate(GridItemDelegate):
-    """
-    GridItemDelegate for the Home panel's always-on 6-px QScrollArea scrollbar.
-
-    The scrollbar consumes 6 px on the right of the viewport. Without adjustment,
-    the right visual gap = 6 (icon pad) + 6 (scrollbar) = 12 px vs 10 px on the left.
-
-    Fix: expand the painting rect 2 px to the right so the effective right icon-pad
-    is 4 px → right gap = 4 + 6 (scrollbar) = 10 px = left gap.
-    """
-    _SB_W = 6   # must match scrollbar_css() width
-
-    def paint(self, painter, option, index):
-        opt = QStyleOptionViewItem(option)
-        opt.rect = option.rect.adjusted(0, 0, self._SB_W - 4, 0)
-        super().paint(painter, opt, index)
-
-
-import os as _os, json as _json, sys as _sys
+# ── Disk-cache helpers (unchanged) ──────────────────────────────────────────
 
 def _home_cache_path():
     base = getattr(_sys, '_MEIPASS', _os.path.dirname(_os.path.abspath(__file__)))
-    d = _os.path.join(base, 'app_data')
+    d    = _os.path.join(base, 'app_data')
     _os.makedirs(d, exist_ok=True)
     return _os.path.join(d, 'home_cache.json')
 
@@ -123,13 +49,13 @@ def _home_cache_write(data: dict):
         pass
 
 
+# ── Workers (unchanged) ─────────────────────────────────────────────────────
+
 class HomeLoaderWorker(QThread):
-    # Each section emits independently as soon as its fetch completes
     recent_ready      = pyqtSignal(list)
     random_ready      = pyqtSignal(list)
     most_played_ready = pyqtSignal(list)
-    # Legacy combined signal kept for compatibility
-    data_ready        = pyqtSignal(list, list, list)
+    data_ready        = pyqtSignal(list, list, list)  # kept for compat
 
     def __init__(self, client):
         super().__init__()
@@ -137,71 +63,61 @@ class HomeLoaderWorker(QThread):
 
     def run(self):
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        import concurrent.futures
-
         try:
             if not self.client:
                 self.data_ready.emit([], [], [])
                 return
 
-            # Phase 1 — emit all sections from previous session immediately
             cached = _home_cache_read()
-            if cached.get('recent'):
-                self.recent_ready.emit(cached['recent'])
-            if cached.get('random'):
-                self.random_ready.emit(cached['random'])
-            if cached.get('most_played'):
-                self.most_played_ready.emit(cached['most_played'])
+            if cached.get('recent'):      self.recent_ready.emit(cached['recent'])
+            if cached.get('random'):      self.random_ready.emit(cached['random'])
+            if cached.get('most_played'): self.most_played_ready.emit(cached['most_played'])
 
-            # Phase 2 — fetch fresh data and update
+            has_random_cache = bool(cached.get('random'))
+
             def _fetch(sort_type, size=_PAGE):
                 return self.client.get_album_list_sorted(
                     sort_type=sort_type, size=size, offset=0) or []
 
+            futures_map = {}
             with ThreadPoolExecutor(max_workers=3) as pool:
                 f_recent      = pool.submit(_fetch, "newest")
-                f_random      = pool.submit(_fetch, "random", _RANDOM_PAGE)
                 f_most_played = pool.submit(_fetch, "frequent")
-
-                futures_map = {
-                    f_recent:      ('recent',      self.recent_ready),
-                    f_random:      ('random',      self.random_ready),
-                    f_most_played: ('most_played', self.most_played_ready),
-                }
+                futures_map[f_recent]      = ('recent',      self.recent_ready)
+                futures_map[f_most_played] = ('most_played', self.most_played_ready)
+                if not has_random_cache:
+                    f_random = pool.submit(_fetch, "random", _RANDOM_PAGE)
+                    futures_map[f_random] = ('random', self.random_ready)
                 results = {}
                 for future in as_completed(futures_map):
-                    key, signal = futures_map[future]
+                    key, sig = futures_map[future]
                     data = future.result() or []
                     results[key] = data
-                    signal.emit(data)
+                    sig.emit(data)
 
-            # Persist all sections for next startup (random included for instant display)
             _home_cache_write({
                 'recent':      results.get('recent', []),
-                'random':      results.get('random', []),
+                'random':      results.get('random', cached.get('random', [])),
                 'most_played': results.get('most_played', []),
             })
-
             self.data_ready.emit(
                 results.get('recent', []),
                 results.get('random', []),
                 results.get('most_played', []),
             )
-
         except Exception as e:
             print(f"[Home Worker] Error: {e}")
             self.data_ready.emit([], [], [])
 
 
 class HomePageWorker(QThread):
-    """Fetches one page of albums for a given sort type."""
     page_ready = pyqtSignal(list)
 
     def __init__(self, client, sort_type, offset):
         super().__init__()
-        self.client = client
+        self.client    = client
         self.sort_type = sort_type
-        self.offset = offset
+        self.offset    = offset
 
     def run(self):
         try:
@@ -226,1050 +142,441 @@ class RandomMixReloaderWorker(QThread):
         try:
             result = []
             if self.client:
-                result = self.client.get_album_list_sorted(sort_type="random", size=_RANDOM_PAGE, offset=0)
+                result = self.client.get_album_list_sorted(
+                    sort_type="random", size=_RANDOM_PAGE, offset=0)
             self.data_ready.emit(result or [])
         except Exception as e:
             print(f"[RandomMixReloader] Error: {e}")
             self.data_ready.emit([])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Arrow button (same as RelatedArtistRowWidget uses)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── QAbstractListModel ───────────────────────────────────────────────────────
 
-class _ArrowButton(QAbstractButton):
-    def __init__(self, direction, color, parent=None):
-        super().__init__(parent)
-        self._direction = direction
-        self._color = QColor(color)
-        self._active = True
-        self.setFixedSize(30, 30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-
-    def set_color(self, color):
-        self._color = QColor(color)
-        self.update()
-
-    def set_active(self, active: bool):
-        self._active = active
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.underMouse():
-            _theme = getattr(self.window(), 'theme', None)
-            p.setBrush(QColor(resolve_menu_hover(_theme)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 12, 12)
-        color = self._color if self._active else QColor("#333")
-        p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        cx, cy = self.width() / 2, self.height() / 2
-        s, o = 6, 3
-        if self._direction == "right":
-            p.drawLine(int(cx - o), int(cy - s), int(cx + o), int(cy))
-            p.drawLine(int(cx + o), int(cy), int(cx - o), int(cy + s))
-        else:
-            p.drawLine(int(cx + o), int(cy - s), int(cx - o), int(cy))
-            p.drawLine(int(cx - o), int(cy), int(cx + o), int(cy + s))
-        p.end()
-
-
-def _RefreshButton(color, parent=None):
-    """Factory — returns a SpinRefreshButton configured for the home tab."""
-    return SpinRefreshButton(
-        icon_path=resource_path("img/refresh.png"),
-        icon_size=14, btn_size=30, color=color, parent=parent
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Drag-grip handle (appears on title row hover)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class _GripHandle(QWidget):
-    drag_initiated = pyqtSignal()
+class HomeAlbumModel(QAbstractListModel):
+    TITLE_ROLE    = Qt.ItemDataRole.UserRole + 1
+    ARTIST_ROLE   = Qt.ItemDataRole.UserRole + 2
+    YEAR_ROLE     = Qt.ItemDataRole.UserRole + 3
+    COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 4
+    RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
+    IS_LOADING_ROLE  = Qt.ItemDataRole.UserRole + 6
+    SONG_COUNT_ROLE  = Qt.ItemDataRole.UserRole + 7
+    ARTIST_ID_ROLE   = Qt.ItemDataRole.UserRole + 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(16, 20)
-        self.setCursor(Qt.CursorShape.SizeVerCursor)
-        self._color = QColor("#444")
-        self._press_pos = None
+        self._albums = []
 
-    def set_color(self, color):
-        self._color = QColor(color)
-        self.update()
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._albums)
 
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(self._color)
-        p.setPen(Qt.PenStyle.NoPen)
-        for row in range(3):
-            for col in range(2):
-                p.drawEllipse(3 + col * 7, 4 + row * 6, 4, 4)
-        p.end()
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._albums):
+            return None
+        a = self._albums[index.row()]
+        if role == self.IS_LOADING_ROLE:  return bool(a.get('_skeleton'))
+        if role == self.TITLE_ROLE:
+            return '' if a.get('_skeleton') else (a.get('title') or a.get('name') or 'Unknown')
+        if role == self.ARTIST_ROLE:     return a.get('artist') or a.get('albumArtist') or ''
+        if role == self.YEAR_ROLE:       return str(a.get('year') or a.get('minYear') or '').replace('None', '')
+        if role == self.COVER_ID_ROLE:   return a.get('coverId_forced') or a.get('cover_id') or ''
+        if role == self.RAW_DATA_ROLE:   return a
+        if role == self.SONG_COUNT_ROLE:
+            n = a.get('songCount') or a.get('trackCount') or ''
+            return f"{n} tracks" if n else ''
+        if role == self.ARTIST_ID_ROLE:  return a.get('artistId') or a.get('albumArtistId') or ''
+        return None
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_pos = event.position().toPoint()
+    def roleNames(self):
+        return {
+            self.TITLE_ROLE:      b"albumTitle",
+            self.ARTIST_ROLE:     b"albumArtist",
+            self.YEAR_ROLE:       b"albumYear",
+            self.COVER_ID_ROLE:   b"coverId",
+            self.RAW_DATA_ROLE:   b"rawData",
+            self.IS_LOADING_ROLE: b"isLoading",
+            self.SONG_COUNT_ROLE: b"albumSongCount",
+            self.ARTIST_ID_ROLE:  b"albumArtistId",
+        }
 
-    def mouseMoveEvent(self, event):
-        if self._press_pos is not None:
-            if (event.position().toPoint() - self._press_pos).manhattanLength() > 6:
-                self._press_pos = None
-                self.drag_initiated.emit()
-
-    def mouseReleaseEvent(self, event):
-        self._press_pos = None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Horizontal album row
-# ─────────────────────────────────────────────────────────────────────────────
-
-class HomeAlbumRowWidget(QWidget):
-    album_clicked  = pyqtSignal(dict)
-    play_album     = pyqtSignal(dict)
-    artist_clicked = pyqtSignal(str)
-    load_more_requested = pyqtSignal(int)  # emits current offset
-    focus_next     = pyqtSignal(int)  # carries current column index
-    focus_prev     = pyqtSignal(int)
-    drag_requested = pyqtSignal(object)  # emits self
-
-    # (min container width, number of columns) — same thresholds as Feishin
-    _BREAKPOINTS = [(1440, 8), (1280, 7), (1152, 6), (960, 5),
-                    (720, 4), (520, 3), (0, 2)]
-
-    def __init__(self, title, with_refresh=False, refresh_tooltip="Refresh"):
-        super().__init__()
-        self._accent     = "#888888"
-        self._pix_cache  = {}     # cover_id -> QPixmap (full size, square-cropped)
-        self._all_albums = []     # every album received so far
-        self._page       = 0
-        self._n_cols     = 5      # updated on resize
-        self._loading_more = False
-        self._all_loaded   = False
-        self._offset       = 0
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6) # space for title row shadow and gap to carousel below
-
-        # ── Title row ────────────────────────────────────────────────────
-        title_row = QWidget()
-        title_layout = QHBoxLayout(title_row)
-        title_layout.setContentsMargins(6, 0, 4, 0)
-        title_layout.setSpacing(8)
-
-        self._grip = _GripHandle()
-        self._grip.setVisible(False)
-        self._grip.drag_initiated.connect(lambda: self.drag_requested.emit(self))
-        title_layout.addWidget(self._grip)
-
-        self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet(
-            "color: #eee; font-size: 15px; font-weight: bold; background: transparent;")
-        title_layout.addWidget(self.lbl_title)
-        title_layout.addStretch()
-
-        # Timer to guard against false Leave events when entering child widgets
-        self._grip_timer = QTimer(self)
-        self._grip_timer.setSingleShot(True)
-        self._grip_timer.setInterval(80)
-        self._grip_timer.timeout.connect(self._hide_grip_if_outside)
-
-        self.btn_refresh = None
-        if with_refresh:
-            self.btn_refresh = _RefreshButton(self._accent)
-            self.btn_refresh.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.btn_refresh.setToolTip(refresh_tooltip)
-            title_layout.addWidget(self.btn_refresh)
-
-        self._btn_left  = _ArrowButton("left",  self._accent)
-        self._btn_right = _ArrowButton("right", self._accent)
-        self._btn_left.clicked.connect(self._page_left)
-        self._btn_right.clicked.connect(self._page_right)
-        title_layout.addWidget(self._btn_left)
-        title_layout.addWidget(self._btn_right)
-
-        layout.addWidget(title_row)
-
-        # ── Clip container — list widget lives here as a manual child ───────
-        # Qt clips child widget painting to parent bounds, so list_widget
-        # is invisible when slid outside the carousel during transitions.
-        self._carousel = QWidget()
-        self._carousel.setStyleSheet("background: transparent;")
-        layout.addWidget(self._carousel)
-
-        self.list_widget = QListWidget(self._carousel)
-        self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-        self.list_widget.setFlow(QListWidget.Flow.LeftToRight)
-        self.list_widget.setMovement(QListWidget.Movement.Static)
-        self.list_widget.setResizeMode(QListWidget.ResizeMode.Fixed)
-        self.list_widget.setWrapping(False)
-        self.list_widget.setMouseTracking(True)
-        self.list_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.setStyleSheet("""
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item { background: transparent; }
-            QListWidget::item:selected { background: transparent; }
-        """)
-        self.delegate = _HomeGridDelegate(self.list_widget)
-        self.list_widget.setItemDelegate(self.delegate)
-        self.list_widget.itemDoubleClicked.connect(self._on_activated)
-        self.list_widget.installEventFilter(self)
-        self.list_widget.viewport().installEventFilter(self)
-
-        self._animating  = False
-        self._anim_group = None
-
-    # ── Internal helpers ──────────────────────────────────────────────────
-
-    def _animate_page(self, direction):
-        """Carousel slide: snapshot old page → move list_widget in from one side → animate."""
-        if self._animating:
-            return
-        self._animating = True
-
-        w    = self._carousel.width()
-        ch   = self.list_widget.height()
-        in_x =  w if direction == 'right' else -w
-        out_x = -w if direction == 'right' else  w
-
-        # 1. Freeze a screenshot of the current page as an overlay label
-        snapshot = self.list_widget.grab()
-        overlay  = QLabel(self._carousel)
-        overlay.setPixmap(snapshot)
-        overlay.setFixedSize(w, ch)
-        overlay.move(0, 0)
-        overlay.show()
-        overlay.raise_()
-
-        # 2. Move list_widget to the incoming side and render new content into it
-        self.list_widget.move(in_x, 0)
-        self._render_page()      # renders self._page into list_widget at (in_x, 0)
-
-        # 3. Animate overlay sliding out, list_widget sliding in — simultaneously
-        anim_out = QPropertyAnimation(overlay, b"pos")
-        anim_out.setDuration(220)
-        anim_out.setStartValue(QPoint(0, 0))
-        anim_out.setEndValue(QPoint(out_x, 0))
-        anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        anim_in = QPropertyAnimation(self.list_widget, b"pos")
-        anim_in.setDuration(220)
-        anim_in.setStartValue(QPoint(in_x, 0))
-        anim_in.setEndValue(QPoint(0, 0))
-        anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        self._anim_group = QParallelAnimationGroup(self)
-        self._anim_group.addAnimation(anim_out)
-        self._anim_group.addAnimation(anim_in)
-
-        def _on_done():
-            overlay.deleteLater()
-            # Ensure list_widget is exactly at (0, 0) after animation
-            self.list_widget.move(0, 0)
-            self._animating  = False
-            self._anim_group = None
-            self._render_page()   # re-check load-more trigger now that _animating is False
-
-        self._anim_group.finished.connect(_on_done)
-        self._anim_group.start()
-
-    # ── Public API ────────────────────────────────────────────────────────
-
-    def show_skeleton(self):
-        """Fill the row with animated shimmer placeholder cards while real data loads."""
-        n = max(self._calc_n_cols(), 5)
-        self._all_albums   = [{'_skeleton': True}] * n
-        self._page         = 0
-        self._loading_more = False
-        self._all_loaded   = True   # prevent load_more from firing on skeleton
-        self._offset       = 0
-
-        # Install shimmer delegate (stops and replaces on populate)
-        if not isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
-            self._real_delegate    = self.list_widget.itemDelegate()
-            sk = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
-            self._shimmer_delegate = _ShimmerDelegate(self.list_widget.viewport(), base_color=sk)
-            self.list_widget.setItemDelegate(self._shimmer_delegate)
-
-        self._render_page()
-
-    def populate(self, albums):
-        # Stop shimmer and restore the real delegate before filling with real items
-        if isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
-            self._shimmer_delegate.stop()
-            self.list_widget.setItemDelegate(
-                getattr(self, '_real_delegate', None) or self.delegate)
-            self._shimmer_delegate = None
-            self._real_delegate    = None
-
-        self._all_albums   = list(albums)
-        self._page         = 0
-        self._loading_more = False
-        self._all_loaded   = False
-        self._offset       = len(albums)
-        self._render_page()
+    def set_albums(self, albums):
+        self.beginResetModel()
+        self._albums = list(albums)
+        self.endResetModel()
 
     def append_albums(self, albums):
-        self._loading_more = False
         if not albums:
-            self._all_loaded = True
             return
-        self._all_albums.extend(albums)
-        self._offset += len(albums)
-        # If the current page now has more data (was the last partial page), refresh it
-        self._render_page()
+        start = len(self._albums)
+        self.beginInsertRows(QModelIndex(), start, start + len(albums) - 1)
+        self._albums.extend(albums)
+        self.endInsertRows()
 
-    def apply_cover(self, cover_id, image_data):
-        # Legacy path — kept for callers that still pass raw bytes.
-        # Decoding happens here synchronously; prefer apply_cover_pixmap.
-        cid = str(cover_id)
-        img = QImage()
-        img.loadFromData(image_data)
-        if img.isNull():
-            return
-        side = 300
-        img = img.scaled(side, side,
-                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                         Qt.TransformationMode.SmoothTransformation)
-        x = (img.width()  - side) // 2
-        y = (img.height() - side) // 2
-        self.apply_cover_pixmap(cid, QPixmap.fromImage(img.copy(x, y, side, side)))
-
-    def apply_cover_pixmap(self, cover_id, pix: QPixmap):
-        cid = str(cover_id)
-        self._pix_cache[cid] = pix
-        cw = self._cell_w()
-        for i in range(self.list_widget.count()):
-            item  = self.list_widget.item(i)
-            album = item.data(Qt.ItemDataRole.UserRole)
-            if not album:
-                continue
-            icid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
-            if icid == cid:
-                item.setIcon(self._make_icon(cid, cw))
-
-    def set_draggable(self, enabled: bool):
-        self._draggable = enabled
-        if not enabled:
-            self._grip.setVisible(False)
-
-    def enterEvent(self, event):
-        if getattr(self, '_draggable', True):
-            self._grip_timer.stop()
-            self._grip.setVisible(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if getattr(self, '_draggable', True):
-            self._grip_timer.start()
-        super().leaveEvent(event)
-
-    def _hide_grip_if_outside(self):
-        pos = self.mapFromGlobal(QCursor.pos())
-        if not self.rect().contains(pos):
-            self._grip.setVisible(False)
-
-    def set_accent_color(self, color):
-        self._accent = color
-        self.delegate.set_master_color(color)
-        self._btn_left.set_color(color)
-        self._btn_right.set_color(color)
-        self._grip.set_color(color)
-        theme = getattr(self.window(), 'theme', None)
-        if theme:
-            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-size: 15px; font-weight: bold; background: transparent;")
-            if isinstance(self.list_widget.itemDelegate(), _ShimmerDelegate):
-                sk = getattr(theme, 'skeleton_base', '#282828')
-                c = QColor(sk)
-                d = self.list_widget.itemDelegate()
-                d._base_r, d._base_g, d._base_b = c.red(), c.green(), c.blue()
-        self.list_widget.viewport().update()
-
-    # ── Resize ────────────────────────────────────────────────────────────
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        QTimer.singleShot(0, self._render_page)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._animating:
-            return
-        first_idx = self._page * self._n_cols
-        new_n = self._calc_n_cols()
-        if new_n != self._n_cols:
-            self._n_cols = new_n
-            self._page   = first_idx // new_n
-        QTimer.singleShot(0, self._render_page)
-
-    # ── Internal ──────────────────────────────────────────────────────────
-
-    def _calc_n_cols(self):
-        w = self._carousel.width() or self.list_widget.viewport().width()
-        for threshold, n in self._BREAKPOINTS:
-            if w >= threshold:
-                return n
-        return 2
-
-    def _cell_w(self):
-        vp_w = self._carousel.width() or self.list_widget.viewport().width()
-        n    = self._n_cols
-        return vp_w // n if vp_w > 0 else 200
-
-    def _make_icon(self, cid, cw):
-        pix = self._pix_cache.get(cid)
-        if pix:
-            size = cw - 12
-            return QIcon(pix.scaled(size, size,
-                                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                    Qt.TransformationMode.SmoothTransformation))
-        ph = QPixmap(max(1, cw - 12), max(1, cw - 12))
-        sk = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#1a1a1a')
-        ph.fill(QColor(sk))
-        return QIcon(ph)
-
-    def _render_page(self):
-        self._n_cols = self._calc_n_cols()
-        cw = self._cell_w()
-        if cw <= 0:
-            return
-        ch  = cw + 70
-        lw  = self.list_widget
-        w   = self._carousel.width() or cw * self._n_cols
-
-        lw.setGridSize(QSize(cw, ch))
-        lw.setIconSize(QSize(cw - 12, cw - 12))
-        # Preserve x position (may be off-screen during carousel animation)
-        lw.setGeometry(lw.x(), 0, w, ch)
-
-        start       = self._page * self._n_cols
-        page_albums = self._all_albums[start : start + self._n_cols]
-
-        lw.clear()
-        for album in page_albums:
-            item = QListWidgetItem()
-            if album.get('_skeleton'):
-                item.setData(Qt.ItemDataRole.UserRole, album)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            else:
-                cid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
-                item.setIcon(self._make_icon(cid, cw))
-                item.setData(Qt.ItemDataRole.UserRole, album)
-            item.setSizeHint(QSize(cw, ch))
-            lw.addItem(item)
-
-        # Size the carousel container and row — always safe since we only
-        # change height, not x position of list_widget
-        self._carousel.setFixedHeight(ch)
-        title_h = self.layout().itemAt(0).sizeHint().height()
-        self.setFixedHeight(title_h + self.layout().spacing() + ch)
-
-        if not self._animating:
-            self._update_arrows()
-            last_page = max(0, len(self._all_albums) - 1) // self._n_cols
-            if (not self._all_loaded and not self._loading_more
-                    and self._page >= last_page - 1):
-                self._loading_more = True
-                self.load_more_requested.emit(self._offset)
-
-    def _page_left(self):
-        if self._page > 0:
-            self._page -= 1
-            self._animate_page('left')
-
-    def _page_right(self):
-        last_page = max(0, len(self._all_albums) - 1) // self._n_cols
-        if self._page < last_page:
-            self._page += 1
-            self._animate_page('right')
-
-    def _update_arrows(self):
-        last_page = max(0, len(self._all_albums) - 1) // self._n_cols
-        self._btn_left.setEnabled(self._page > 0)
-        self._btn_right.setEnabled(
-            self._page < last_page or (not self._all_loaded))
-
-    def _artist_text_rect(self, item):
-        """Returns the artist text QRect in viewport coordinates for a given item."""
-        rect = self.list_widget.visualItemRect(item)
-        cw = self._cell_w()
-        icon_height = cw - 20
-        icon_bottom = rect.y() + 10 + icon_height - 1
-        current_y = icon_bottom + 10 + 20  # skip icon gap + title row
-        return QRect(rect.x() + 10, current_y, cw - 20, 20)
-
-    def _play_button_contains(self, item, pos):
-        """Returns True if pos is inside the play button circle drawn by the delegate."""
-        rect = self.list_widget.visualItemRect(item)
-        cw = self._cell_w()
-        icon_width = cw - 20
-        icon_rect = QRect(rect.x() + 10, rect.y() + 10, icon_width, icon_width)
-        center = icon_rect.center()
-        play_size = min(60, icon_width // 2)
-        radius = play_size // 2
-        dx = pos.x() - center.x()
-        dy = pos.y() - center.y()
-        return (dx * dx + dy * dy) <= (radius * radius)
-
-    def _on_activated(self, item):
-        if not item:
-            return
-        album = item.data(Qt.ItemDataRole.UserRole)
-        if album:
-            self.album_clicked.emit(album)
-
-    def eventFilter(self, source, event):
-        if source is self.list_widget:
-            if event.type() == QEvent.Type.FocusOut:
-                self.list_widget.clearSelection()
-                self.list_widget.setCurrentRow(-1)
-                return False
-            if event.type() == QEvent.Type.FocusIn:
-                if self.list_widget.count() > 0 and self.list_widget.currentRow() < 0:
-                    self.list_widget.setCurrentRow(0)  # fallback when no index carried over
-                return False
-
-        if source is self.list_widget and event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            if key == Qt.Key.Key_Down or (key == Qt.Key.Key_Tab and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
-                self.focus_next.emit(self.list_widget.currentRow())
-                return True
-            if key == Qt.Key.Key_Up or (key == Qt.Key.Key_Tab and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                self.focus_prev.emit(self.list_widget.currentRow())
-                return True
-            if key == Qt.Key.Key_Left:
-                if self.list_widget.currentRow() <= 0:
-                    self._page_left()
-                    if self.list_widget.count() > 0:
-                        self.list_widget.setCurrentRow(self.list_widget.count() - 1)
-                    return True
-                return False  # let QListWidget handle movement within page
-            if key == Qt.Key.Key_Right:
-                if self.list_widget.currentRow() >= self.list_widget.count() - 1:
-                    self._page_right()
-                    if self.list_widget.count() > 0:
-                        self.list_widget.setCurrentRow(0)
-                    return True
-                return False  # let QListWidget handle movement within page
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                item = self.list_widget.currentItem()
-                if item:
-                    album = item.data(Qt.ItemDataRole.UserRole)
-                    if album:
-                        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                            self.play_album.emit(album)
-                        else:
-                            self._on_activated(item)
-                return True
-
-        if source is self.list_widget.viewport():
-            etype = event.type()
-
-            if etype == QEvent.Type.MouseMove:
-                pos  = event.position().toPoint()
-                item = self.list_widget.itemAt(pos)
-
-                # ── Card hover ───────────────────────────────────────────
-                card_row = -1
-                if item and self.list_widget.visualItemRect(item).contains(pos):
-                    card_row = self.list_widget.row(item)
-                if card_row != getattr(self, '_card_hover_row', -1):
-                    self._card_hover_row = card_row
-                    self.delegate.set_hovered_row(card_row)
-
-                # ── Play-button hover ────────────────────────────────────
-                play_hovered = (card_row >= 0 and item is not None
-                                and self._play_button_contains(item, pos))
-                if play_hovered != getattr(self, '_play_btn_hovered', False):
-                    self._play_btn_hovered = play_hovered
-                    self.delegate.set_play_hovered(play_hovered)
-
-                # ── Artist text hover (cursor + underline) ───────────────
-                artist_row = -1
-                if card_row >= 0 and item is not None:
-                    if self._artist_text_rect(item).contains(pos):
-                        artist_row = card_row
-                if artist_row != getattr(self, '_artist_hover_row', -1):
-                    self._artist_hover_row = artist_row
-                    self.delegate.set_hovered_artist_row(artist_row)
-                    self.list_widget.viewport().update()
-                    if artist_row >= 0:
-                        self.list_widget.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-                    else:
-                        self.list_widget.viewport().unsetCursor()
-                return False
-
-            if etype == QEvent.Type.Leave:
-                self._card_hover_row   = -1
-                self._play_btn_hovered = False
-                self._artist_hover_row = -1
-                self.delegate.set_hovered_row(-1)
-                self.delegate.set_play_hovered(False)
-                self.delegate.set_hovered_artist_row(-1)
-                self.list_widget.viewport().unsetCursor()
-                return False
-
-            if etype == QEvent.Type.MouseButtonRelease:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    pos  = event.position().toPoint()
-                    item = self.list_widget.itemAt(pos)
-                    if item:
-                        rect = self.list_widget.visualItemRect(item)
-                        if rect.contains(pos):
-                            album = item.data(Qt.ItemDataRole.UserRole)
-                            if album:
-                                if self._artist_text_rect(item).contains(pos):
-                                    artist = album.get('artist', '') or album.get('albumArtist', '')
-                                    if artist:
-                                        self.artist_clicked.emit(artist)
-                                        return True
-                                elif self._play_button_contains(item, pos):
-                                    self.play_album.emit(album)
-                                    return True
-                                else:
-                                    self.album_clicked.emit(album)
-                                    return True
-                return False
-
-        return super().eventFilter(source, event)
+    def update_cover(self, cover_id):
+        forced = f"{cover_id}?t={time.time()}"
+        for i, a in enumerate(self._albums):
+            raw = str(a.get('cover_id') or a.get('coverArt') or a.get('id') or '')
+            if raw == cover_id:
+                a['coverId_forced'] = forced
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HomeView
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Image provider (serves cover art to QML via image://homecovers/<id>) ────
+
+class HomeIconProvider(QQuickImageProvider):
+    """Provides accent-colour-tinted PNG icons. URL: image://homeicons/<name>_<RRGGBB>"""
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self._cache = {}
+
+    def requestImage(self, icon_id, requestedSize):
+        parts = icon_id.rsplit('_', 1)
+        name      = parts[0]
+        color_hex = ('#' + parts[1]) if len(parts) > 1 else '#ffffff'
+        cache_key = f"{name}_{color_hex}"
+        if cache_key in self._cache:
+            img = self._cache[cache_key]
+            return img, img.size()
+        path = resource_path(f"img/{name}.png")
+        base = QImage(path)
+        if base.isNull():
+            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
+            empty.fill(Qt.GlobalColor.transparent)
+            return empty, empty.size()
+        result = QImage(base.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        result.fill(Qt.GlobalColor.transparent)
+        p = QPainter(result)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(0, 0, base)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+        p.fillRect(result.rect(), QColor(color_hex))
+        p.end()
+        self._cache[cache_key] = result
+        return result, result.size()
+
+
+class HomeCoverProvider(QQuickImageProvider):
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self.cache = {}  # cover_id → raw bytes
+
+    def requestImage(self, id, requestedSize):
+        real_id = id.split("?t=")[0]
+        data    = self.cache.get(real_id)
+
+        size = 250
+        img  = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+
+        if data:
+            source = QImage()
+            source.loadFromData(data)
+            if not source.isNull():
+                source = source.scaled(size, size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation)
+                painter = QPainter(img)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
+                painter.setClipPath(path)
+                painter.drawImage(0, 0, source)
+                painter.end()
+
+        return img, img.size()
+
+
+# ── Bridge (QML ↔ Python event routing) ─────────────────────────────────────
+
+class HomeBridge(QObject):
+    # → QML (theme / spinner updates)
+    accentColorChanged        = pyqtSignal(str)
+    skeletonColorChanged      = pyqtSignal(str)
+    hoverColorChanged         = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
+    recentSpinChanged         = pyqtSignal(bool)
+    randomSpinChanged         = pyqtSignal(bool)
+
+    def __init__(self, recent_model, random_model, most_played_model):
+        super().__init__()
+        self._models = {
+            'recent':      recent_model,
+            'random':      random_model,
+            'most_played': most_played_model,
+        }
+        self._view = None  # set by HomeView after construction
+
+    # ← QML slots ────────────────────────────────────────────────────────────
+
+    @pyqtSlot(str, int)
+    def albumClicked(self, row_id, idx):
+        m = self._models.get(row_id)
+        if m and 0 <= idx < len(m._albums) and not m._albums[idx].get('_skeleton'):
+            self._view.album_clicked.emit(m._albums[idx])
+
+    @pyqtSlot(str, int)
+    def playClicked(self, row_id, idx):
+        m = self._models.get(row_id)
+        if m and 0 <= idx < len(m._albums) and not m._albums[idx].get('_skeleton'):
+            self._view.play_album.emit(m._albums[idx])
+
+    @pyqtSlot(str, str)
+    def artistNameClicked(self, name, artist_id):
+        self._view.artist_clicked.emit(name)
+
+    @pyqtSlot()
+    def refreshRecent(self):
+        self._view._refresh_recent()
+
+    @pyqtSlot()
+    def refreshRandom(self):
+        self._view._refresh_random()
+
+    @pyqtSlot(str, int)
+    def loadMore(self, row_id, offset):
+        self._view._load_more(row_id, offset)
+
+    @pyqtSlot(str)
+    def saveRowOrder(self, order):
+        QSettings("Icosahedron", "Icosahedron").setValue('home_row_order', order)
+
+
+# ── HomeView — thin wrapper around QQuickWidget ──────────────────────────────
 
 class HomeView(QWidget):
     album_clicked  = pyqtSignal(dict)
     play_album     = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
 
-    def __init__(self, client):
+    def __init__(self, client=None):
         super().__init__()
         self.client = client
-        self.current_accent = "#1DB954"
 
-        self.cover_worker = None
-        if self.client:
+        # Per-row album models
+        self.recent_model      = HomeAlbumModel()
+        self.random_model      = HomeAlbumModel()
+        self.most_played_model = HomeAlbumModel()
+
+        # Cover image provider (shared across all rows)
+        self.cover_provider = HomeCoverProvider()
+
+        # Bridge
+        self.bridge = HomeBridge(
+            self.recent_model, self.random_model, self.most_played_model)
+        self.bridge._view = self
+
+        # QML widget
+        self._qml = QQuickWidget()
+        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+
+        self.icon_provider = HomeIconProvider()
+
+        engine = self._qml.engine()
+        engine.addImageProvider("homecovers", self.cover_provider)
+        engine.addImageProvider("homeicons",  self.icon_provider)
+
+        ctx = self._qml.rootContext()
+        ctx.setContextProperty("recentModel",     self.recent_model)
+        ctx.setContextProperty("randomModel",     self.random_model)
+        ctx.setContextProperty("mostPlayedModel", self.most_played_model)
+        ctx.setContextProperty("homeBridge",      self.bridge)
+        ctx.setContextProperty("savedRowOrder",   self._load_row_order())
+
+        self._qml.setSource(QUrl.fromLocalFile(resource_path("home.qml")))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._qml)
+
+        self._random_buffer        = []
+        self._random_refresh_count = 0
+        self._worker_graveyard     = set()
+
+        if client:
             self._start_cover_worker()
-
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setObjectName("HomePanel")
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-
-        # Scroll area
-        self.scroll = QScrollArea()
-        self.scroll.setObjectName("HomeScroll")
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.omni_scroller = MiddleClickScroller(self.scroll)
-        SmoothScroller(self.scroll)
-
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 20, 4, 50)
-        self.content_layout.setSpacing(10)
-        self.scroll.setWidget(self.content_widget)
-        main_layout.addWidget(self.scroll)
-
-        # Recently Added row
-        self.recent_row = HomeAlbumRowWidget("Recently Added", with_refresh=True, refresh_tooltip="Refresh Recently Added")
-        self.recent_row.album_clicked.connect(self.album_clicked.emit)
-        self.recent_row.play_album.connect(self.play_album.emit)
-        self.recent_row.artist_clicked.connect(self.artist_clicked.emit)
-        self.recent_row.load_more_requested.connect(self._load_more_recent)
-        self.recent_row.btn_refresh.clicked.connect(self.refresh_recent)
-        self.content_layout.addWidget(self.recent_row)
-
-        # Random Mix row
-        self.random_row = HomeAlbumRowWidget("Random Mix", with_refresh=True, refresh_tooltip="Refresh Mix")
-        self.random_row.album_clicked.connect(self.album_clicked.emit)
-        self.random_row.play_album.connect(self.play_album.emit)
-        self.random_row.artist_clicked.connect(self.artist_clicked.emit)
-        self.random_row.load_more_requested.connect(self._load_more_random)
-        self.random_row.btn_refresh.clicked.connect(self.refresh_random_mix)
-        self.content_layout.addWidget(self.random_row)
-
-        # Most Played row
-        self.most_played_row = HomeAlbumRowWidget("Most Played")
-        self.most_played_row.album_clicked.connect(self.album_clicked.emit)
-        self.most_played_row.play_album.connect(self.play_album.emit)
-        self.most_played_row.artist_clicked.connect(self.artist_clicked.emit)
-        self.most_played_row.load_more_requested.connect(self._load_more_most_played)
-        self.content_layout.addWidget(self.most_played_row)
-
-        self.content_layout.addStretch()
-
-        self._row_order = [self.recent_row, self.random_row, self.most_played_row]
-        self._dragging_row = None
-
-        # Wire drag signals
-        for row in self._row_order:
-            row.drag_requested.connect(self._on_row_drag_requested)
-
-        self._rewire_keyboard_nav()
-        self._load_row_order()
-
-        self.set_accent_color("#888888")
-
-        if self.client:
             self.load_data()
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
+    # ── Public API (called by main window) ───────────────────────────────────
 
     def initialize(self, client):
         self.client = client
-        if not self.cover_worker:
+        if not getattr(self, 'cover_worker', None):
             self._start_cover_worker()
         else:
             self.cover_worker.client = client
         self.load_data()
 
+    def set_accent_color(self, color):
+        from player.mixins.visuals import resolve_menu_hover
+        self.bridge.accentColorChanged.emit(color)
+        theme = getattr(self.window(), 'theme', None)
+        self.bridge.hoverColorChanged.emit(resolve_menu_hover(theme) if theme else '#555555')
+        if theme:
+            self.bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+            self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+            self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+            self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            self.bridge.skeletonColorChanged.emit(
+                getattr(theme, 'skeleton_base', '#282828'))
+
+    def set_bg_color(self, c):
+        self._bg_color = c
+        try:
+            r, g, b = (int(x) for x in c.split(','))
+            self._qml.setClearColor(QColor(r, g, b))
+        except Exception:
+            pass
+
+    def focus_first_grid(self):
+        self._qml.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    # ── Data loading ─────────────────────────────────────────────────────────
+
     def load_data(self):
-        if getattr(self, 'worker', None) and self.worker.isRunning():
-            self._safe_discard_worker(self.worker)
+        if getattr(self, '_loader', None) and self._loader.isRunning():
+            self._safe_discard_worker(self._loader)
 
-        # Show skeleton placeholders immediately — no blank rows while loading
-        self.recent_row.show_skeleton()
-        self.random_row.show_skeleton()
-        self.most_played_row.show_skeleton()
+        for m in (self.recent_model, self.random_model, self.most_played_model):
+            m.set_albums([{'_skeleton': True}] * 8)
 
-        self.worker = HomeLoaderWorker(self.client)
-        # Wire per-section signals so each row populates as soon as its fetch finishes
-        self.worker.recent_ready.connect(self._on_recent_loaded)
-        self.worker.random_ready.connect(self._on_random_loaded)
-        self.worker.most_played_ready.connect(self._on_most_played_loaded)
-        self.worker.start()
+        self._loader = HomeLoaderWorker(self.client)
+        self._loader.recent_ready.connect(self._on_recent_loaded)
+        self._loader.random_ready.connect(self._on_random_loaded)
+        self._loader.most_played_ready.connect(self._on_most_played_loaded)
+        self._loader.start()
 
     def _on_recent_loaded(self, albums):
-        self.recent_row.populate(albums)
+        self.recent_model.set_albums(albums)
         self._queue_covers(albums)
 
     def _on_random_loaded(self, albums):
         if albums:
             self._random_buffer = list(albums)
-        self.random_row.populate(albums or getattr(self, '_random_buffer', []))
+        self.random_model.set_albums(albums or self._random_buffer)
         self._queue_covers(albums)
 
     def _on_most_played_loaded(self, albums):
-        self.most_played_row.populate(albums)
+        self.most_played_model.set_albums(albums)
         self._queue_covers(albums)
 
-    def populate_ui(self, recent, random_mix, most_played):
-        # Still called via legacy data_ready — no-op now since per-section signals handled it
-        pass
+    # ── Refresh ──────────────────────────────────────────────────────────────
+
+    def _refresh_recent(self):
+        self.bridge.recentSpinChanged.emit(True)
+        self.recent_model.set_albums([{'_skeleton': True}] * 8)
+        if getattr(self, '_recent_loader', None) and self._recent_loader.isRunning():
+            self._safe_discard_worker(self._recent_loader)
+        w = HomePageWorker(self.client, "newest", 0)
+        w.page_ready.connect(self._on_recent_refreshed)
+        self._recent_loader = w
+        w.start()
+
+    def _on_recent_refreshed(self, albums):
+        self.bridge.recentSpinChanged.emit(False)
+        if albums:
+            self.recent_model.set_albums(albums)
+            self._queue_covers(albums)
+
+    def _refresh_random(self):
+        self.bridge.randomSpinChanged.emit(True)
+        self.random_model.set_albums([{'_skeleton': True}] * 8)
+        self._random_refresh_count += 1
+        buf = self._random_buffer
+        if buf:
+            _rnd.shuffle(buf)
+            def _populate():
+                self.random_model.set_albums(buf)
+                self._queue_covers(buf)
+                if self._random_refresh_count % 3 == 0:
+                    self._fetch_random_background()
+                else:
+                    self.bridge.randomSpinChanged.emit(False)
+            QTimer.singleShot(50, _populate)
+        else:
+            self._fetch_random_background()
+
+    def _fetch_random_background(self):
+        if getattr(self, '_random_loader', None) and self._random_loader.isRunning():
+            self._safe_discard_worker(self._random_loader)
+        w = RandomMixReloaderWorker(self.client)
+        w.data_ready.connect(self._on_random_refreshed)
+        self._random_loader = w
+        w.start()
+
+    def _on_random_refreshed(self, albums):
+        self.bridge.randomSpinChanged.emit(False)
+        if albums:
+            self._random_buffer = list(albums)
+            self.random_model.set_albums(albums)
+            self._queue_covers(albums)
+
+    # ── Load more ────────────────────────────────────────────────────────────
+
+    def _load_more(self, row_id, offset):
+        attr = f'_loading_more_{row_id}'
+        if getattr(self, attr, False):
+            return
+        model_map = {
+            'recent':      (self.recent_model,      "newest"),
+            'random':      (self.random_model,      "random"),
+            'most_played': (self.most_played_model, "frequent"),
+        }
+        if row_id not in model_map:
+            return
+        model, sort = model_map[row_id]
+        if any(a.get('_skeleton') for a in model._albums):
+            return
+        setattr(self, attr, True)
+        w = HomePageWorker(self.client, sort, offset)
+        def _on_page(albums, m=model, a=attr):
+            setattr(self, a, False)
+            m.append_albums(albums)
+            self._queue_covers(albums)
+        w.page_ready.connect(_on_page)
+        wattr = f'_page_worker_{row_id}'
+        if getattr(self, wattr, None):
+            self._safe_discard_worker(getattr(self, wattr))
+        setattr(self, wattr, w)
+        w.start()
+
+    # ── Cover art ────────────────────────────────────────────────────────────
+
+    def _start_cover_worker(self):
+        self.cover_worker = GridCoverWorker(self.client)
+        self.cover_worker.cover_ready.connect(self._on_cover_ready)
+        self.cover_worker.start()
+
+    def _on_cover_ready(self, cover_id, image_data):
+        cid = str(cover_id)
+        self.cover_provider.cache[cid] = image_data
+        for m in (self.recent_model, self.random_model, self.most_played_model):
+            m.update_cover(cid)
 
     def _queue_covers(self, albums):
-        # Append directly to the worker queue — skip the per-cover disk read on the
-        # main thread (GridCoverWorker.queue_cover does a get_thumb per item which
-        # adds ~5ms × N of blocking disk I/O). The worker thread checks the cache
-        # anyway before downloading.
-        if not self.cover_worker:
+        if not getattr(self, 'cover_worker', None):
             return
         for album in albums:
             cid = str(album.get('cover_id') or album.get('coverArt') or album.get('id') or '')
             if cid and cid not in self.cover_worker.queue:
                 self.cover_worker.queue.append(cid)
 
-    def _load_more_recent(self, offset):
-        w = HomePageWorker(self.client, "newest", offset)
-        w.page_ready.connect(lambda albums: (
-            self.recent_row.append_albums(albums),
-            self._queue_covers(albums)
-        ))
-        w.page_ready.connect(lambda _: self._discard_page_worker('_recent_page_worker'))
-        self._recent_page_worker = w
-        w.start()
-
-    def _load_more_most_played(self, offset):
-        w = HomePageWorker(self.client, "frequent", offset)
-        w.page_ready.connect(lambda albums: (
-            self.most_played_row.append_albums(albums),
-            self._queue_covers(albums)
-        ))
-        w.page_ready.connect(lambda _: self._discard_page_worker('_most_played_page_worker'))
-        self._most_played_page_worker = w
-        w.start()
-
-    def _load_more_random(self, offset):
-        w = HomePageWorker(self.client, "random", offset)
-        w.page_ready.connect(lambda albums: (
-            self.random_row.append_albums(albums),
-            self._queue_covers(albums)
-        ))
-        w.page_ready.connect(lambda _: self._discard_page_worker('_random_page_worker'))
-        self._random_page_worker = w
-        w.start()
-
-    def _discard_page_worker(self, attr):
-        w = getattr(self, attr, None)
-        if w:
-            self._safe_discard_worker(w)
-            setattr(self, attr, None)
-
-    def apply_cover(self, cover_id, image_data):
-        # Legacy path — new path goes through _decode_worker → _on_cover_decoded
-        self.recent_row.apply_cover(cover_id, image_data)
-        self.random_row.apply_cover(cover_id, image_data)
-        self.most_played_row.apply_cover(cover_id, image_data)
-
-    # ── Row order / drag ─────────────────────────────────────────────────
-
-    def _rewire_keyboard_nav(self):
-        for row in (self.recent_row, self.random_row, self.most_played_row):
-            try: row.focus_next.disconnect()
-            except Exception: pass
-            try: row.focus_prev.disconnect()
-            except Exception: pass
-        rows = self._row_order
-        for i, row in enumerate(rows):
-            if i < len(rows) - 1:
-                nxt = rows[i + 1]
-                row.focus_next.connect(lambda idx, r=nxt: self._focus_row(r, idx))
-            if i > 0:
-                prv = rows[i - 1]
-                row.focus_prev.connect(lambda idx, r=prv: self._focus_row(r, idx))
-
-    def _apply_row_order(self):
-        for row in self._row_order:
-            self.content_layout.removeWidget(row)
-        for i, row in enumerate(self._row_order):
-            self.content_layout.insertWidget(i, row)
-        self._rewire_keyboard_nav()
-
-    def _save_row_order(self):
-        key_map = {self.recent_row: 'recent', self.random_row: 'random',
-                   self.most_played_row: 'most_played'}
-        order = ','.join(key_map[r] for r in self._row_order)
-        QSettings("Icosahedron", "Icosahedron").setValue('home_row_order', order)
+    # ── Row order (registry) ─────────────────────────────────────────────────
 
     def _load_row_order(self):
-        saved = QSettings("Icosahedron", "Icosahedron").value('home_row_order', '')
-        key_map = {'recent': self.recent_row, 'random': self.random_row,
-                   'most_played': self.most_played_row}
-        if saved:
-            keys = [k for k in saved.split(',') if k in key_map]
-            if len(keys) == 3:
-                self._row_order = [key_map[k] for k in keys]
-                self._apply_row_order()
+        return QSettings("Icosahedron", "Icosahedron").value(
+            'home_row_order', 'recent,random,most_played')
 
-    def _on_row_drag_requested(self, row):
-        self._dragging_row = row
-        self._drag_insert_idx = self._row_order.index(row)
-
-        # Dim dragged row
-        eff = QGraphicsOpacityEffect()
-        eff.setOpacity(0.35)
-        row.setGraphicsEffect(eff)
-
-        # Drop indicator line
-        self._drop_indicator = QFrame(self.content_widget)
-        self._drop_indicator.setFixedHeight(3)
-        self._drop_indicator.resize(self.content_widget.width(), 3)
-        self._drop_indicator.setStyleSheet(
-            f"background: {self.current_accent}; border-radius: 1px;")
-        self._drop_indicator.raise_()
-        self._drop_indicator.show()
-
-        QApplication.instance().installEventFilter(self)
-        QApplication.setOverrideCursor(Qt.CursorShape.SizeVerCursor)
-
-    def _on_drag_move(self, global_pos):
-        local_y = self.content_widget.mapFromGlobal(global_pos).y()
-        rows = self._row_order
-        insert_idx = len(rows)
-        for i, row in enumerate(rows):
-            mid = row.geometry().top() + row.geometry().height() // 2
-            if local_y < mid:
-                insert_idx = i
-                break
-        self._drag_insert_idx = insert_idx
-
-        if insert_idx == 0:
-            ind_y = rows[0].geometry().top() - 2
-        elif insert_idx >= len(rows):
-            ind_y = rows[-1].geometry().bottom() + 1
-        else:
-            ind_y = (rows[insert_idx - 1].geometry().bottom()
-                     + rows[insert_idx].geometry().top()) // 2
-        self._drop_indicator.move(0, ind_y)
-
-    def _on_drag_end(self):
-        if self._dragging_row is None:
-            return
-        QApplication.instance().removeEventFilter(self)
-        QApplication.restoreOverrideCursor()
-
-        self._dragging_row.setGraphicsEffect(None)
-        self._drop_indicator.deleteLater()
-        self._drop_indicator = None
-
-        old_idx = self._row_order.index(self._dragging_row)
-        new_idx = self._drag_insert_idx
-        if new_idx > old_idx:
-            new_idx -= 1
-        if old_idx != new_idx:
-            self._row_order.insert(new_idx, self._row_order.pop(old_idx))
-            self._apply_row_order()
-            self._save_row_order()
-
-        self._dragging_row = None
-
-    def focus_first_grid(self):
-        self.recent_row.list_widget.setFocus(Qt.FocusReason.OtherFocusReason)
-
-    def _focus_row(self, row, col_idx=0):
-        lw = row.list_widget
-        lw.setFocus(Qt.FocusReason.OtherFocusReason)
-        target = min(col_idx, lw.count() - 1) if lw.count() > 0 else -1
-        if target >= 0:
-            lw.setCurrentRow(target)
-        self.scroll.ensureWidgetVisible(row, 0, 20)
-
-    # ── Recently Added refresh ────────────────────────────────────────────
-
-    def refresh_recent(self):
-        btn = self.recent_row.btn_refresh
-        if btn.loading:
-            return
-        btn.start_spin()
-        self.recent_row.show_skeleton()
-        if getattr(self, 'recent_reloader', None) and self.recent_reloader.isRunning():
-            self._safe_discard_worker(self.recent_reloader)
-        self.recent_reloader = HomePageWorker(self.client, "newest", 0)
-        self.recent_reloader.page_ready.connect(self._on_recent_refreshed)
-        self.recent_reloader.start()
-
-    def _on_recent_refreshed(self, new_albums):
-        self.recent_row.btn_refresh._do_stop()
-        if new_albums:
-            self.recent_row.populate(new_albums)
-            self._queue_covers(new_albums)
-
-    # ── Random mix refresh ────────────────────────────────────────────────
-
-    def refresh_random_mix(self):
-        import random as _rnd
-        btn = self.random_row.btn_refresh
-        if btn and btn.loading:
-            return
-        btn.start_spin()
-        self.random_row.show_skeleton()
-        buf = getattr(self, '_random_buffer', [])
-        self._random_refresh_count = getattr(self, '_random_refresh_count', 0) + 1
-        if buf:
-            _rnd.shuffle(buf)
-            def _populate():
-                self.random_row.populate(buf)
-                self._queue_covers(buf)
-                if self._random_refresh_count % 3 == 0:
-                    self._fetch_random_background()
-                else:
-                    btn._do_stop()
-            QTimer.singleShot(50, _populate)
-        else:
-            self._fetch_random_background()
-
-    def _fetch_random_background(self):
-        if getattr(self, 'random_reloader', None) and self.random_reloader.isRunning():
-            self._safe_discard_worker(self.random_reloader)
-        self.random_reloader = RandomMixReloaderWorker(self.client)
-        self.random_reloader.data_ready.connect(self._on_random_refreshed)
-        self.random_reloader.start()
-
-    def _on_random_refreshed(self, new_mix):
-        btn = self.random_row.btn_refresh
-        if btn: btn._do_stop()
-        if new_mix:
-            self._random_buffer = list(new_mix)
-            self.random_row.populate(new_mix)
-            self._queue_covers(new_mix)
-
-    # ── Workers ───────────────────────────────────────────────────────────
-
-    def _start_cover_worker(self):
-        self.cover_worker = GridCoverWorker(self.client)
-        self._decode_worker = CoverDecodeWorker(self)
-        self._decode_worker.decoded.connect(self._on_cover_decoded)
-        self._decode_worker.start()
-        self.cover_worker.cover_ready.connect(
-            lambda cid, data: self._decode_worker.enqueue(cid, data))
-        self.cover_worker.start()
-
-    def _on_cover_decoded(self, cover_id: str, img: QImage):
-        pix = QPixmap.fromImage(img)
-        self.recent_row.apply_cover_pixmap(cover_id, pix)
-        self.random_row.apply_cover_pixmap(cover_id, pix)
-        self.most_played_row.apply_cover_pixmap(cover_id, pix)
+    # ── Worker lifecycle ─────────────────────────────────────────────────────
 
     def _safe_discard_worker(self, worker):
         if not worker:
             return
-        if not hasattr(self, '_worker_graveyard'):
-            self._worker_graveyard = set()
         self._worker_graveyard.add(worker)
         try:
             worker.finished.connect(
-                lambda: self._worker_graveyard.discard(worker)
-                if worker in self._worker_graveyard else None)
+                lambda: self._worker_graveyard.discard(worker))
         except Exception:
             pass
-
-    # ── Theming ───────────────────────────────────────────────────────────
-
-    def set_bg_color(self, c: str):
-        self._bg_color = c
-        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
-
-    def set_accent_color(self, color):
-        self.current_accent = color
-        self.setStyleSheet(f"#HomePanel {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
-        if not hasattr(self, '_scroll_reveal'):
-            self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
-        self._scroll_reveal.color = color
-        self.scroll.setStyleSheet(f"""
-            QScrollArea#HomeScroll {{
-                background-color: transparent;
-                border: none;
-            }}
-            QScrollArea#HomeScroll > QWidget {{ background-color: transparent; }}
-            QScrollArea#HomeScroll QWidget  {{ background-color: transparent; }}
-            {scrollbar_css(color, hide_horizontal=True)}
-        """)
-
-        if hasattr(self, 'recent_row'):
-            self.recent_row.set_accent_color(color)
-            self.random_row.set_accent_color(color)
-            self.most_played_row.set_accent_color(color)
-            for row in (self.recent_row, self.random_row):
-                if row.btn_refresh:
-                    row.btn_refresh.set_color(color)
-
-    def eventFilter(self, source, event):
-        # ── Drag tracking ────────────────────────────────────────────────
-        if self._dragging_row is not None:
-            if event.type() == QEvent.Type.MouseMove:
-                self._on_drag_move(event.globalPosition().toPoint())
-            elif (event.type() == QEvent.Type.MouseButtonRelease
-                  and event.button() == Qt.MouseButton.LeftButton):
-                self._on_drag_end()
-            return False
-
-        return super().eventFilter(source, event)
