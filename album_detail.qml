@@ -1,0 +1,653 @@
+import QtQuick
+import QtQuick.Controls
+
+Rectangle {
+    id: root
+    color: "transparent"
+
+    // ── Theme ──────────────────────────────────────────────────────────────────
+    property string accentColor:     "#888888"
+    property string hoverColor:      "#555555"
+    property string textPrimary:     "#eeeeee"
+    property string textSecondary:   "#aaaaaa"
+    property int    fontSizePrimary:    13
+    property int    fontSizeSecondary:  12
+    property string fontFamily:      ""
+    property string skeletonColor:   "#282828"
+    property string cardBgColor:     "#1e1e1e"
+    property string cardBorderColor: "#2a2a2a"
+
+    // ── Album state ────────────────────────────────────────────────────────────
+    property string albumTitle:    ""
+    property string albumArtist:   ""
+    property string albumMeta:     ""
+    property string albumType:     ""
+    property string coverId:       ""
+    property bool   albumFavorite: false
+    property string playingTrackId:      ""
+    property bool   isCurrentlyPlaying:  false
+    property string searchText:    ""
+
+    // ── Column widths ──────────────────────────────────────────────────────────
+    readonly property int colNum:    44
+    readonly property int colArtist: 160
+    readonly property int colFav:    44
+    readonly property int colDur:    72
+    readonly property int colPlays:  60
+
+    function colTitleW(avail) {
+        return Math.max(80, avail - colNum - colArtist - colFav - colDur - colPlays - 8)
+    }
+
+    // ── Bridge connections ─────────────────────────────────────────────────────
+    Connections {
+        target: albumBridge
+        function onAccentColorChanged(c)        { root.accentColor       = c }
+        function onHoverColorChanged(c)         { root.hoverColor        = c }
+        function onSkeletonColorChanged(c)      { root.skeletonColor     = c }
+        function onCardBgChanged(c)             { root.cardBgColor       = c }
+        function onCardBorderChanged(c)         { root.cardBorderColor   = c }
+        function onFontSizePrimaryChanged(s)    { root.fontSizePrimary   = s }
+        function onFontSizeSecondaryChanged(s)  { root.fontSizeSecondary = s }
+        function onFontColorPrimaryChanged(c)   { root.textPrimary       = c }
+        function onFontColorSecondaryChanged(c) { root.textSecondary     = c }
+        function onFontFamilyChanged(f)         { root.fontFamily        = f }
+        function onAlbumDataChanged(title, artist, meta, type, covId, isFav) {
+            root.albumTitle    = title
+            root.albumArtist   = artist
+            root.albumMeta     = meta
+            root.albumType     = type
+            root.coverId       = covId
+            root.albumFavorite = isFav
+        }
+        function onCoverIdChanged(covId)        { root.coverId       = covId }
+        function onAlbumFavoriteChanged(isFav)  { root.albumFavorite = isFav }
+        function onPlayingStatusChanged(tid, playing) {
+            root.playingTrackId     = tid
+            root.isCurrentlyPlaying = playing
+        }
+    }
+
+    // ── Freestanding scrollbar ─────────────────────────────────────────────────
+    ScrollBar {
+        id: vbar
+        anchors.right:  parent.right
+        anchors.top:    parent.top
+        anchors.bottom: parent.bottom
+        width: 10
+        z: 10
+
+        opacity: scroller.contentHeight > scroller.height ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 250 } }
+
+        property real fixedLength: 50
+        size:     scroller.height > 0 ? (fixedLength / scroller.height) : 0
+        position: (scroller.contentHeight > scroller.height)
+                  ? (scroller.contentY / (scroller.contentHeight - scroller.height)) * (1.0 - size)
+                  : 0
+        onPositionChanged: {
+            if (pressed) {
+                var pct = position / (1.0 - size)
+                scroller.contentY = pct * (scroller.contentHeight - scroller.height)
+            }
+        }
+        contentItem: Rectangle {
+            radius: 3; color: root.accentColor
+            opacity: vbar.pressed || vbar.hovered || scroller.isScrollActive ? 0.9 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+        }
+        background: Rectangle { color: "transparent" }
+    }
+
+    // ── Main Flickable ─────────────────────────────────────────────────────────
+    Flickable {
+        id: scroller
+        anchors.fill: parent
+        contentHeight: mainCol.implicitHeight + 60
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+
+        property bool isScrollActive: false
+        Timer { id: scrollHideTimer; interval: 600; onTriggered: scroller.isScrollActive = false }
+        onContentYChanged: { isScrollActive = true; scrollHideTimer.restart() }
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            onWheel: wheel => {
+                var delta = -(wheel.angleDelta.y / 120) * 60
+                var maxY  = Math.max(0, scroller.contentHeight - scroller.height)
+                scroller.contentY = Math.max(0, Math.min(scroller.contentY + delta, maxY))
+                wheel.accepted = true
+            }
+        }
+
+        Column {
+            id: mainCol
+            x: 12; y: 12
+            width: scroller.width - 24
+            spacing: 0
+
+            // ── HEADER CARD ──────────────────────────────────────────────────
+            Item {
+                id: headerArea
+                width: parent.width
+                height: Math.max(coverItem.artSize, metaCol.implicitHeight) + 56
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 10
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: 1
+                }
+
+                // Use Item instead of Row so we can anchor siblings freely
+                Item {
+                    id: headerContent
+                    x: 28; y: 28
+                    width: parent.width - 56
+                    height: Math.max(coverItem.artSize, metaCol.implicitHeight)
+
+                    // ── Cover art ─────────────────────────────────────────
+                    Item {
+                        id: coverItem
+                        // Layout uses artSize (260). Shadow image bleeds outside via
+                        // negative offset — so the art face sits at the card padding
+                        // position and the shadow bleeds naturally around it.
+                        readonly property int artSize:    264
+                        readonly property int shadowPad:  30
+                        readonly property int providerSize: artSize + shadowPad * 2  // 324
+                        width:  artSize
+                        height: artSize
+                        anchors.left:           parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        property bool coverHov: false
+
+                        // Skeleton
+                        Rectangle {
+                            anchors.fill: parent; radius: 10
+                            color: root.skeletonColor
+                            visible: root.coverId === ""
+                        }
+
+                        // Static shadow image — positioned at -shadowPad so it bleeds
+                        // around the art face without affecting layout size
+                        Image {
+                            x: -coverItem.shadowPad; y: -coverItem.shadowPad
+                            width: coverItem.providerSize; height: coverItem.providerSize
+                            source: root.coverId !== "" ? "image://albumdetailcover/" + root.coverId : ""
+                            mipmap: true; cache: false; smooth: true
+                            visible: root.coverId !== ""
+                        }
+
+                        // Art zoom canvas — same algorithm as _RoundedPixmapLabel.paintEvent:
+                        // loadImage(url) → clip rounded rect → drawImage scaled + center-offset.
+                        Canvas {
+                            id: artCanvas
+                            anchors.fill: parent
+
+                            property real artZoom: coverItem.coverHov ? 1.08 : 1.0
+                            property string artUrl: root.coverId !== ""
+                                ? "image://albumdetailcover/art/" + root.coverId : ""
+
+                            Behavior on artZoom {
+                                NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                            }
+                            onArtZoomChanged: requestPaint()
+                            onArtUrlChanged: {
+                                if (artUrl !== "") loadImage(artUrl)
+                                else requestPaint()
+                            }
+                            onImageLoaded: requestPaint()
+
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                if (artUrl === "" || !isImageLoaded(artUrl)) return
+                                ctx.save()
+                                ctx.imageSmoothingEnabled = true
+                                ctx.imageSmoothingQuality = "high"
+                                var r = 10
+                                ctx.beginPath()
+                                ctx.moveTo(r, 0)
+                                ctx.lineTo(width - r, 0)
+                                ctx.arcTo(width, 0, width, r, r)
+                                ctx.lineTo(width, height - r)
+                                ctx.arcTo(width, height, width - r, height, r)
+                                ctx.lineTo(r, height)
+                                ctx.arcTo(0, height, 0, height - r, r)
+                                ctx.lineTo(0, r)
+                                ctx.arcTo(0, 0, r, 0, r)
+                                ctx.closePath()
+                                ctx.clip()
+                                var zw = width  * artZoom
+                                var zh = height * artZoom
+                                ctx.drawImage(artUrl, -(zw - width) / 2, -(zh - height) / 2, zw, zh)
+                                ctx.restore()
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: coverItem.coverHov = true
+                            onExited:  coverItem.coverHov = false
+                            onClicked: albumBridge.coverClicked()
+                        }
+                    }
+
+                    // ── Metadata ───────────────────────────────────────────
+                    Column {
+                        id: metaCol
+                        anchors.left:      coverItem.right
+                        anchors.leftMargin: 28
+                        anchors.right:     parent.right
+                        anchors.top:       parent.top
+                        anchors.topMargin: 16
+                        spacing: 6
+
+                        Text {
+                            text: root.albumType.toUpperCase()
+                            color: root.textSecondary
+                            font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.5
+                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            visible: root.albumType !== ""
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: root.albumTitle
+                            color: root.textPrimary
+                            font.pixelSize: 28; font.bold: true
+                            wrapMode: Text.WordWrap
+                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                        }
+
+                        // Artist — accent color, underline + click per part
+                        Flow {
+                            width: parent.width
+                            spacing: 0
+
+                            Repeater {
+                                model: root.albumArtist.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
+
+                                delegate: Text {
+                                    property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
+                                    property bool hov: false
+                                    text: modelData
+                                    color: isSep ? root.textSecondary : root.accentColor
+                                    font.pixelSize: root.fontSizePrimary + 1
+                                    font.underline: !isSep && hov
+                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        enabled: !parent.isSep
+                                        cursorShape: Qt.PointingHandCursor
+                                        onEntered: parent.hov = true
+                                        onExited:  parent.hov = false
+                                        onClicked: albumBridge.albumArtistClicked(parent.text, "")
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.albumMeta
+                            color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary
+                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            visible: root.albumMeta !== "" && root.albumMeta !== "Loading..."
+                        }
+                        Text {
+                            text: "Loading…"
+                            color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary
+                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            visible: root.albumMeta === "Loading..."
+                        }
+
+                        // ── Action buttons ─────────────────────────────────
+                        Row {
+                            spacing: 10
+                            topPadding: 16
+
+                            // Play — ring button matching footer PlayButton
+                            Item {
+                                id: playCircle
+                                width: 58; height: 58
+
+                                // Gaussian halo — fades in on hover
+                                Image {
+                                    id: playHalo
+                                    readonly property int sp: 20
+                                    x: -sp; y: -sp
+                                    width: parent.width + sp * 2; height: parent.height + sp * 2
+                                    source: "image://albumdetailcover/btn/" + root.accentColor.replace("#", "")
+                                    cache: false; mipmap: true; smooth: true
+                                    opacity: playHover.containsMouse ? 1.0 : 0.0
+                                    Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                                }
+
+                                // Solid background fill — blocks halo from showing through ring centre
+                                Rectangle {
+                                    anchors.fill: parent; anchors.margins: 2.5
+                                    radius: width / 2
+                                    color: root.cardBgColor
+                                }
+
+                                // Ring — Canvas matches QPainter ellipse exactly:
+                                // pen centered on path at m=2.5, width=1.8 → outer edge at 1.6px
+                                Canvas {
+                                    id: ringCanvas
+                                    anchors.fill: parent
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        ctx.strokeStyle = root.accentColor
+                                        ctx.lineWidth = 1.8
+                                        ctx.beginPath()
+                                        ctx.arc(width / 2, height / 2, width / 2 - 2.5, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                    }
+                                    Connections {
+                                        target: root
+                                        function onAccentColorChanged() { ringCanvas.requestPaint() }
+                                    }
+                                }
+
+                                // Play icon (accent tinted) — 16px matches footer PlayButton.iconSize()
+                                Image {
+                                    anchors.centerIn: parent
+                                    anchors.horizontalCenterOffset: 1
+                                    width: 16; height: 16
+                                    source: "image://albumicons/play_" + root.accentColor.replace("#", "")
+                                    cache: false; mipmap: true; smooth: true
+                                }
+
+                                MouseArea {
+                                    id: playHover
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: albumBridge.playClicked()
+                                }
+                            }
+
+                            // Shuffle
+                            Item {
+                                width: 40; height: 40
+                                anchors.verticalCenter: playCircle.verticalCenter
+                                Rectangle {
+                                    anchors.fill: parent; radius: 8
+                                    color: root.hoverColor
+                                    opacity: shuffleHover.containsMouse ? 1.0 : 0.0
+                                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                                }
+                                Image {
+                                    anchors.centerIn: parent; width: 20; height: 20
+                                    source: "image://albumicons/shuffle_" + root.textSecondary.replace("#", "")
+                                    cache: false; mipmap: true; smooth: true
+                                }
+                                MouseArea {
+                                    id: shuffleHover; anchors.fill: parent
+                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: albumBridge.shuffleClicked()
+                                }
+                            }
+
+                            // Like / favorite
+                            Item {
+                                width: 40; height: 40
+                                anchors.verticalCenter: playCircle.verticalCenter
+                                Rectangle {
+                                    anchors.fill: parent; radius: 8
+                                    color: root.hoverColor
+                                    opacity: likeHover.containsMouse ? 1.0 : 0.0
+                                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                                }
+                                Image {
+                                    anchors.centerIn: parent; width: 22; height: 22
+                                    source: root.albumFavorite
+                                        ? "image://albumicons/heart_filled_E91E63"
+                                        : "image://albumicons/heart_" + root.textSecondary.replace("#", "")
+                                    cache: false; mipmap: true; smooth: true
+                                }
+                                MouseArea {
+                                    id: likeHover; anchors.fill: parent
+                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: albumBridge.albumFavoriteClicked()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Item { width: parent.width; height: 16 }
+
+            // ── TRACK LIST HEADER ────────────────────────────────────────────
+            Item {
+                id: colHeader
+                width: parent.width; height: 36
+
+                Row {
+                    x: 4; height: parent.height; width: parent.width - 8
+                    property string colStyle: root.textSecondary
+                    property int    fSize:    root.fontSizeSecondary - 1
+
+                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colFav; height: parent.height; text: "♥"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colDur; height: parent.height; text: "TIME"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                }
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.textSecondary; opacity: 0.15 }
+            }
+
+            // ── TRACK ROWS ───────────────────────────────────────────────────
+            ListView {
+                id: trackList
+                width: parent.width
+                height: contentHeight
+                interactive: false
+                model: trackModel
+                spacing: 0
+
+                delegate: Item {
+                    id: trackRow
+                    width: trackList.width
+
+                    // Cache all model roles as local properties BEFORE any Repeater
+                    // can shadow the 'model' context object.
+                    property bool   isDisc:    model.isDiscHeader
+                    property string discLbl:   model.discLabel    || ""
+                    property int    trkIdx:    model.trackIdx
+                    property string trkId:     model.trackId      || ""
+                    property string trkNum:    model.trackNumber  || ""
+                    property string trkTitle:  model.trackTitle   || ""
+                    property string artName:   model.artistName   || ""
+                    property bool   isFav:     model.isFavorite
+                    property string durStr:    model.durationStr  || ""
+                    property string playsStr:  model.playCountStr || ""
+
+                    property bool rowHov:    false
+                    property bool isPlaying: root.isCurrentlyPlaying && trkId === root.playingTrackId
+                    property bool matchSearch: root.searchText === ""
+                        || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+                        || artName.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+
+                    height: isDisc ? (root.searchText === "" ? 36 : 0) : (matchSearch ? 40 : 0)
+                    visible: height > 0
+                    clip: false
+
+                    // ── Disc header ─────────────────────────────────────────
+                    Item {
+                        visible: isDisc; anchors.fill: parent
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: root.colNum + 8
+                            text: trackRow.discLbl
+                            color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary; font.bold: true
+                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                        }
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.textSecondary; opacity: 0.12 }
+                    }
+
+                    // ── Track row ────────────────────────────────────────────
+                    Item {
+                        visible: !isDisc; anchors.fill: parent
+
+                        // Hover / playing background
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.leftMargin: 2; anchors.rightMargin: 2
+                            anchors.topMargin: 1; anchors.bottomMargin: 1
+                            radius: 4
+                            color: isPlaying
+                                ? Qt.rgba(Qt.color(root.accentColor).r, Qt.color(root.accentColor).g, Qt.color(root.accentColor).b, 0.15)
+                                : root.hoverColor
+                            opacity: isPlaying ? 1.0 : (rowHov ? 1.0 : 0.0)
+                            Behavior on opacity { NumberAnimation { duration: 120 } }
+                        }
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4; anchors.rightMargin: 4
+
+                            // # / playing bars
+                            Item {
+                                width: root.colNum; height: parent.height
+                                Text {
+                                    visible: !isPlaying; anchors.centerIn: parent
+                                    text: trackRow.trkNum; color: root.textSecondary
+                                    font.pixelSize: root.fontSizeSecondary
+                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                }
+                                Row {
+                                    visible: isPlaying; anchors.centerIn: parent; spacing: 3
+                                    Repeater {
+                                        model: [300, 420, 340]
+                                        delegate: Rectangle {
+                                            required property int modelData
+                                            required property int index
+                                            width: 3; radius: 1.5; color: root.accentColor; height: 4
+                                            SequentialAnimation on height {
+                                                loops: Animation.Infinite
+                                                running: isPlaying && root.isCurrentlyPlaying
+                                                NumberAnimation { from: 4; to: 4 + (index + 1) * 4; duration: modelData; easing.type: Easing.InOutSine }
+                                                NumberAnimation { from: 4 + (index + 1) * 4; to: 4; duration: modelData; easing.type: Easing.InOutSine }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Title
+                            Text {
+                                width: root.colTitleW(trackList.width - 8); height: parent.height
+                                verticalAlignment: Text.AlignVCenter
+                                text: trackRow.trkTitle
+                                color: isPlaying ? root.accentColor : root.textPrimary
+                                font.pixelSize: root.fontSizePrimary; font.bold: isPlaying
+                                elide: Text.ElideRight; font.family: root.fontFamily; renderType: Text.NativeRendering
+                            }
+
+                            // Artist — split into clickable parts
+                            // NOTE: uses trackRow.artName (NOT model.artistName) to avoid
+                            // the Repeater's own 'model' property shadowing the delegate context.
+                            Item {
+                                width: root.colArtist; height: parent.height; clip: true
+
+                                Flow {
+                                    width: parent.width; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+
+                                    Repeater {
+                                        model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
+
+                                        delegate: Text {
+                                            property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
+                                            property bool hov: false
+                                            text: modelData
+                                            color: isSep ? root.textSecondary : (hov ? root.accentColor : root.textSecondary)
+                                            font.pixelSize: root.fontSizeSecondary
+                                            font.underline: !isSep && hov
+                                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                                            MouseArea {
+                                                anchors.fill: parent; hoverEnabled: true
+                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor; z: 5
+                                                onEntered: parent.hov = true
+                                                onExited:  parent.hov = false
+                                                onClicked: mouse => { albumBridge.trackArtistClicked(parent.text); mouse.accepted = true }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Favorite
+                            Item {
+                                width: root.colFav; height: parent.height
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: trackRow.isFav ? "♥" : "♡"
+                                    color: trackRow.isFav ? "#E91E63" : (favHov.containsMouse ? root.accentColor : root.textSecondary)
+                                    font.pixelSize: 15; font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    scale: favHov.containsMouse ? 1.2 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 100 } }
+                                    MouseArea {
+                                        id: favHov; anchors.fill: parent; hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor; z: 5
+                                        onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
+                                    }
+                                }
+                            }
+
+                            // Duration
+                            Text {
+                                width: root.colDur; height: parent.height
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                text: trackRow.durStr
+                                color: isPlaying ? root.accentColor : root.textSecondary
+                                font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                            }
+
+                            // Plays
+                            Text {
+                                width: root.colPlays; height: parent.height
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                text: trackRow.playsStr; color: root.textSecondary
+                                font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                            }
+                        }
+
+                        // Row mouse handler
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton; z: 2
+                            onEntered: trackRow.rowHov = true
+                            onExited:  trackRow.rowHov = false
+                            onClicked: mouse => {
+                                if (mouse.button === Qt.RightButton) {
+                                    var gp = mapToGlobal(mouse.x, mouse.y)
+                                    albumBridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
+                                } else {
+                                    albumBridge.trackPlayClicked(trackRow.trkIdx)
+                                }
+                                mouse.accepted = true
+                            }
+                            onDoubleClicked: albumBridge.trackPlayClicked(trackRow.trkIdx)
+                        }
+                    }
+                }
+            }
+
+            Item { width: parent.width; height: 32 }
+        }
+    }
+}
