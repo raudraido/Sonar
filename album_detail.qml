@@ -4,6 +4,7 @@ import QtQuick.Controls
 Rectangle {
     id: root
     color: "transparent"
+    focus: true
 
     // ── Theme ──────────────────────────────────────────────────────────────────
     property string accentColor:     "#888888"
@@ -27,6 +28,7 @@ Rectangle {
     property string playingTrackId:      ""
     property bool   isCurrentlyPlaying:  false
     property string searchText:    ""
+    property int    selectedTrkIdx: -1
 
     // ── Column widths ──────────────────────────────────────────────────────────
     readonly property int colNum:  44
@@ -80,6 +82,24 @@ Rectangle {
         function onPlayingStatusChanged(tid, playing) {
             root.playingTrackId     = tid
             root.isCurrentlyPlaying = playing
+        }
+        function onSelectedTrackChanged(idx) { root.selectedTrkIdx = idx }
+        function onScrollToModelRow(row) {
+            var item = trackList.itemAtIndex(row)
+            if (!item) return
+            var mapped = item.mapToItem(scroller.contentItem, 0, 0)
+            var margin = 8
+            if (mapped.y < scroller.contentY + margin)
+                scroller.contentY = Math.max(0, mapped.y - margin)
+            else if (mapped.y + item.height > scroller.contentY + scroller.height - margin)
+                scroller.contentY = Math.min(scroller.contentHeight - scroller.height,
+                                             mapped.y + item.height - scroller.height + margin)
+        }
+        function onScrollToTopOfView() {
+            scroller.contentY = 0
+        }
+        function onScrollToBottomOfView() {
+            scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height)
         }
     }
 
@@ -389,8 +409,8 @@ Rectangle {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.playClicked()
-                                    onEntered: qmlTip.show("Play Album (Ctrl+Enter)", this)
-                                    onExited:  qmlTip.hide()
+                                    onEntered: { var a = mapToGlobal(width/2, -4); var b = mapToGlobal(width/2, height+4); albumBridge.showTooltip("Play Album (Ctrl+Enter)", a.x, a.y, b.y) }
+                                    onExited:  albumBridge.hideTooltip()
                                 }
                             }
 
@@ -413,8 +433,8 @@ Rectangle {
                                     id: shuffleHover; anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.shuffleClicked()
-                                    onEntered: qmlTip.show("Shuffle", this)
-                                    onExited:  qmlTip.hide()
+                                    onEntered: { var a = mapToGlobal(width/2, -4); var b = mapToGlobal(width/2, height+4); albumBridge.showTooltip("Shuffle", a.x, a.y, b.y) }
+                                    onExited:  albumBridge.hideTooltip()
                                 }
                             }
 
@@ -439,8 +459,8 @@ Rectangle {
                                     id: likeHover; anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: albumBridge.albumFavoriteClicked()
-                                    onEntered: qmlTip.show("Add to Favorite Albums", this)
-                                    onExited:  qmlTip.hide()
+                                    onEntered: { var a = mapToGlobal(width/2, -4); var b = mapToGlobal(width/2, height+4); albumBridge.showTooltip("Add to Favorite Albums", a.x, a.y, b.y) }
+                                    onExited:  albumBridge.hideTooltip()
                                 }
                             }
                         }
@@ -567,8 +587,9 @@ Rectangle {
                     property string durStr:    model.durationStr  || ""
                     property string playsStr:  model.playCountStr || ""
 
-                    property bool rowHov:    false
-                    property bool isPlaying: root.isCurrentlyPlaying && trkId === root.playingTrackId
+                    property bool rowHov:      false
+                    property bool isSelected:  !isDisc && trkIdx === root.selectedTrkIdx
+                    property bool isPlaying:   root.isCurrentlyPlaying && trkId === root.playingTrackId
                     property bool matchSearch: root.searchText === ""
                         || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
                         || artName.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
@@ -594,7 +615,7 @@ Rectangle {
                     Item {
                         visible: !isDisc; anchors.fill: parent
 
-                        // Hover / playing background
+                        // Hover / playing / keyboard-selection background
                         Rectangle {
                             anchors.fill: parent
                             anchors.leftMargin: 2; anchors.rightMargin: 2
@@ -603,7 +624,7 @@ Rectangle {
                             color: isPlaying
                                 ? Qt.rgba(Qt.color(root.accentColor).r, Qt.color(root.accentColor).g, Qt.color(root.accentColor).b, 0.15)
                                 : root.hoverColor
-                            opacity: isPlaying ? 1.0 : (rowHov ? 1.0 : 0.0)
+                            opacity: isPlaying ? 1.0 : (rowHov || isSelected ? 1.0 : 0.0)
                             Behavior on opacity { NumberAnimation { duration: 120 } }
                         }
 
@@ -745,29 +766,4 @@ Rectangle {
         }
     }
 
-    // ── Shared tooltip overlay ─────────────────────────────────────────────────
-    Rectangle {
-        id: qmlTip
-        visible: false; z: 999
-        radius: 6
-        color: root.cardBgColor
-        border.color: Qt.darker(root.accentColor, 2.5)
-        border.width: 1
-        width: _tipText.implicitWidth + 28; height: _tipText.implicitHeight + 18
-        Text {
-            id: _tipText
-            anchors.centerIn: parent
-            color: root.textSecondary
-            font.pixelSize: root.fontSizePrimary
-            font.family: root.fontFamily; renderType: Text.NativeRendering
-        }
-        function show(txt, item) {
-            _tipText.text = txt
-            var pt = item.mapToItem(root, item.width / 2, item.height + 4)
-            x = Math.max(4, Math.min(pt.x - width / 2, root.width - width - 4))
-            y = pt.y
-            visible = true
-        }
-        function hide() { visible = false }
-    }
 }

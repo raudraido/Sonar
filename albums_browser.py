@@ -1512,10 +1512,15 @@ class AlbumDetailBridge(QObject):
     coverIdChanged            = pyqtSignal(str)
     albumFavoriteChanged      = pyqtSignal(bool)
     playingStatusChanged      = pyqtSignal(str, bool)  # track_id, is_playing
+    selectedTrackChanged      = pyqtSignal(int)         # trkIdx → QML highlight
+    scrollToModelRow          = pyqtSignal(int)         # model row → QML scroll
+    scrollToTopOfView         = pyqtSignal()
+    scrollToBottomOfView      = pyqtSignal()
 
     def __init__(self, view):
         super().__init__()
         self._view = view
+        self._selected_trkidx = -1
 
     @pyqtSlot()
     def playClicked(self):
@@ -1526,9 +1531,40 @@ class AlbumDetailBridge(QObject):
         self._view.shuffle_clicked.emit()
 
     @pyqtSlot(int)
+    def navigateRow(self, delta: int):
+        rows = self._view._track_model._rows
+        if not rows:
+            return
+        nav = [(i, r['_idx']) for i, r in enumerate(rows) if not r.get('_disc')]
+        if not nav:
+            return
+        pos = next((p for p, (_, idx) in enumerate(nav) if idx == self._selected_trkidx), -1)
+        if pos == -1:
+            new_pos = 0 if delta > 0 else len(nav) - 1
+        else:
+            new_pos = pos + delta
+            if new_pos < 0:
+                self.scrollToTopOfView.emit()
+                return
+            if new_pos >= len(nav):
+                self.scrollToBottomOfView.emit()
+                return
+        mr, ti = nav[new_pos]
+        self._selected_trkidx = ti
+        self.selectedTrackChanged.emit(ti)
+        self.scrollToModelRow.emit(mr)
+
+    @pyqtSlot()
+    def playSelected(self):
+        if self._selected_trkidx >= 0:
+            self._view.track_play_signal.emit(self._view._tracks, self._selected_trkidx)
+
+    @pyqtSlot(int)
     def trackPlayClicked(self, track_idx: int):
         tracks = self._view._tracks
         if 0 <= track_idx < len(tracks):
+            self._selected_trkidx = track_idx
+            self.selectedTrackChanged.emit(track_idx)
             self._view.track_play_signal.emit(tracks, track_idx)
 
     @pyqtSlot(str, str)
@@ -1565,10 +1601,9 @@ class AlbumDetailBridge(QObject):
     def coverClicked(self):
         self._view._show_cover_zoom()
 
-    @pyqtSlot(str, int, int)
-    def showTooltip(self, text: str, x: int, y: int):
+    @pyqtSlot(str, int, int, int)
+    def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
         from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import QPoint
         # Cancel any pending debounced hide (spurious Leave → Enter cycle)
         t = getattr(self, '_tip_hide_timer', None)
         if t and t.isActive():
@@ -1577,7 +1612,7 @@ class AlbumDetailBridge(QObject):
             tf = getattr(w, '_tooltip_filter', None)
             if tf:
                 tf._qml_mode = True
-                tf._ensure_tip().show_at(QPoint(x, y), text)
+                tf._ensure_tip().show_at(cx, above_y, below_y, text)
                 break
 
     @pyqtSlot()
@@ -1618,6 +1653,40 @@ class AlbumDetailBridge(QObject):
     def saveColWidths(self, artist: int, fav: int, dur: int, plays: int):
         from PyQt6.QtCore import QSettings
         QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays})
+
+
+class _AlbumKeyFilter(QObject):
+    """Widget-level key filter — fires regardless of QML focus state."""
+
+    def __init__(self, bridge, qml_widget, parent=None):
+        super().__init__(parent)
+        self._b   = bridge
+        self._qml = qml_widget
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.Type.KeyPress:
+            return False
+        key  = event.key()
+        mods = event.modifiers()
+        b    = self._b
+        if key == Qt.Key.Key_Down:
+            b.navigateRow(1);  return True
+        if key == Qt.Key.Key_Up:
+            b.navigateRow(-1); return True
+        if key == Qt.Key.Key_PageDown:
+            b.navigateRow(max(5, self._qml.height() // 42)); return True
+        if key == Qt.Key.Key_PageUp:
+            b.navigateRow(-max(5, self._qml.height() // 42)); return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if mods & Qt.KeyboardModifier.ControlModifier:
+                b.playClicked(); return True
+            if b._selected_trkidx >= 0:
+                b.playSelected(); return True
+        if key == Qt.Key.Key_Escape and b._selected_trkidx >= 0:
+            b._selected_trkidx = -1
+            b.selectedTrackChanged.emit(-1)
+            return True
+        return False
 
 
 class AlbumDetailView(QWidget):
@@ -1662,6 +1731,9 @@ class AlbumDetailView(QWidget):
 
         self._qml = QQuickWidget()
         self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._album_key_filter = _AlbumKeyFilter(self._bridge, self._qml)
+        self._qml.installEventFilter(self._album_key_filter)
 
         engine = self._qml.engine()
         engine.addImageProvider("albumdetailcover", self._cover_provider)
@@ -1696,6 +1768,8 @@ class AlbumDetailView(QWidget):
     def _on_tracks_ready(self, tracks: list):
         self._tracks = tracks
         self._track_model.set_tracks(tracks)
+        self._bridge._selected_trkidx = -1
+        self._bridge.selectedTrackChanged.emit(-1)
         self.tracks_loaded.emit()
         # Re-apply playing indicator
         if getattr(self, '_last_playing_id', None):
@@ -1719,6 +1793,10 @@ class AlbumDetailView(QWidget):
         self._last_playing_id   = playing_id
         self._last_is_playing   = is_playing
         self._last_playing_accent = accent
+        # add_batch_to_ui calls update_indicator while current_index=-1, emitting (None, True).
+        # Suppress it — it would clear the row highlight with no track to replace it.
+        if not playing_id and is_playing:
+            return
         self._bridge.playingStatusChanged.emit(str(playing_id) if playing_id else '', is_playing)
 
     def set_bg_color(self, c: str):
@@ -2374,6 +2452,25 @@ class LibraryGridBrowser(QWidget):
                 
         try: worker.finished.connect(remove_from_grave)
         except: pass
+
+    def stop_all_workers(self):
+        """Quit all running QThread workers — called on app shutdown."""
+        workers = set(getattr(self, '_worker_graveyard', set()))
+        for w in getattr(self, 'active_chunk_workers', {}).values():
+            workers.add(w)
+        for attr in ('live_worker', '_compilations_worker', 'cover_worker'):
+            w = getattr(self, attr, None)
+            if w:
+                workers.add(w)
+        for w in workers:
+            if w.isRunning():
+                w.quit()
+                if not w.wait(400):
+                    w.terminate()
+        if hasattr(self, '_worker_graveyard'):
+            self._worker_graveyard.clear()
+        if hasattr(self, 'active_chunk_workers'):
+            self.active_chunk_workers.clear()
 
     def on_sort_changed(self):
         self.load_albums_page(reset=True)

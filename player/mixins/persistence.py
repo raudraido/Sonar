@@ -408,6 +408,28 @@ class PersistenceMixin:
         if _inner and hasattr(_inner, 'stop_all_workers'):
             _inner.stop_all_workers()
 
+        # Stop album browser workers (chunk loaders, live search, compilations, graveyard)
+        _alb = getattr(self, 'album_browser', None)
+        if _alb and hasattr(_alb, 'stop_all_workers'):
+            _alb.stop_all_workers()
+
+        # Stop main-window tracked workers that aren't covered above
+        for _attr in ('blur_thread', 'bpm_worker', '_sync_checker', 'cover_loader'):
+            _w = getattr(self, _attr, None)
+            if _w and _w.isRunning():
+                _w.quit()
+                if not _w.wait(600):
+                    _w.terminate()
+
+        # Drain the main-window graveyard
+        for _w in list(getattr(self, '_worker_graveyard', set())):
+            if _w.isRunning():
+                _w.quit()
+                if not _w.wait(400):
+                    _w.terminate()
+        if hasattr(self, '_worker_graveyard'):
+            self._worker_graveyard.clear()
+
         # 4. Stop remaining Python worker threads
         if hasattr(self, 'loading_thread') and self.loading_thread and self.loading_thread.isRunning(): 
             self.loading_thread.quit()

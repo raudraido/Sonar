@@ -241,11 +241,12 @@ class _TooltipLabel(_QFrame):
                          _Qt2.WindowType.WindowStaysOnTopHint | _Qt2.WindowType.NoDropShadowWindowHint)
         self.setAttribute(_Qt2.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(_Qt2.WidgetAttribute.WA_TranslucentBackground)
-        self._text  = ''
-        self._fg    = '#999999'
-        self._px    = 14
-        self._bg    = (20, 20, 20)
-        self._bc    = '#2a2a2a'
+        self._text       = ''
+        self._fg         = '#999999'
+        self._px         = 14
+        self._bg         = (20, 20, 20)
+        self._bc         = '#2a2a2a'
+        self._shadow_img = None
 
     @staticmethod
     def _get_theme():
@@ -255,8 +256,36 @@ class _TooltipLabel(_QFrame):
             if t: return t
         return None
 
+    def _render_shadow(self, w: int, h: int, pad: int) -> 'QImage | None':
+        """Pre-render Gaussian shadow matching QGraphicsDropShadowEffect."""
+        try:
+            import numpy as np
+            from scipy.ndimage import gaussian_filter
+            from PyQt6.QtGui import QImage, QPainter, QColor
+            from PyQt6.QtCore import QRectF, Qt as _Qt3
+        except ImportError:
+            return None
+        mask = QImage(w, h, QImage.Format.Format_ARGB32)
+        mask.fill(_Qt3.GlobalColor.transparent)
+        mp = QPainter(mask)
+        mp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        mp.setBrush(QColor(0, 0, 0, 255))
+        mp.setPen(_Qt3.PenStyle.NoPen)
+        content = QRectF(pad, pad, w - pad * 2, h - pad * 2)
+        mp.drawRoundedRect(content.adjusted(0, 2, 0, 2), 6, 6)
+        mp.end()
+        bits = mask.bits()
+        bits.setsize(w * h * 4)
+        arr = np.frombuffer(bits, dtype=np.uint8).reshape((h, w, 4)).copy()
+        alpha_f = arr[:, :, 3].astype(np.float32) / 255.0
+        blurred = gaussian_filter(alpha_f, sigma=3.5)
+        shadow = np.zeros((h, w, 4), dtype=np.uint8)
+        shadow[:, :, 3] = (blurred * 140).clip(0, 255).astype(np.uint8)
+        result = QImage(shadow.data, w, h, w * 4, QImage.Format.Format_ARGB32)
+        return result.copy()
+
     def paintEvent(self, _):
-        from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics
+        from PyQt6.QtGui import QPainter, QColor, QPen, QFont
         from PyQt6.QtCore import QRectF, Qt as _Qt3
         r, g, b = self._bg
         bc = QColor(self._bc)
@@ -264,11 +293,8 @@ class _TooltipLabel(_QFrame):
         content = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(_Qt3.PenStyle.NoPen)
-        for i in range(10, 0, -1):
-            t2 = i / 10; ex = 10 * t2
-            p.setBrush(QColor(0, 0, 0, int(80 * (1 - t2) ** 2)))
-            p.drawRoundedRect(content.adjusted(-ex*.6, -ex*.3+5*(1-t2), ex*.6, ex+5*t2), 6, 6)
+        if self._shadow_img:
+            p.drawImage(0, 0, self._shadow_img)
         p.setBrush(QColor(r, g, b))
         p.setPen(QPen(bc, 1))
         p.drawRoundedRect(content, 6, 6)
@@ -279,7 +305,8 @@ class _TooltipLabel(_QFrame):
                    _Qt3.AlignmentFlag.AlignCenter, self._text)
         p.end()
 
-    def show_at(self, pos, text):
+    def show_at(self, cx: int, above_y: int, below_y: int, text: str):
+        """Show tooltip centered on cx, above above_y if room, else at below_y."""
         t = self._get_theme()
         self._fg   = getattr(t, 'font_color_secondary', '#999999') if t else '#999999'
         self._px   = getattr(t, 'font_size_primary',    14)        if t else 14
@@ -292,15 +319,23 @@ class _TooltipLabel(_QFrame):
         else:
             self._bc = getattr(t, 'manual_border_color', '#2a2a2a') if t else '#2a2a2a'
         self._text = text
-        # Measure text to set fixed size
         from PyQt6.QtGui import QFont, QFontMetrics
+        from PyQt6.QtWidgets import QApplication
         f = QFont(); f.setPixelSize(self._px)
         fm = QFontMetrics(f)
         tw = fm.horizontalAdvance(text)
         th = fm.height()
         pad = self._PAD
-        self.setFixedSize(tw + pad*2 + 20, th + pad*2 + 10)
-        self.move(pos.x(), pos.y())
+        total_w = tw + pad * 2 + 20
+        total_h = th + pad * 2 + 10
+        self.setFixedSize(total_w, total_h)
+        self._shadow_img = self._render_shadow(total_w, total_h, pad)
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = max(screen.left() + 4, min(cx - total_w // 2, screen.right() - total_w - 4))
+        y = above_y - total_h
+        if y < screen.top() + 4:
+            y = below_y
+        self.move(x, y)
         super(_TooltipLabel, self).show()
         self.raise_()
 
@@ -324,12 +359,13 @@ class _TooltipFilter(_QObject):
             text = widget.toolTip() if widget else ''
             if text:
                 tip = self._ensure_tip()
-                # Position below the widget
-                gpos = widget.mapToGlobal(QPoint(0, widget.height() + 4))
-                tip.show_at(gpos, text)
+                cx      = widget.mapToGlobal(QPoint(widget.width() // 2, 0)).x()
+                above_y = widget.mapToGlobal(QPoint(0, -4)).y()
+                below_y = widget.mapToGlobal(QPoint(0, widget.height() + 4)).y()
+                tip.show_at(cx, above_y, below_y, text)
                 return True
             else:
-                if self._tip and self._tip.isVisible():
+                if not self._qml_mode and self._tip and self._tip.isVisible():
                     self._tip.hide()
                 return False
         if event.type() in (_QEvent2.Type.Leave, _QEvent2.Type.MouseButtonPress,
