@@ -413,6 +413,30 @@ class PersistenceMixin:
         if _alb and hasattr(_alb, 'stop_all_workers'):
             _alb.stop_all_workers()
 
+        # Stop cover workers on tabs that don't have a stop_all_workers
+        for _tab_attr, _wk_attr in (
+            ('home_tab',          'cover_worker'),
+            ('playlists_browser', 'cover_worker'),
+            ('_favorites_tab',    '_cover_worker'),
+        ):
+            _tab = getattr(self, _tab_attr, None)
+            _wk  = getattr(_tab, _wk_attr, None) if _tab else None
+            if _wk and _wk.isRunning():
+                if hasattr(_wk, 'stop'):
+                    _wk.stop()
+                _wk.quit()
+                if not _wk.wait(500):
+                    _wk.terminate()
+
+        # Stop tracks browser cover worker (TBCoverWorker — no stop(), uses .running flag)
+        _tb = getattr(self, 'tracks_browser', None)
+        _tbw = getattr(_tb, 'tb_cover_worker', None) if _tb else None
+        if _tbw and _tbw.isRunning():
+            _tbw.running = False
+            _tbw.quit()
+            if not _tbw.wait(500):
+                _tbw.terminate()
+
         # Stop main-window tracked workers that aren't covered above
         for _attr in ('blur_thread', 'bpm_worker', '_sync_checker', 'cover_loader'):
             _w = getattr(self, _attr, None)
@@ -439,9 +463,23 @@ class PersistenceMixin:
             self.playlist_loader.quit()
             self.playlist_loader.wait()
             
-        # 5. Stop the active audio engine
+        # 5. Stop PlaybackManager before the audio engine — it must exit its queue loop
+        #    cleanly (via the 'quit' command) rather than being terminate()d mid-C++ call,
+        #    which causes an access violation on Windows.
+        if getattr(self, 'playback_manager', None) and self.playback_manager.isRunning():
+            self.playback_manager.command_queue.put({'type': 'quit'})
+            if not self.playback_manager.wait(2000):
+                self.playback_manager.terminate()
+
+        # 5b. Stop the active audio engine, then call close() → lib.cleanup() to signal
+        #     the C++ engine's internal threads to exit.  cleanup() returns before those
+        #     threads have fully exited, so we pump the Qt event loop once and sleep briefly
+        #     to let them finish.  Without this, QApplication destroys QThreadStorage while
+        #     the C++ thread is still alive → abort().
         if hasattr(self, 'audio_engine'):
+            self.audio_engine.update_timer.stop()
             self.audio_engine.stop()
+            self.audio_engine.close()
 
         # 5a. Send stop to any active cast/DLNA devices
         if hasattr(self, '_cast_manager'):
@@ -460,8 +498,36 @@ class PersistenceMixin:
             self.save_playlist()
         
                 
-        # Allow the window to close
+        # ── Catch-all: stop any QThread that targeted cleanup missed ─────────
+        import gc as _gc
+        from PyQt6.QtCore import QThread as _QThread
+        _stragglers = [obj for obj in _gc.get_objects()
+                       if isinstance(obj, _QThread) and obj.isRunning()]
+        if _stragglers:
+            print(f"[CLOSE] {len(_stragglers)} straggler QThread(s) — stopping:")
+            for _t in _stragglers:
+                print(f"  {type(_t).__name__!r}  module={type(_t).__module__!r}  name={_t.objectName()!r}")
+                if hasattr(_t, 'command_queue'):
+                    _t.command_queue.put({'type': 'quit'})  # PlaybackManager
+                elif hasattr(_t, 'stop'):
+                    _t.stop()           # workers with a proper stop() method
+                elif hasattr(_t, 'running'):
+                    _t.running = False  # workers that just check a .running flag
+                _t.quit()
+                if not _t.wait(500):
+                    _t.terminate()
+        else:
+            print("[CLOSE] All QThreads stopped cleanly.")
+        # ─────────────────────────────────────────────────────────────────────
+
+        # Allow the window to close, then immediately exit the process.
+        # audio_core.dll's cleanup() is non-blocking — its C++ thread outlives the call.
+        # QApplication's destructor then hits QThreadStorage::cleanup() while that thread
+        # is still alive → abort().  os._exit(0) terminates before Qt's destructor runs;
+        # all DB writes and file flushes are already done above.
         event.accept()
+        import os as _os
+        _os._exit(0)
 
     def resizeEvent(self, event):
 

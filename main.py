@@ -30,6 +30,7 @@ _FONT_NOISE = (
     'DirectWrite: CreateFontFaceFromHDC',
     'OpenType support missing',
     'Fixedsys',
+    'QThreadStorage:',   # C++ audio thread outlives Qt teardown — harmless, suppressed
 )
 
 def _qt_msg_handler(msg_type, _ctx, message):

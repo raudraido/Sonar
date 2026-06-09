@@ -2464,8 +2464,10 @@ class LibraryGridBrowser(QWidget):
                 workers.add(w)
         for w in workers:
             if w.isRunning():
+                if hasattr(w, 'stop'):
+                    w.stop()  # break internal time.sleep / threading.Event loop
                 w.quit()
-                if not w.wait(400):
+                if not w.wait(600):
                     w.terminate()
         if hasattr(self, '_worker_graveyard'):
             self._worker_graveyard.clear()

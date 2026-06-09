@@ -2640,13 +2640,15 @@ class ArtistRichDetailView(QWidget):
     def stop_all_workers(self):
         """Terminate all running workers immediately — called on app shutdown."""
         workers = set(getattr(self, '_worker_graveyard', set()))
-        w = getattr(self, 'live_detail_worker', None)
-        if w:
-            workers.add(w)
+        for attr in ('live_detail_worker', '_decode_worker', 'cover_worker'):
+            w = getattr(self, attr, None)
+            if w: workers.add(w)
         for worker in workers:
             if worker.isRunning():
+                if hasattr(worker, 'stop'):
+                    worker.stop()  # break internal time.sleep / threading.Event loop
                 worker.quit()
-                if not worker.wait(300):
+                if not worker.wait(400):
                     worker.terminate()
         if hasattr(self, '_worker_graveyard'):
             self._worker_graveyard.clear()
