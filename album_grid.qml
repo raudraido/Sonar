@@ -336,9 +336,14 @@ Rectangle {
 
                                 text: modelData
                                 color: isSep ? "#777" : (hov ? root.accentColor : root.fontColorSecondary)
-                                font.underline: !isSep && hov
                                 font.pixelSize: root.fontSizeSecondary
                                 renderType: Text.NativeRendering
+                                Rectangle {
+                                    visible: !parent.isSep && parent.hov
+                                    y: parent.baselineOffset + 2
+                                    width: parent.paintedWidth; height: 1
+                                    color: parent.color
+                                }
 
                                 MouseArea {
                                     anchors.fill: parent

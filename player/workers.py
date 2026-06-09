@@ -18,7 +18,7 @@ from PyQt6.QtGui import QImage
 
 from io import BytesIO
 from mutagen import File
-from PIL import Image, ImageFilter
+from PIL import Image
 
 from cover_cache import CoverCache, THUMB_SIZE
 
@@ -213,18 +213,15 @@ class PlaybackManager(QThread):
 
 
 class BlurWorker(QThread):
-    # --- (Blurred_Bg_QImage, Cover_Art_QImage, Raw_Bytes, Hex_Color)
-    finished = pyqtSignal(QImage, QImage, object, str) 
+    # (Cover_Art_QImage, Raw_Bytes, Hex_Color)
+    finished = pyqtSignal(QImage, object, str)
 
-    def __init__(self, path, blur_radius, overlay_alpha, default_color, calc_color=True, raw_data_override=None, target_size=None, art_size=500):
+    def __init__(self, path, default_color, calc_color=True, raw_data_override=None, art_size=500):
         super().__init__()
         self.path = path
-        self.blur_radius = blur_radius
-        self.overlay_alpha = overlay_alpha
         self.default_color = default_color
-        self.calc_color = calc_color 
-        self.raw_data_override = raw_data_override 
-        self.target_size = target_size
+        self.calc_color = calc_color
+        self.raw_data_override = raw_data_override
         self.art_size = art_size
 
     def run(self):
@@ -299,31 +296,13 @@ class BlurWorker(QThread):
 
                 if self.isInterruptionRequested(): return
 
-                # --- Blur Operation ---
-                # 200×200 is visually identical after the final upscale, uses 4× less CPU
-                low_res = img.resize((200, 200)) 
-                blurred = low_res.filter(ImageFilter.GaussianBlur(radius=self.blur_radius))
-                blurred = blurred.convert('RGB')
-                
-                if self.isInterruptionRequested(): return
-                overlay = Image.new('RGB', blurred.size, (10, 10, 10))
-                final = Image.blend(blurred, overlay, self.overlay_alpha)
-                
-                qimg = QImage(final.tobytes(), final.size[0], final.size[1], QImage.Format.Format_RGB888).copy()
-                if self.target_size and not qimg.isNull():
-                    scaled = qimg.scaled(self.target_size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-                    cx = (scaled.width() - self.target_size.width()) // 2
-                    cy = (scaled.height() - self.target_size.height()) // 2
-                    qimg = scaled.copy(cx, cy, self.target_size.width(), self.target_size.height())
-                
-                # 🟢 Emit BOTH pre-scaled images!
-                self.finished.emit(qimg, cover_qimg, raw_art, dominant_hex)
-            else: 
-                if self.calc_color: dominant_hex = "#cccccc" 
-                self.finished.emit(QImage(), QImage(), None, dominant_hex)
-        except Exception as e: 
-            print(f"Blur error: {e}")
-            self.finished.emit(QImage(), QImage(), None, "#cccccc")
+                self.finished.emit(cover_qimg, raw_art, dominant_hex)
+            else:
+                if self.calc_color: dominant_hex = "#cccccc"
+                self.finished.emit(QImage(), None, dominant_hex)
+        except Exception as e:
+            print(f"ArtWorker error: {e}")
+            self.finished.emit(QImage(), None, "#cccccc")
 
 
 

@@ -4,6 +4,7 @@ import QtQuick.Controls
 Rectangle {
     id: root
     color: "transparent"
+    focus: true
 
     // ── Theme (defaults match albums_grid.qml; overridden by homeBridge signals) ──
     property string accentColor:    "#888888"
@@ -17,6 +18,10 @@ Rectangle {
     // ── Refresh-spin state (driven by homeBridge signals) ──────────────────
     property bool recentSpinning: false
     property bool randomSpinning: false
+
+    // ── Keyboard navigation state ─────────────────────────────────────────
+    property string selectedRowId: ""
+    property int    selectedCol:   -1
 
     // ── Drag-to-reorder state ──────────────────────────────────────────────
     property int  draggingIdx: -1   // index of row being dragged, -1 = none
@@ -90,6 +95,55 @@ Rectangle {
         homeBridge.saveRowOrder(ids.join(","))
     }
 
+    // ── Keyboard navigation helpers ────────────────────────────────────────
+    function _initSelection() {
+        if (rowOrderModel.count > 0) {
+            selectedRowId = rowOrderModel.get(0).rowId
+            selectedCol   = 0
+        }
+    }
+
+    function _navigateCol(delta) {
+        if (selectedRowId === "") { _initSelection(); return }
+        var cnt = homeBridge.rowCount(selectedRowId)
+        if (cnt === 0) return
+        selectedCol = Math.max(0, Math.min(cnt - 1, selectedCol + delta))
+    }
+
+    function _navigateRow(delta) {
+        if (selectedRowId === "") { _initSelection(); return }
+        var curIdx = -1
+        for (var i = 0; i < rowOrderModel.count; i++) {
+            if (rowOrderModel.get(i).rowId === selectedRowId) { curIdx = i; break }
+        }
+        if (curIdx < 0) { _initSelection(); return }
+        var ni = Math.max(0, Math.min(rowOrderModel.count - 1, curIdx + delta))
+        if (ni === curIdx) return
+        selectedRowId = rowOrderModel.get(ni).rowId
+        var cnt = homeBridge.rowCount(selectedRowId)
+        selectedCol = cnt > 0 ? Math.min(selectedCol, cnt - 1) : 0
+    }
+
+    Keys.onPressed: (event) => {
+        if (event.key === Qt.Key_Left) {
+            _navigateCol(-1); event.accepted = true
+        } else if (event.key === Qt.Key_Right) {
+            _navigateCol(1); event.accepted = true
+        } else if (event.key === Qt.Key_Up) {
+            _navigateRow(-1); event.accepted = true
+        } else if (event.key === Qt.Key_Down) {
+            _navigateRow(1); event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (selectedRowId !== "" && selectedCol >= 0)
+                homeBridge.albumClicked(selectedRowId, selectedCol)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Space) {
+            if (selectedRowId !== "" && selectedCol >= 0)
+                homeBridge.playClicked(selectedRowId, selectedCol)
+            event.accepted = true
+        }
+    }
+
     // ── Vertical scroll ────────────────────────────────────────────────────
     Flickable {
         id: scroller
@@ -99,6 +153,9 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
         clip: true
         interactive: root.draggingIdx === -1  // freeze scroll while reordering
+
+        // Prevent Flickable from consuming arrow keys — delegate to root nav
+        Keys.forwardTo: [root]
 
         property bool isScrollActive: false
         Timer { id: scrollHideTimer; interval: 600; onTriggered: scroller.isScrollActive = false }
@@ -138,6 +195,26 @@ Rectangle {
 
                     opacity: isDragging ? 0.30 : 1.0
                     Behavior on opacity { NumberAnimation { duration: 120 } }
+
+                    // Scroll carousel + Flickable when keyboard selection moves to this row
+                    Connections {
+                        target: root
+                        function onSelectedColChanged() {
+                            if (root.selectedRowId === rowItem.rowId && root.selectedCol >= 0)
+                                carousel.positionViewAtIndex(root.selectedCol, ListView.Contain)
+                        }
+                        function onSelectedRowIdChanged() {
+                            if (root.selectedRowId !== rowItem.rowId) return
+                            if (root.selectedCol >= 0)
+                                carousel.positionViewAtIndex(root.selectedCol, ListView.Contain)
+                            var rTop = rowsColumn.y + rowItem.y
+                            var rBot = rTop + rowItem.height
+                            if (rTop < scroller.contentY)
+                                scroller.contentY = rTop
+                            else if (rBot > scroller.contentY + scroller.height)
+                                scroller.contentY = rBot - scroller.height
+                        }
+                    }
 
                     // Responsive column count (Feishin-style breakpoints)
                     readonly property int nCols: {
@@ -417,6 +494,9 @@ Rectangle {
 
                                     property bool hov: mainArea.containsMouse ||
                                                        playArea.containsMouse
+                                    property bool isSelected: !isLoading &&
+                                        carousel.rowId === root.selectedRowId &&
+                                        index === root.selectedCol
 
                                     // Cover area (square)
                                     Item {
@@ -453,13 +533,13 @@ Rectangle {
                                             Behavior on opacity { NumberAnimation { duration: 150 } }
                                         }
 
-                                        // Accent border on hover
+                                        // Accent border on hover / keyboard selection
                                         Rectangle {
                                             anchors.fill: parent
                                             radius:       8
                                             color:        "transparent"
-                                            border.color: card.hov ? root.accentColor : "transparent"
-                                            border.width: 1
+                                            border.color: (card.hov || card.isSelected) ? root.accentColor : "transparent"
+                                            border.width: card.isSelected ? 2 : 1
                                         }
 
                                         // Play button circle
@@ -510,7 +590,7 @@ Rectangle {
                                         Text {
                                             width: parent.width
                                             text:  albumTitle
-                                            color: card.hov ? root.accentColor : root.textPrimary
+                                            color: (card.hov || card.isSelected) ? root.accentColor : root.textPrimary
                                             font.pixelSize: root.fontSizePrimary
                                             font.bold:      true
                                             elide: Text.ElideRight
@@ -524,8 +604,13 @@ Rectangle {
                                             text:  albumArtist
                                             color: hov ? root.accentColor : root.textSecondary
                                             font.pixelSize: root.fontSizeSecondary
-                                            font.underline: hov
                                             elide: Text.ElideRight
+                                            Rectangle {
+                                                visible: parent.hov
+                                                y: parent.baselineOffset + 2
+                                                width: parent.paintedWidth; height: 1
+                                                color: parent.color
+                                            }
                                             renderType: Text.NativeRendering
 
                                             MouseArea {
@@ -561,7 +646,12 @@ Rectangle {
                                         hoverEnabled: true
                                         cursorShape:  Qt.PointingHandCursor
                                         z: 1
-                                        onClicked: homeBridge.albumClicked(carousel.rowId, index)
+                                        onClicked: {
+                                            root.selectedRowId = carousel.rowId
+                                            root.selectedCol   = index
+                                            root.forceActiveFocus()
+                                            homeBridge.albumClicked(carousel.rowId, index)
+                                        }
                                     }
 
                                     // Play-button click area (z:3, above mainArea)

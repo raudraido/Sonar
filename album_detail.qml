@@ -315,8 +315,13 @@ Rectangle {
                                     text: modelData
                                     color: isSep ? root.textSecondary : root.accentColor
                                     font.pixelSize: root.fontSizePrimary + 1
-                                    font.underline: !isSep && hov
                                     font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    Rectangle {
+                                        visible: !parent.isSep && parent.hov
+                                        y: parent.baselineOffset + 2
+                                        width: parent.paintedWidth; height: 1
+                                        color: parent.color
+                                    }
                                     MouseArea {
                                         anchors.fill: parent
                                         hoverEnabled: true
@@ -689,8 +694,13 @@ Rectangle {
                                             opacity: isSep ? 0.4 : 1.0
                                             color: !isSep && hov ? root.accentColor : root.textSecondary
                                             font.pixelSize: root.fontSizeSecondary
-                                            font.underline: !isSep && hov
                                             font.family: root.fontFamily; renderType: Text.NativeRendering
+                                            Rectangle {
+                                                visible: !parent.isSep && parent.hov
+                                                y: parent.baselineOffset + 2
+                                                width: parent.paintedWidth; height: 1
+                                                color: parent.color
+                                            }
                                             MouseArea {
                                                 anchors.fill: parent; hoverEnabled: true
                                                 enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor

@@ -384,7 +384,7 @@ class _QueueDelegate(QStyledItemDelegate):
             painter.drawText(QRect(ax, ay, pw, 18),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, part)
             if hovered:
-                ul_y = ay + fm_art.ascent() + 2
+                ul_y = ay + (18 - fm_art.height()) // 2 + fm_art.ascent() + 2
                 painter.drawLine(ax, ul_y, ax + pw, ul_y)
             ax += pw
 

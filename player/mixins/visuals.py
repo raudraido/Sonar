@@ -332,13 +332,10 @@ class VisualsMixin:
         art_size = (_panel_w.width() - 16) if _panel_w and _panel_w.width() > 16 else 500
 
         self.blur_thread = BlurWorker(
-            path, 
-            2.5,
-            0.25,
+            path,
             self.theme.accent,
             calc_color,
             raw_data_override=raw_data_override,
-            target_size=self.size(),
             art_size=art_size
         )
         
@@ -369,7 +366,7 @@ class VisualsMixin:
                 self.heart_btn.setIcon(self._make_heart_icon(is_fav, self.theme.accent))
         self.refresh_ui_styles(scroll_to_current=False)
 
-    def apply_threaded_art(self, blurred_qimg, cover_qimg, raw_art, dominant_color):
+    def apply_threaded_art(self, cover_qimg, raw_art, dominant_color):
         self.old_cover_pixmap = getattr(self, 'current_cover_pixmap', None)
         self.current_cover_pixmap = QPixmap()
         if not cover_qimg.isNull():

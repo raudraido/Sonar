@@ -73,8 +73,6 @@ class HomeLoaderWorker(QThread):
             if cached.get('random'):      self.random_ready.emit(cached['random'])
             if cached.get('most_played'): self.most_played_ready.emit(cached['most_played'])
 
-            has_random_cache = bool(cached.get('random'))
-
             def _fetch(sort_type, size=_PAGE):
                 return self.client.get_album_list_sorted(
                     sort_type=sort_type, size=size, offset=0) or []
@@ -83,11 +81,10 @@ class HomeLoaderWorker(QThread):
             with ThreadPoolExecutor(max_workers=3) as pool:
                 f_recent      = pool.submit(_fetch, "newest")
                 f_most_played = pool.submit(_fetch, "frequent")
+                f_random      = pool.submit(_fetch, "random", _RANDOM_PAGE)
                 futures_map[f_recent]      = ('recent',      self.recent_ready)
                 futures_map[f_most_played] = ('most_played', self.most_played_ready)
-                if not has_random_cache:
-                    f_random = pool.submit(_fetch, "random", _RANDOM_PAGE)
-                    futures_map[f_random] = ('random', self.random_ready)
+                futures_map[f_random]      = ('random',      self.random_ready)
                 results = {}
                 for future in as_completed(futures_map):
                     key, sig = futures_map[future]
@@ -343,6 +340,11 @@ class HomeBridge(QObject):
     def saveRowOrder(self, order):
         QSettings("Icosahedron", "Icosahedron").setValue('home_row_order', order)
 
+    @pyqtSlot(str, result=int)
+    def rowCount(self, row_id):
+        m = self._models.get(row_id)
+        return len(m._albums) if m else 0
+
 
 # ── HomeView — thin wrapper around QQuickWidget ──────────────────────────────
 
@@ -371,6 +373,7 @@ class HomeView(QWidget):
         # QML widget
         self._qml = QQuickWidget()
         self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.icon_provider = HomeIconProvider()
 
