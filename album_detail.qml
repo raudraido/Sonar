@@ -13,6 +13,7 @@ Rectangle {
     property string textSecondary:   "#aaaaaa"
     property int    fontSizePrimary:    13
     property int    fontSizeSecondary:  12
+    property int    _twoLineH: _lhRef.implicitHeight * 2 + 2
     property string fontFamily:      ""
     property string skeletonColor:   "#282828"
     property string cardBgColor:     "#1e1e1e"
@@ -44,6 +45,8 @@ Rectangle {
     }
 
     // ── Column width persistence ───────────────────────────────────────────────
+    Text { id: _lhRef; visible: false; text: "X"; font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering }
+
     Timer {
         id: colSaveTimer
         interval: 400; repeat: false
@@ -834,7 +837,10 @@ Rectangle {
                                 width: root.colArtist; height: parent.height; clip: true
 
                                 Flow {
+                                    id: flowArt
                                     x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+                                    height: Math.min(implicitHeight, root._twoLineH)
+                                    clip: true
 
                                     Repeater {
                                         model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
@@ -863,6 +869,16 @@ Rectangle {
                                         }
                                     }
                                 }
+
+                                Text {
+                                    visible: flowArt.implicitHeight > flowArt.height
+                                    text: "…"
+                                    anchors.right: parent.right; anchors.rightMargin: 4
+                                    y: flowArt.y + flowArt.height - implicitHeight
+                                    color: root.textSecondary
+                                    font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                                    renderType: Text.NativeRendering
+                                }
                             }
 
                             // Favorite
@@ -889,7 +905,10 @@ Rectangle {
                                 width: root.colGenre; height: parent.height; clip: true
 
                                 Flow {
+                                    id: flowGen
                                     x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+                                    height: Math.min(implicitHeight, root._twoLineH)
+                                    clip: true
 
                                     Repeater {
                                         model: trackRow.genreStr.split(/( • )/).filter(function(p) { return p !== "" })
@@ -917,6 +936,16 @@ Rectangle {
                                             }
                                         }
                                     }
+                                }
+
+                                Text {
+                                    visible: flowGen.implicitHeight > flowGen.height
+                                    text: "…"
+                                    anchors.right: parent.right; anchors.rightMargin: 4
+                                    y: flowGen.y + flowGen.height - implicitHeight
+                                    color: root.textSecondary
+                                    font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                                    renderType: Text.NativeRendering
                                 }
                             }
 
