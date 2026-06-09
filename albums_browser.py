@@ -1212,6 +1212,7 @@ class AlbumDetailTrackModel(QAbstractListModel):
     IS_FAVORITE    = Qt.ItemDataRole.UserRole + 8
     DURATION_STR   = Qt.ItemDataRole.UserRole + 9
     PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 10
+    TRACK_GENRE    = Qt.ItemDataRole.UserRole + 11
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1234,6 +1235,7 @@ class AlbumDetailTrackModel(QAbstractListModel):
         if role == self.IS_FAVORITE:    return r.get('_fav', False)
         if role == self.DURATION_STR:   return r.get('_dur', '')
         if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
+        if role == self.TRACK_GENRE:    return r.get('_genre', '')
         return None
 
     def roleNames(self):
@@ -1248,6 +1250,7 @@ class AlbumDetailTrackModel(QAbstractListModel):
             self.IS_FAVORITE:    b"isFavorite",
             self.DURATION_STR:   b"durationStr",
             self.PLAY_COUNT_STR: b"playCountStr",
+            self.TRACK_GENRE:    b"trackGenre",
         }
 
     def set_tracks(self, tracks: list):
@@ -1268,6 +1271,12 @@ class AlbumDetailTrackModel(QAbstractListModel):
                 secs     = dur_ms // 1000
                 plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
                 num      = str(t.get('track') or (disc_pos if multi_disc else track_idx + 1))
+                genre_raw = t.get('genre', '') or ''
+                if genre_raw and ' • ' not in genre_raw:
+                    for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
+                        genre_raw = genre_raw.replace(sep, ' • ')
+                genre_parts = [g.strip() for g in genre_raw.split(' • ') if g.strip()]
+                genre = ' • '.join(genre_parts[:3])
                 rows.append({
                     '_disc': False,
                     '_idx':    track_idx,
@@ -1278,6 +1287,7 @@ class AlbumDetailTrackModel(QAbstractListModel):
                     '_fav':    is_fav,
                     '_dur':    f"{secs // 60}:{secs % 60:02d}",
                     '_plays':  plays,
+                    '_genre':  genre,
                 })
         self.beginResetModel()
         self._rows = rows
@@ -1503,6 +1513,7 @@ class AlbumDetailBridge(QObject):
     skeletonColorChanged      = pyqtSignal(str)
     cardBgChanged             = pyqtSignal(str)
     cardBorderChanged         = pyqtSignal(str)
+    panelBgChanged            = pyqtSignal(str)
     fontSizePrimaryChanged    = pyqtSignal(int)
     fontSizeSecondaryChanged  = pyqtSignal(int)
     fontColorPrimaryChanged   = pyqtSignal(str)
@@ -1516,11 +1527,18 @@ class AlbumDetailBridge(QObject):
     scrollToModelRow          = pyqtSignal(int)         # model row → QML scroll
     scrollToTopOfView         = pyqtSignal()
     scrollToBottomOfView      = pyqtSignal()
+    searchReset               = pyqtSignal()
+    searchTextAppend          = pyqtSignal(str)
+    searchTextBackspace       = pyqtSignal()
+    searchClose               = pyqtSignal()
+    searchOpen                = pyqtSignal()
 
     def __init__(self, view):
         super().__init__()
         self._view = view
         self._selected_trkidx = -1
+        self._search_active = False
+        self._search_text = ""
 
     @pyqtSlot()
     def playClicked(self):
@@ -1535,7 +1553,15 @@ class AlbumDetailBridge(QObject):
         rows = self._view._track_model._rows
         if not rows:
             return
-        nav = [(i, r['_idx']) for i, r in enumerate(rows) if not r.get('_disc')]
+        st = self._search_text.lower()
+        if st:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows)
+                   if not r.get('_disc') and (
+                       st in r.get('_title', '').lower() or
+                       st in r.get('_artist', '').lower() or
+                       st in r.get('_genre', '').lower())]
+        else:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows) if not r.get('_disc')]
         if not nav:
             return
         pos = next((p for p, (_, idx) in enumerate(nav) if idx == self._selected_trkidx), -1)
@@ -1574,6 +1600,10 @@ class AlbumDetailBridge(QObject):
     @pyqtSlot(str)
     def trackArtistClicked(self, name: str):
         self._view.track_artist_clicked.emit(name)
+
+    @pyqtSlot(str)
+    def trackGenreClicked(self, genre: str):
+        self._view.genre_clicked.emit(genre)
 
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
@@ -1641,18 +1671,33 @@ class AlbumDetailBridge(QObject):
     def favHeaderClicked(self):
         self._view.fav_header_clicked.emit()
 
+    @pyqtSlot(bool)
+    def setSearchActive(self, active: bool):
+        from PyQt6.QtCore import QDateTime
+        now = QDateTime.currentMSecsSinceEpoch()
+        if not active and self._search_active:
+            elapsed = now - getattr(self, '_activated_at', 0)
+            if elapsed < 50:
+                return
+        self._search_active = active
+        if active:
+            self._activated_at = now
+        else:
+            self._search_text = ""
+        self._view._set_window_shortcuts_enabled(not active)
+
     @pyqtSlot(result='QVariantList')
     def getColWidths(self):
         from PyQt6.QtCore import QSettings
         saved = QSettings().value('album_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60))]
-        return [160, 68, 72, 60]
+            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)), int(saved.get('genre', 140))]
+        return [160, 68, 72, 60, 140]
 
-    @pyqtSlot(int, int, int, int)
-    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int):
+    @pyqtSlot(int, int, int, int, int)
+    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int, genre: int):
         from PyQt6.QtCore import QSettings
-        QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays})
+        QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
 
 
 class _AlbumKeyFilter(QObject):
@@ -1664,8 +1709,27 @@ class _AlbumKeyFilter(QObject):
         self._qml = qml_widget
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.ShortcutOverride:
+            if self._b._search_active:
+                event.accept()
+                return True
         if event.type() != QEvent.Type.KeyPress:
             return False
+        if self._b._search_active:
+            key = event.key()
+            if key == Qt.Key.Key_Escape:
+                self._b.searchClose.emit()
+                return True
+            if key == Qt.Key.Key_Backspace:
+                self._b._search_text = self._b._search_text[:-1]
+                self._b.searchTextBackspace.emit()
+                return True
+            ch = event.text()
+            if ch and ch.isprintable():
+                self._b._search_text += ch
+                self._b.searchTextAppend.emit(ch)
+                return True
+            # let navigation keys (arrows, enter, etc.) fall through
         key  = event.key()
         mods = event.modifiers()
         b    = self._b
@@ -1799,6 +1863,21 @@ class AlbumDetailView(QWidget):
             return
         self._bridge.playingStatusChanged.emit(str(playing_id) if playing_id else '', is_playing)
 
+    def _toggle_track_search(self):
+        if self._bridge._search_active:
+            self._bridge.searchClose.emit()
+        else:
+            self._bridge.searchOpen.emit()
+
+    def _set_window_shortcuts_enabled(self, enabled: bool):
+        from PyQt6.QtGui import QShortcut
+        main = self.window()
+        if main is None:
+            return
+        self._qml._search_active = not enabled
+        for sc in main.findChildren(QShortcut):
+            sc.setEnabled(enabled)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
         try:
@@ -1829,6 +1908,12 @@ class AlbumDetailView(QWidget):
             if not getattr(theme, 'auto_border_from_accent', True):
                 border = getattr(theme, 'manual_border_color', '#2a2a2a')
             self._bridge.cardBorderChanged.emit(border)
+            raw_bg = getattr(theme, 'main_panel_bg', '14,14,14')
+            try:
+                r, g, b = (int(x) for x in raw_bg.split(','))
+                self._bridge.panelBgChanged.emit('#{:02x}{:02x}{:02x}'.format(r, g, b))
+            except Exception:
+                self._bridge.panelBgChanged.emit('#0e0e0e')
 
     def load_album(self, album_data: dict):
         import threading, re
@@ -1845,6 +1930,7 @@ class AlbumDetailView(QWidget):
         self._cur_type    = alb_type
         self._cur_cov_id  = ''
 
+        self._bridge.searchReset.emit()
         self._bridge.albumDataChanged.emit(title, album_artist, "Loading...", alb_type, '', self._album_liked)
         self._track_model.set_tracks([])
         self._tracks = []

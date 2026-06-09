@@ -341,7 +341,7 @@ class KeyboardMixin:
                         return True
 
             # Only intercept if they are NOT already typing inside a local search box or capturing a hotkey
-            if not isinstance(focus_widget, QLineEdit) and not getattr(focus_widget, '_capturing', False):
+            if not isinstance(focus_widget, QLineEdit) and not getattr(focus_widget, '_capturing', False) and not getattr(focus_widget, '_search_active', False):
                 key = event.key()
                 text = event.text()
 

@@ -516,7 +516,17 @@ class NavigationMixin:
         current_widget = self.tabs.currentWidget()
         if not current_widget: return
 
-        # --- 0. AlbumDetailView IS the tab widget (global_album_view / global_artist detail) ---
+        # --- 0. AlbumDetailView is the tab widget, or nested inside a stacked browser ---
+        if hasattr(current_widget, '_toggle_track_search'):
+            current_widget._toggle_track_search()
+            return
+        if hasattr(current_widget, 'stack') and current_widget.stack.currentIndex() == 1:
+            dv = getattr(current_widget, 'detail_view', None)
+            if dv and hasattr(dv, '_toggle_track_search'):
+                dv._toggle_track_search()
+                return
+
+        # --- 0b. AlbumDetailView IS the tab widget (global_album_view / global_artist detail) ---
         # When navigating to an album, the app switches to a hidden tab whose root widget IS an
         # AlbumDetailView. It has no search_container itself — the search bar lives inside
         # track_list (a TracksBrowser). The QShortcut fires before the AlbumDetailView's own

@@ -28,6 +28,7 @@ Rectangle {
     property string playingTrackId:      ""
     property bool   isCurrentlyPlaying:  false
     property string searchText:    ""
+    property string panelBgColor:  "#0e0e0e"
     property int    selectedTrkIdx: -1
 
     // ── Column widths ──────────────────────────────────────────────────────────
@@ -36,16 +37,17 @@ Rectangle {
     property int colArtist: 160
     property int colDur:    72
     property int colPlays:  60
+    property int colGenre:  140
 
     function colTitleW(avail) {
-        return Math.max(80, avail - colNum - colArtist - colFav - colDur - colPlays - 8)
+        return Math.max(80, avail - colNum - colArtist - colFav - colDur - colPlays - colGenre - 8)
     }
 
     // ── Column width persistence ───────────────────────────────────────────────
     Timer {
         id: colSaveTimer
         interval: 400; repeat: false
-        onTriggered: albumBridge.saveColWidths(root.colArtist, root.colFav, root.colDur, root.colPlays)
+        onTriggered: albumBridge.saveColWidths(root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre)
     }
 
     Component.onCompleted: {
@@ -54,6 +56,7 @@ Rectangle {
         root.colFav    = w[1]
         root.colDur    = w[2]
         root.colPlays  = w[3]
+        root.colGenre  = w[4]
     }
 
     // ── Bridge connections ─────────────────────────────────────────────────────
@@ -69,6 +72,7 @@ Rectangle {
         function onFontColorPrimaryChanged(c)   { root.textPrimary       = c }
         function onFontColorSecondaryChanged(c) { root.textSecondary     = c }
         function onFontFamilyChanged(f)         { root.fontFamily        = f }
+        function onPanelBgChanged(c)            { root.panelBgColor      = c }
         function onAlbumDataChanged(title, artist, meta, type, covId, isFav) {
             root.albumTitle    = title
             root.albumArtist   = artist
@@ -100,6 +104,29 @@ Rectangle {
         }
         function onScrollToBottomOfView() {
             scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height)
+        }
+        function onSearchReset() {
+            trackSearchInput.text = ""
+            if (searchOverlay.srchInpW > 0) {
+                searchOverlay.srchInpW = 0
+                albumBridge.setSearchActive(false)
+            }
+        }
+        function onSearchOpen() {
+            if (searchOverlay.srchInpW === 0) {
+                searchOverlay.srchInpW = 204
+                albumBridge.setSearchActive(true)
+            }
+        }
+        function onSearchTextAppend(ch) { trackSearchInput.text += ch }
+        function onSearchTextBackspace() {
+            if (trackSearchInput.text.length > 0)
+                trackSearchInput.text = trackSearchInput.text.slice(0, -1)
+        }
+        function onSearchClose() {
+            trackSearchInput.text = ""
+            searchOverlay.srchInpW = 0
+            albumBridge.setSearchActive(false)
         }
     }
 
@@ -479,7 +506,7 @@ Rectangle {
             Item {
                 id: tracklistCard
                 width: parent.width
-                height: 12 + colHeader.height + trackList.height + 12
+                height: 12 + toolbarRow.height + colHeader.height + trackList.height + 12
 
                 Rectangle {
                     anchors.fill: parent
@@ -489,11 +516,119 @@ Rectangle {
                     border.width: 1
                 }
 
+                // ── TOOLBAR ROW ──────────────────────────────────────────────
+                Item {
+                    id: toolbarRow
+                    x: 8; y: 12
+                    width: parent.width - 16; height: 36
+
+                    Item {
+                        id: searchOverlay
+                        anchors.right: parent.right
+                        anchors.top:   parent.top
+                        anchors.bottom: parent.bottom
+
+                        property real srchInpW: 0
+                        Behavior on srchInpW { NumberAnimation { duration: 250; easing.type: Easing.InOutQuart } }
+                        width: 32 + srchInpW
+
+                        Rectangle {
+                            id: srchBox
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(0, searchOverlay.srchInpW - 4)
+                            height: 28; radius: 4
+                            color: root.panelBgColor
+                            border.color: root.cardBorderColor; border.width: 1
+                            clip: true
+                            visible: width > 2
+
+                            TextInput {
+                                id: trackSearchInput
+                                anchors.left: parent.left; anchors.leftMargin: 8
+                                anchors.right: srchClearBtn.visible ? srchClearBtn.left : parent.right
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: root.textPrimary
+                                font.pixelSize: 13
+                                font.family: root.fontFamily
+                                selectionColor: root.accentColor
+                                selectedTextColor: "#111"
+                                clip: true
+
+                                onTextChanged: root.searchText = text
+
+                            }
+
+                            Text {
+                                anchors.left: parent.left; anchors.leftMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Search tracks..."
+                                color: root.textSecondary
+                                font.pixelSize: root.fontSizeSecondary
+                                font.family: root.fontFamily
+                                visible: !trackSearchInput.text
+                            }
+
+                            Item {
+                                id: srchClearBtn
+                                width: 24; height: parent.height
+                                anchors.right: parent.right
+                                visible: trackSearchInput.text !== ""
+
+                                Image {
+                                    anchors.centerIn: parent; width: 10; height: 10
+                                    source: "image://albumicons/sub_close_" + root.textSecondary.replace("#", "")
+                                    cache: false; mipmap: true; smooth: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: trackSearchInput.text = ""
+                                }
+                            }
+                        }
+
+                        Item {
+                            id: srchIconArea
+                            width: 32; height: parent.height
+                            anchors.right: parent.right
+
+                            Rectangle {
+                                anchors.fill: parent; radius: 4
+                                color: srchIconHov.containsMouse ? root.hoverColor : "transparent"
+                            }
+                            Image {
+                                anchors.centerIn: parent; width: 18; height: 18
+                                source: "image://albumicons/search_" + root.accentColor.replace("#", "")
+                                cache: false; mipmap: true; smooth: true
+                            }
+                            MouseArea {
+                                id: srchIconHov
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (searchOverlay.srchInpW > 0) {
+                                        if (!trackSearchInput.text) {
+                                            searchOverlay.srchInpW = 0
+                                            albumBridge.setSearchActive(false)
+                                        }
+                                    } else {
+                                        searchOverlay.srchInpW = 204
+                                        albumBridge.setSearchActive(true)
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                }
+
                 // ── TRACK LIST HEADER ────────────────────────────────────────
                 Item {
                     id: colHeader
-                    x: 16; y: 12
-                    width: parent.width - 32; height: 36
+                    x: 8; y: toolbarRow.y + toolbarRow.height
+                    width: parent.width - 16; height: 36
 
                     Row {
                         x: 4; height: parent.height; width: parent.width - 8
@@ -501,19 +636,21 @@ Rectangle {
                         property int    fSize:    root.fontSizeSecondary - 1
 
                         Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                        Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                        Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
+                        Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
                         Item {
                             width: root.colFav; height: parent.height
                             Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
                             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: albumBridge.favHeaderClicked() }
                         }
+                        Text { width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
                         Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
                         Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
                     }
                     // ── Column resize handles — visible 2px line + 12px drag zone ──
+                    // Order from right: PLAYS, DURATION, GENRE, FAVORITE, ARTIST
                     MouseArea {
-                        x: parent.width - root.colFav - root.colDur - root.colPlays - 18
+                        x: parent.width - root.colFav - root.colGenre - root.colDur - root.colPlays - 18
                         y: 0; width: 12; height: parent.height; z: 10
                         cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                         property real _pressX: 0; property int _pressW: 0
@@ -522,11 +659,11 @@ Rectangle {
                             root.colArtist = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
                             colSaveTimer.restart()
                         }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
                     }
 
                     MouseArea {
-                        x: parent.width - root.colDur - root.colPlays - 18
+                        x: parent.width - root.colGenre - root.colDur - root.colPlays - 18
                         y: 0; width: 12; height: parent.height; z: 10
                         cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                         property real _pressX: 0; property int _pressW: 0
@@ -535,7 +672,20 @@ Rectangle {
                             root.colFav = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
                             colSaveTimer.restart()
                         }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    }
+
+                    MouseArea {
+                        x: parent.width - root.colDur - root.colPlays - 18
+                        y: 0; width: 12; height: parent.height; z: 10
+                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                        property real _pressX: 0; property int _pressW: 0
+                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colGenre }
+                        onPositionChanged: if (pressed) {
+                            root.colGenre = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                            colSaveTimer.restart()
+                        }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
                     }
 
                     MouseArea {
@@ -548,7 +698,7 @@ Rectangle {
                             root.colDur = Math.max(44, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
                             colSaveTimer.restart()
                         }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
                     }
 
                     MouseArea {
@@ -561,15 +711,15 @@ Rectangle {
                             root.colPlays = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
                             colSaveTimer.restart()
                         }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 16; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
                     }
+
                 }
 
                 // ── TRACK ROWS ───────────────────────────────────────────────
                 ListView {
                     id: trackList
-                    x: 16; y: colHeader.y + colHeader.height
-                    width: parent.width - 32
+                    x: 8; y: colHeader.y + colHeader.height
+                    width: parent.width - 16
                     height: contentHeight
                     interactive: false
                     model: trackModel
@@ -591,6 +741,7 @@ Rectangle {
                     property bool   isFav:     model.isFavorite
                     property string durStr:    model.durationStr  || ""
                     property string playsStr:  model.playCountStr || ""
+                    property string genreStr:  model.trackGenre   || ""
 
                     property bool rowHov:      false
                     property bool isSelected:  !isDisc && trkIdx === root.selectedTrkIdx
@@ -598,6 +749,7 @@ Rectangle {
                     property bool matchSearch: root.searchText === ""
                         || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
                         || artName.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+                        || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
 
                     height: isDisc ? (root.searchText === "" ? 36 : 0) : (matchSearch ? 40 : 0)
                     visible: height > 0
@@ -623,7 +775,7 @@ Rectangle {
                         // Hover / playing / keyboard-selection background
                         Rectangle {
                             anchors.fill: parent
-                            anchors.leftMargin: 2; anchors.rightMargin: 2
+                            anchors.leftMargin: 1; anchors.rightMargin: 1
                             anchors.topMargin: 1; anchors.bottomMargin: 1
                             radius: 4
                             color: isPlaying
@@ -668,7 +820,7 @@ Rectangle {
                             // Title
                             Text {
                                 width: root.colTitleW(trackList.width - 8); height: parent.height
-                                verticalAlignment: Text.AlignVCenter
+                                verticalAlignment: Text.AlignVCenter; leftPadding: 4
                                 text: trackRow.trkTitle
                                 color: isPlaying ? root.accentColor : root.textPrimary
                                 font.pixelSize: root.fontSizePrimary; font.bold: true
@@ -682,7 +834,7 @@ Rectangle {
                                 width: root.colArtist; height: parent.height; clip: true
 
                                 Flow {
-                                    width: parent.width; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+                                    x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
 
                                     Repeater {
                                         model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
@@ -729,6 +881,42 @@ Rectangle {
                                     id: favHov; anchors.fill: parent; hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor; z: 5
                                     onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
+                                }
+                            }
+
+                            // Genre — clickable parts separated by " • "
+                            Item {
+                                width: root.colGenre; height: parent.height; clip: true
+
+                                Flow {
+                                    x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+
+                                    Repeater {
+                                        model: trackRow.genreStr.split(/( • )/).filter(function(p) { return p !== "" })
+
+                                        delegate: Text {
+                                            property bool isSep: modelData === " • "
+                                            property bool hov: false
+                                            text: modelData
+                                            opacity: isSep ? 0.4 : 1.0
+                                            color: !isSep && hov ? root.accentColor : root.textSecondary
+                                            font.pixelSize: root.fontSizeSecondary
+                                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                                            Rectangle {
+                                                visible: !parent.isSep && parent.hov
+                                                y: parent.baselineOffset + 2
+                                                width: parent.paintedWidth; height: 1
+                                                color: parent.color
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent; hoverEnabled: true
+                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
+                                                onEntered: parent.hov = true
+                                                onExited:  parent.hov = false
+                                                onClicked: mouse => { albumBridge.trackGenreClicked(parent.text); mouse.accepted = true }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
