@@ -3095,6 +3095,10 @@ class LibraryGridBrowser(QWidget):
             
         if not albums: return
         start_row = chunk_index * 50
+        if start_row >= len(self.album_model.albums):
+            if hasattr(self, 'loaded_chunks'):
+                self.loaded_chunks.discard(chunk_index)
+            return
         covers_to_queue = []
         
         client = getattr(self, 'client', None)
@@ -3264,7 +3268,7 @@ class LibraryGridBrowser(QWidget):
                         except Exception:
                             pass
                     _t.Thread(target=_bg_refresh_random, daemon=True).start()
-            self.check_viewport_qml(0, 50)
+            self.check_viewport_qml(0, 49)
 
     def fetch_chunk(self, chunk_index):
         """Fires a background worker and returns it so we can cancel it if needed."""
