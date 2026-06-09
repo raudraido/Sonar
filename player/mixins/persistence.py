@@ -526,6 +526,7 @@ class PersistenceMixin:
         # is still alive → abort().  os._exit(0) terminates before Qt's destructor runs;
         # all DB writes and file flushes are already done above.
         event.accept()
+        self.settings.sync()
         import os as _os
         _os._exit(0)
 
