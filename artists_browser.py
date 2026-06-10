@@ -1,19 +1,16 @@
-import os
-import json
 import random
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 import math
 import re
 from collections import OrderedDict
 import time
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-                             QListWidgetItem, QPushButton, QStackedWidget, QApplication,
-                             QLabel, QScrollArea, QSizePolicy, QFrame, QGridLayout,
-                             QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QComboBox,
-                             QLineEdit, QToolButton, QMenu, QStyledItemDelegate, QStyle,
+                             QListWidgetItem, QPushButton, QStackedWidget,
+                             QLabel, QScrollArea,
+                             QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView,
+                             QStyledItemDelegate, QStyle,
                              QGraphicsDropShadowEffect)
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QEvent, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QBrush, QPainterPath, QPen, QFontMetrics, QPolygon
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
@@ -24,8 +21,8 @@ from player.qml_search import SearchController, GridSearchKeyFilter, set_window_
 from player import resource_path
 from player.workers import GridCoverWorker
 
-from components import PaginationFooter
 from tracks_browser import MiddleClickScroller
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 
 
 class ArtistPlayWorker(QThread):
@@ -733,7 +730,6 @@ class SongListWidget(QTreeWidget):
         theme = getattr(self.window(), 'theme', None) if self.window() else None
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
-        hover_color = resolve_menu_hover(theme)
 
         self.setStyleSheet(f"""
             QTreeWidget {{
@@ -1142,9 +1138,6 @@ class AlbumRowWidget(QWidget):
         super().showEvent(event)
         QTimer.singleShot(150, self.recalc_layout)
 
-    def adjust_list_height(self):
-        self.recalc_layout()
-
     def recalc_layout(self):
         if self._recalc_in_progress:
             return
@@ -1194,11 +1187,11 @@ class AlbumRowWidget(QWidget):
     
     def set_accent_color(self, color):
 
-        self.list_widget.setStyleSheet(f"""
-            QListWidget {{ background: transparent; border: none; outline: none; }}
-            QListWidget::item {{ border-radius: 8px; }}
-            QListWidget::item:hover {{ background: #222; }}
-            QListWidget::item:selected {{ background: transparent; border: none; outline: none; }}
+        self.list_widget.setStyleSheet("""
+            QListWidget { background: transparent; border: none; outline: none; }
+            QListWidget::item { border-radius: 8px; }
+            QListWidget::item:hover { background: #222; }
+            QListWidget::item:selected { background: transparent; border: none; outline: none; }
         """)
 
         if hasattr(self, 'delegate'):
@@ -1570,7 +1563,7 @@ class _ArtistPhotoWidget(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._pix:
-            overlay = _ArtistPhotoOverlay(self._pix, self.window())
+            _ArtistPhotoOverlay(self._pix, self.window())
         super().mousePressEvent(event)
 
     def paintEvent(self, _):
@@ -1959,8 +1952,6 @@ class ArtistRichDetailView(QWidget):
             return False
 
         if event.type() == QEvent.Type.KeyPress:
-            from PyQt6.QtWidgets import QListWidget, QTreeWidget
-
             # --- 1. HANDLE POPULAR TRACKS MOVEMENT ---
             if source in (self.song_list, self.song_list.viewport()): # Catch BOTH!
                 key = event.key()
@@ -2278,7 +2269,6 @@ class ArtistRichDetailView(QWidget):
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
         sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
-        sk_color  = getattr(theme, 'skeleton_base', '#282828') if theme else '#282828'
         if hasattr(self, 'lbl_name'):
             self.lbl_name.setStyleSheet(f"font-weight: 900; color: {color}; font-size: 48px;")
         if hasattr(self, 'lbl_about_header'):
@@ -2802,10 +2792,6 @@ class ArtistRichDetailView(QWidget):
                 row.list_widget.setCurrentRow(0)
                 break
 
-    # Legacy handler kept for the details_ready signal (also connected for backwards compat)
-    def _on_details_ready(self, info, top_songs, main_albums, singles, appears_on):
-        pass  # All work now done by the three progressive handlers above
-
     def _toggle_artist_like(self):
         self._artist_liked = not self._artist_liked
         self._update_like_btn()
@@ -2916,7 +2902,7 @@ class ArtistRichDetailView(QWidget):
                             CoverCache.instance().save_full(cid, data)
                     if data and getattr(self, 'current_header_cover_id', None) == cid:
                         from PyQt6.QtGui import QImage as _QI, QPixmap as _QP
-                        from PyQt6.QtCore import QTimer, Qt
+                        from PyQt6.QtCore import QTimer
                         full_img = _QI()
                         full_img.loadFromData(data)
                         if not full_img.isNull():
@@ -3083,11 +3069,7 @@ class ArtistGridBrowser(QWidget):
         if self.client:
             self.set_client(client)
         
-        self.offset = 0
-        self.batch_size = 50
-        self.is_loading = False
-        self.has_more = True
-        self.current_query = "" 
+        self.current_query = ""
         self.current_accent = "#888888"  # Default accent color
         
         # --- PAGINATION SETTINGS ---
@@ -3368,9 +3350,6 @@ class ArtistGridBrowser(QWidget):
         worker.start()
         return worker
 
-    def on_sort_changed(self):
-        self.load_artists_page(reset=True)
-    
     def _sort_icon_path(self, sort_type, is_ascending):
         if sort_type == 'albums_count':
             return 'img/album.png'
@@ -3583,7 +3562,6 @@ class ArtistGridBrowser(QWidget):
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
             _sort = getattr(self, 'current_sort', 'alphabetical')
-            cached_count = client.stale_cache_get('artists_count')
             cached_chunk = client.stale_cache_get(f'artists_chunk_0_{_sort}')
             self._pending_cached_chunk = cached_chunk or None
             self.refresh_grid()
@@ -3597,88 +3575,16 @@ class ArtistGridBrowser(QWidget):
         self.set_status_text("Loading...")
 
     def refresh_grid(self):
-        # 1. Clear the UI memory caches
-        self.all_artists_cache = [] 
-        self.all_artists_sort = None
-        self._live_artists_cache = None
-        self._live_artists_randomized = False
-        
-        # 2. Clear the server count so it always fetches fresh
+        # 1. Clear the server count so it always fetches fresh
         self.true_server_count = 0
-        
-        # 3. Brutally wipe the API cache for artists
+
+        # 2. Brutally wipe the API cache for artists
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):
             keys_to_delete = [k for k in self.client._api_cache.cache.keys() if 'getArtists' in k]
             for k in keys_to_delete:
                 del self.client._api_cache.cache[k]
-                
+
         self.load_artists_page(reset=True)
-
-    def load_next_batch(self):
-        if self.is_loading or not self.has_more: return
-        self.is_loading = True
-        QApplication.processEvents()
-        
-        # Get sort from burger menu
-        db_sort = "alphabeticalByName"
-        if self.current_sort == "random": 
-            db_sort = "random"
-        elif self.current_sort == "most_played": 
-            db_sort = "play_count"
-        elif self.current_sort == "alphabetical": 
-            db_sort = "alphabeticalByName"
-
-        # --- Apply descending suffix if state is False ---
-        if self.current_sort != 'random':
-            if not self.sort_states.get(self.current_sort, True):
-                db_sort += "_desc"
-
-        try:
-            # Fetch all artists from API once and cache in memory
-            if not getattr(self, '_live_artists_cache', None):
-                if not self.client:
-                    self.is_loading = False
-                    return
-                self._live_artists_cache = self.client.get_all_artists_index()
-                self._live_artists_randomized = False
-
-            all_artists = list(self._live_artists_cache)
-
-            # Apply search filter
-            if self.current_query:
-                q = self.current_query.lower()
-                all_artists = [a for a in all_artists if q in (a.get('name') or '').lower()]
-
-            # Apply sort
-            if self.current_sort == "random":
-                import random as _rnd
-                if not self._live_artists_randomized:
-                    _rnd.shuffle(self._live_artists_cache)
-                    self._live_artists_randomized = True
-                all_artists = list(self._live_artists_cache)
-            elif self.current_sort == "alphabetical":
-                rev = not self.sort_states.get('alphabetical', True)
-                all_artists = sorted(all_artists, key=lambda a: (a.get('name') or '').lower(), reverse=rev)
-            elif self.current_sort == "albums_count":
-                rev = not self.sort_states.get('albums_count', False)
-                all_artists = sorted(all_artists, key=lambda a: int(a.get('albumCount', 0)), reverse=not rev)
-            else:  # most_played — no play-count data without DB, fall back to alphabetical
-                all_artists = sorted(all_artists, key=lambda a: (a.get('name') or '').lower())
-
-            # Paginate
-            items = all_artists[self.offset: self.offset + self.batch_size]
-            if len(items) < self.batch_size:
-                self.has_more = False
-
-            self.offset += len(items)
-            self.populate_grid(items)
-            self.recalc_grid_layout()
-            
-        except Exception as e:
-            print(f"Error loading artists from DB: {e}")
-            self.has_more = False
-            
-        self.is_loading = False
 
     def populate_grid(self, items):
         split_regex = re.compile(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )')
@@ -4038,11 +3944,7 @@ class ArtistGridBrowser(QWidget):
             user_data['data'] = track_data
             self.detail_view.model.setData(index, user_data, Qt.ItemDataRole.UserRole)
             self.detail_view.tree.update(index)
-            
-            try:
-                val = 1 if new_state else 0
-            except: pass
-            
+
             if self.client: self.client.set_favorite(track_data.get('id'), new_state)
 
     def add_to_history(self, state):
