@@ -18,9 +18,10 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QActio
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import (AlbumDetailView, GridItemDelegate,
+from albums_browser import (AlbumDetailView,
                               CoverImageProvider, QMLGridWrapper, DummyScrollBar,
                               QMLMiddleClickScroller, AlbumModel)
+from player.widgets import GridItemDelegate
 from player import resource_path
 from player.workers import GridCoverWorker
 

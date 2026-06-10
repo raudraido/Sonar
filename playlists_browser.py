@@ -9,7 +9,7 @@ from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hov
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import GridItemDelegate, CoverImageProvider, QMLGridWrapper
+from albums_browser import CoverImageProvider, QMLGridWrapper
 from player import resource_path
 from player.workers import GridCoverWorker
 from components import PaginationFooter, SmartSearchContainer, ToggleSwitch

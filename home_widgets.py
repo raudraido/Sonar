@@ -7,7 +7,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
                           QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
                           QEasingCurve, QPoint)
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush, QImage
-from albums_browser import GridItemDelegate
+from player.widgets import GridItemDelegate
 from player import resource_path
 from player.workers import GridCoverWorker
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker, SpinRefreshButton

@@ -12,9 +12,10 @@ from version import __version__
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
     QSlider, QPushButton, QCheckBox, QApplication,
-    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog
+    QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog,
+    QStyledItemDelegate, QStyle
 )
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation, QTimer
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation, QTimer, QVariantAnimation, QEasingCurve
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 from PyQt6.QtGui import (
     QFont, QFontMetrics, QColor, QMouseEvent, QPainter, QPen,
@@ -1637,3 +1638,203 @@ def popup_menu_at_global(menu: ShadowContextMenu, global_x: float, global_y: flo
     """Show `menu` so its padded edge aligns with the given global (x, y)."""
     gp = QPoint(int(global_x), int(global_y))
     menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=window)
+
+
+class GridItemDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.master_color = QColor("#1db954")
+        self.hovered_artist_row = -1
+        self.clickable_artist = True   # set False to disable subtitle hover/underline
+        self.show_play_btn   = True    # set False to hide the hover play button
+
+        # Animation state
+        self._hovered_row   = -1
+        self._hover_progress = 0.0   # 0.0 = not hovered, 1.0 = fully hovered
+        self._play_progress  = 0.0   # 0.0 = play btn not hovered, 1.0 = fully hovered
+
+        self._hover_anim = QVariantAnimation()
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._hover_anim.valueChanged.connect(self._on_hover_value)
+
+        self._play_anim = QVariantAnimation()
+        self._play_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._play_anim.valueChanged.connect(self._on_play_value)
+
+    def set_master_color(self, color):
+        self.master_color = QColor(color)
+
+    def _theme(self):
+        p = self.parent()
+        w = p.window() if p and hasattr(p, 'window') else None
+        return getattr(w, 'theme', None)
+
+    def _primary_px(self):
+        t = self._theme()
+        return getattr(t, 'font_size_primary', 14) if t else 14
+
+    def _secondary_px(self):
+        t = self._theme()
+        return getattr(t, 'font_size_secondary', 12) if t else 12
+
+    def _primary_color(self):
+        t = self._theme()
+        return getattr(t, 'font_color_primary', '#eeeeee') if t else '#eeeeee'
+
+    def _secondary_color(self):
+        t = self._theme()
+        return getattr(t, 'font_color_secondary', '#cccccc') if t else '#cccccc'
+
+    def set_hovered_artist_row(self, row):
+        self.hovered_artist_row = row
+
+    # ── Animation helpers ─────────────────────────────────────────────────
+
+    def _on_hover_value(self, value):
+        self._hover_progress = value
+        self._request_repaint()
+
+    def _on_play_value(self, value):
+        self._play_progress = value
+        self._request_repaint()
+
+    def _request_repaint(self):
+        lw = self.parent()
+        if lw and hasattr(lw, 'viewport'):
+            lw.viewport().update()
+
+    def _animate(self, anim, current, target, full_duration=150):
+        anim.stop()
+        distance = abs(target - current)
+        if distance < 0.001:
+            return
+        anim.setDuration(max(1, int(full_duration * distance)))
+        anim.setStartValue(float(current))
+        anim.setEndValue(float(target))
+        anim.start()
+
+    def set_hovered_row(self, row):
+        if row == self._hovered_row:
+            return
+        self._hovered_row = row
+        if row >= 0:
+            # Snap any leftover progress from a previous item to 0 instantly,
+            # then animate the new item in from 0.
+            self._hover_progress = 0.0
+            self._play_progress  = 0.0
+            self._play_anim.stop()
+            self._animate(self._hover_anim, 0.0, 1.0)
+        else:
+            self._animate(self._hover_anim, self._hover_progress, 0.0)
+            self._animate(self._play_anim,  self._play_progress,  0.0)
+
+    def set_play_hovered(self, is_hovered):
+        target = 1.0 if is_hovered else 0.0
+        self._animate(self._play_anim, self._play_progress, target)
+
+    # ── Paint ─────────────────────────────────────────────────────────────
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = option.rect
+        icon_width  = rect.width() - 12
+        icon_height = icon_width
+        icon_x      = rect.x() + 6
+        icon_rect   = QRect(icon_x, rect.y() + 4, icon_width, icon_height)
+
+        path = QPainterPath()
+        path.addRoundedRect(icon_rect.x(), icon_rect.y(), icon_rect.width(), icon_rect.height(), 10, 10)
+
+        # ── Cover image ───────────────────────────────────────────────────
+        painter.save()
+        painter.setClipPath(path)
+        icon = index.data(Qt.ItemDataRole.DecorationRole)
+        if icon and not icon.isNull():
+            pix = icon.pixmap(icon_width, icon_height)
+            px = icon_rect.x() + (icon_width - pix.width()) // 2
+            py = icon_rect.y() + (icon_height - pix.height()) // 2
+            painter.drawPixmap(px, py, pix)
+
+        # Determine animation progress for this item
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_this_hovered = (index.row() == self._hovered_row)
+        hover_p = self._hover_progress if is_this_hovered else (1.0 if is_selected else 0.0)
+        play_p  = self._play_progress  if is_this_hovered else 0.0
+
+        # Dark overlay: opacity 0 → 0.4  (QML: color "#000", opacity 0→0.4)
+        if hover_p > 0:
+            painter.setBrush(QColor(0, 0, 0, int(hover_p * 102)))
+            painter.setPen(QPen(self.master_color, 2))
+            painter.drawPath(path)
+        painter.restore()  # remove clip
+
+        # ── Play button: scale 0.8→1.0, opacity 0→0.8 (+0.2 when on btn) ─
+        if hover_p > 0 and self.show_play_btn:
+            center    = icon_rect.center()
+            play_size = min(60, icon_width // 2)
+            scale     = 0.8 + play_p * 0.2          # matches QML scale behaviour
+            scaled_sz = max(4, int(play_size * scale))
+            play_rect = QRect(0, 0, scaled_sz, scaled_sz)
+            play_rect.moveCenter(center)
+
+            play_opacity = hover_p * 0.8 + play_p * 0.2   # 0→0.8, then 0.8→1.0
+            painter.setOpacity(play_opacity)
+            painter.setBrush(self.master_color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(play_rect)
+
+            tri_size = scaled_sz // 3
+            cx, cy = center.x(), center.y()
+            p1 = QPoint(cx - tri_size // 3, cy - tri_size // 2)
+            p2 = QPoint(cx - tri_size // 3, cy + tri_size // 2)
+            p3 = QPoint(cx + tri_size // 2 + 2, cy)
+            painter.setBrush(QColor("#111111"))
+            painter.drawPolygon(QPolygon([p1, p2, p3]))
+            painter.setOpacity(1.0)
+
+        # ── Text ──────────────────────────────────────────────────────────
+        data = index.data(Qt.ItemDataRole.UserRole)
+        if data:
+            title  = data.get('title') or data.get('name') or "Unknown"
+            artist = data.get('artist', '')
+            year   = str(data.get('year', ''))
+
+            text_width = rect.width() - 20
+            text_x     = rect.x() + 10
+            current_y  = icon_rect.bottom() + 10
+
+            # Title: interpolate primary color → accent on hover
+            mc  = self.master_color
+            pc  = QColor(self._primary_color())
+            r   = int(pc.red()   + (mc.red()   - pc.red())   * hover_p)
+            g   = int(pc.green() + (mc.green() - pc.green()) * hover_p)
+            b   = int(pc.blue()  + (mc.blue()  - pc.blue())  * hover_p)
+            painter.setPen(QColor(r, g, b))
+            font = painter.font(); font.setBold(True); font.setPixelSize(self._primary_px()); painter.setFont(font)
+            fm = QFontMetrics(font)
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
+                             Qt.AlignmentFlag.AlignLeft,
+                             fm.elidedText(title, Qt.TextElideMode.ElideRight, text_width))
+
+            current_y += fm.height() + 2
+            font.setBold(False); font.setPixelSize(self._secondary_px())
+            artist_hovered = self.clickable_artist and (index.row() == self.hovered_artist_row)
+            if artist_hovered:
+                font.setUnderline(True)
+                painter.setPen(QColor(self.master_color))
+            else:
+                font.setUnderline(False)
+                painter.setPen(QColor(self._secondary_color()))
+            painter.setFont(font); fm = QFontMetrics(font)
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
+                             Qt.AlignmentFlag.AlignLeft,
+                             fm.elidedText(artist, Qt.TextElideMode.ElideRight, text_width))
+            font.setUnderline(False); painter.setFont(font)
+
+            current_y += fm.height() + 2
+            painter.setPen(QColor(self._secondary_color()))
+            painter.drawText(QRect(text_x, current_y, text_width, fm.height()), Qt.AlignmentFlag.AlignLeft, fm.elidedText(year, Qt.TextElideMode.ElideRight, text_width))
+
+        painter.restore()

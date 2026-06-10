@@ -1,33 +1,25 @@
 ﻿import time
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
+from player.mixins.visuals import resolve_menu_hover
 import random
 import re
-import math
 import json
 
 
 from PyQt6.QtQuickWidgets import QQuickWidget
-from PyQt6.QtQml import QQmlContext
 from PyQt6.QtQuick import QQuickImageProvider
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
-                             QListWidgetItem, QPushButton, QLabel, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout,
                              QStackedWidget, QStyle, QStyledItemDelegate, QApplication,
-                             QTreeWidget, QTreeWidgetItem, QHeaderView, QFrame, QSizePolicy,
-                             QMenu, QStyleOptionViewItem, QAbstractItemView,
-                             QLineEdit, QToolButton, QScrollArea) 
+                             QHeaderView)
 
-from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer, QRectF,
-                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, pyqtProperty, QObject, QUrl, Qt, QVariantAnimation, QSettings)
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer, QRectF,
+                          QEvent, QAbstractListModel, QModelIndex, pyqtSlot, pyqtProperty, QObject, QUrl, Qt)
 from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
-from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics,
-                         QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
-                         QTextDocument, QAbstractTextDocumentLayout, QPalette, QImage)
+from PyQt6.QtGui import (QPixmap, QPainter, QColor, QFontMetrics,
+                         QPen, QPainterPath, QCursor, QFont,
+                         QImage)
 
 from player import resource_path
 from player.workers import GridCoverWorker
-
-from components import PaginationFooter
-from tracks_browser import TracksBrowser, MiddleClickScroller
 
 _ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
@@ -35,37 +27,9 @@ def _split_artist(artist: str):
     return [(p, bool(_ARTIST_SEP_RE.match(p))) for p in _ARTIST_SEP_RE.split(artist) if p]
 
 
-def _square_cover(pix: QPixmap, size: int = 220) -> QPixmap:
-    """Scale-to-fill and centre-crop to an exact square, then round corners."""
-    if pix.isNull():
-        return pix
-    scaled = pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                        Qt.TransformationMode.SmoothTransformation)
-    x = (scaled.width()  - size) // 2
-    y = (scaled.height() - size) // 2
-    return _round_pixmap(scaled.copy(x, y, size, size))
-
-
-def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
-    """Return a copy of pix with rounded corners clipped into the image."""
-    if pix.isNull():
-        return pix
-    out = QPixmap(pix.size())
-    out.fill(Qt.GlobalColor.transparent)
-    p = QPainter(out)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    path = QPainterPath()
-    path.addRoundedRect(0, 0, pix.width(), pix.height(), radius, radius)
-    p.setClipPath(path)
-    p.drawPixmap(0, 0, pix)
-    p.end()
-    return out
-
-
 class GridBridge(QObject):
     itemClicked = pyqtSignal(dict)
     playClicked = pyqtSignal(dict)
-    artistClicked = pyqtSignal(dict)
     artistNameClicked = pyqtSignal(str, str)  # name, artist_id
     visibleRangeChanged = pyqtSignal(int, int)
     accentColorChanged = pyqtSignal(str)
@@ -84,9 +48,6 @@ class GridBridge(QObject):
     burgerIconChanged         = pyqtSignal(str)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
-    indexChanged = pyqtSignal(int)
-    requestFocusNext = pyqtSignal()
-    requestFocusPrev = pyqtSignal()
     takeFocus = pyqtSignal()
 
     def __init__(self, album_model, view):
@@ -136,26 +97,9 @@ class GridBridge(QObject):
         if 0 <= idx < len(self.album_model.albums):
             self.playClicked.emit(self.album_model.albums[idx])
 
-    @pyqtSlot(int)
-    def emitArtistClicked(self, idx):
-        if 0 <= idx < len(self.album_model.albums):
-            self.artistClicked.emit(self.album_model.albums[idx])
-
     @pyqtSlot(str, str)
     def emitArtistNameClicked(self, name, artist_id=""):
         self.artistNameClicked.emit(name, artist_id)
-
-    @pyqtSlot(int)
-    def emitIndexChanged(self, idx):
-        self.indexChanged.emit(idx)
-
-    @pyqtSlot()
-    def emitRequestFocusNext(self):
-        self.requestFocusNext.emit()
-
-    @pyqtSlot()
-    def emitRequestFocusPrev(self):
-        self.requestFocusPrev.emit()
 
 class CoverImageProvider(QQuickImageProvider):
     def __init__(self):
@@ -256,52 +200,6 @@ class AlbumModel(QAbstractListModel):
                 a['coverId_forced'] = forced_id 
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
-
-class LiveAlbumWorker(QThread):
-    results_ready = pyqtSignal(list, int, int, int)
-
-    def __init__(self, client, sort_type, page, page_size, search_query=""):
-        super().__init__()
-        self.client = client
-        self.sort_type = sort_type
-        self.page = page
-        self.page_size = page_size
-        self.search_query = search_query
-        self.is_cancelled = False
-
-    def run(self):
-        try:
-            if not self.client: return
-            
-            offset = (self.page - 1) * self.page_size
-
-            if self.search_query:
-                albums, total_items = self.client.search_albums(self.search_query, count=self.page_size, offset=offset)
-                if total_items is None:
-                    total_items = len(albums)
-                total_pages = 1 if len(albums) < self.page_size else self.page + 1
-            
-            else:
-                albums, total_items = self.client.get_albums_live(
-                    sort_type=self.sort_type, 
-                    size=self.page_size, 
-                    offset=offset
-                )
-                
-                if total_items:
-                    total_pages = max(1, math.ceil(total_items / self.page_size))
-                else:
-
-                    total_items = 0
-                    total_pages = 1
-
-            if not self.is_cancelled:
-                self.results_ready.emit(albums, total_items, total_pages, self.page)
-
-        except Exception as e:
-            print(f"[LiveAlbumWorker] Error: {e}")
-            if not self.is_cancelled:
-                self.results_ready.emit([], 0, 1, 1)
 
 class LivePageWorker(QThread):
 
@@ -427,209 +325,6 @@ class ServerCountWorker(QThread):
         except Exception as e:
             print(f"[ServerCountWorker] Safely caught error: {e}")
 
-class GridItemDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.master_color = QColor("#1db954")
-        self.hovered_artist_row = -1
-        self.clickable_artist = True   # set False to disable subtitle hover/underline
-        self.show_play_btn   = True    # set False to hide the hover play button
-
-        # Animation state
-        self._hovered_row   = -1
-        self._hover_progress = 0.0   # 0.0 = not hovered, 1.0 = fully hovered
-        self._play_progress  = 0.0   # 0.0 = play btn not hovered, 1.0 = fully hovered
-
-        self._hover_anim = QVariantAnimation()
-        self._hover_anim.setEasingCurve(QEasingCurve.Type.Linear)
-        self._hover_anim.valueChanged.connect(self._on_hover_value)
-
-        self._play_anim = QVariantAnimation()
-        self._play_anim.setEasingCurve(QEasingCurve.Type.Linear)
-        self._play_anim.valueChanged.connect(self._on_play_value)
-
-    def set_master_color(self, color):
-        self.master_color = QColor(color)
-
-    def _theme(self):
-        p = self.parent()
-        w = p.window() if p and hasattr(p, 'window') else None
-        return getattr(w, 'theme', None)
-
-    def _primary_px(self):
-        t = self._theme()
-        return getattr(t, 'font_size_primary', 14) if t else 14
-
-    def _secondary_px(self):
-        t = self._theme()
-        return getattr(t, 'font_size_secondary', 12) if t else 12
-
-    def _primary_color(self):
-        t = self._theme()
-        return getattr(t, 'font_color_primary', '#eeeeee') if t else '#eeeeee'
-
-    def _secondary_color(self):
-        t = self._theme()
-        return getattr(t, 'font_color_secondary', '#cccccc') if t else '#cccccc'
-
-    def set_hovered_artist_row(self, row):
-        self.hovered_artist_row = row
-
-    # ── Animation helpers ─────────────────────────────────────────────────
-
-    def _on_hover_value(self, value):
-        self._hover_progress = value
-        self._request_repaint()
-
-    def _on_play_value(self, value):
-        self._play_progress = value
-        self._request_repaint()
-
-    def _request_repaint(self):
-        lw = self.parent()
-        if lw and hasattr(lw, 'viewport'):
-            lw.viewport().update()
-
-    def _animate(self, anim, current, target, full_duration=150):
-        anim.stop()
-        distance = abs(target - current)
-        if distance < 0.001:
-            return
-        anim.setDuration(max(1, int(full_duration * distance)))
-        anim.setStartValue(float(current))
-        anim.setEndValue(float(target))
-        anim.start()
-
-    def set_hovered_row(self, row):
-        if row == self._hovered_row:
-            return
-        self._hovered_row = row
-        if row >= 0:
-            # Snap any leftover progress from a previous item to 0 instantly,
-            # then animate the new item in from 0.
-            self._hover_progress = 0.0
-            self._play_progress  = 0.0
-            self._play_anim.stop()
-            self._animate(self._hover_anim, 0.0, 1.0)
-        else:
-            self._animate(self._hover_anim, self._hover_progress, 0.0)
-            self._animate(self._play_anim,  self._play_progress,  0.0)
-
-    def set_play_hovered(self, is_hovered):
-        target = 1.0 if is_hovered else 0.0
-        self._animate(self._play_anim, self._play_progress, target)
-
-    # ── Paint ─────────────────────────────────────────────────────────────
-
-    def paint(self, painter, option, index):
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        rect = option.rect
-        icon_width  = rect.width() - 12
-        icon_height = icon_width
-        icon_x      = rect.x() + 6
-        icon_rect   = QRect(icon_x, rect.y() + 4, icon_width, icon_height)
-
-        path = QPainterPath()
-        path.addRoundedRect(icon_rect.x(), icon_rect.y(), icon_rect.width(), icon_rect.height(), 10, 10)
-
-        # ── Cover image ───────────────────────────────────────────────────
-        painter.save()
-        painter.setClipPath(path)
-        icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon and not icon.isNull():
-            pix = icon.pixmap(icon_width, icon_height)
-            px = icon_rect.x() + (icon_width - pix.width()) // 2
-            py = icon_rect.y() + (icon_height - pix.height()) // 2
-            painter.drawPixmap(px, py, pix)
-
-        # Determine animation progress for this item
-        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        is_this_hovered = (index.row() == self._hovered_row)
-        hover_p = self._hover_progress if is_this_hovered else (1.0 if is_selected else 0.0)
-        play_p  = self._play_progress  if is_this_hovered else 0.0
-
-        # Dark overlay: opacity 0 → 0.4  (QML: color "#000", opacity 0→0.4)
-        if hover_p > 0:
-            painter.setBrush(QColor(0, 0, 0, int(hover_p * 102)))
-            painter.setPen(QPen(self.master_color, 2))
-            painter.drawPath(path)
-        painter.restore()  # remove clip
-
-        # ── Play button: scale 0.8→1.0, opacity 0→0.8 (+0.2 when on btn) ─
-        if hover_p > 0 and self.show_play_btn:
-            center    = icon_rect.center()
-            play_size = min(60, icon_width // 2)
-            scale     = 0.8 + play_p * 0.2          # matches QML scale behaviour
-            scaled_sz = max(4, int(play_size * scale))
-            play_rect = QRect(0, 0, scaled_sz, scaled_sz)
-            play_rect.moveCenter(center)
-
-            play_opacity = hover_p * 0.8 + play_p * 0.2   # 0→0.8, then 0.8→1.0
-            painter.setOpacity(play_opacity)
-            painter.setBrush(self.master_color)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(play_rect)
-
-            tri_size = scaled_sz // 3
-            cx, cy = center.x(), center.y()
-            p1 = QPoint(cx - tri_size // 3, cy - tri_size // 2)
-            p2 = QPoint(cx - tri_size // 3, cy + tri_size // 2)
-            p3 = QPoint(cx + tri_size // 2 + 2, cy)
-            painter.setBrush(QColor("#111111"))
-            painter.drawPolygon(QPolygon([p1, p2, p3]))
-            painter.setOpacity(1.0)
-
-        # ── Text ──────────────────────────────────────────────────────────
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if data:
-            title  = data.get('title') or data.get('name') or "Unknown"
-            artist = data.get('artist', '')
-            year   = str(data.get('year', ''))
-
-            text_width = rect.width() - 20
-            text_x     = rect.x() + 10
-            current_y  = icon_rect.bottom() + 10
-
-            # Title: interpolate primary color → accent on hover
-            mc  = self.master_color
-            pc  = QColor(self._primary_color())
-            r   = int(pc.red()   + (mc.red()   - pc.red())   * hover_p)
-            g   = int(pc.green() + (mc.green() - pc.green()) * hover_p)
-            b   = int(pc.blue()  + (mc.blue()  - pc.blue())  * hover_p)
-            painter.setPen(QColor(r, g, b))
-            font = painter.font(); font.setBold(True); font.setPixelSize(self._primary_px()); painter.setFont(font)
-            fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
-                             Qt.AlignmentFlag.AlignLeft,
-                             fm.elidedText(title, Qt.TextElideMode.ElideRight, text_width))
-
-            current_y += fm.height() + 2
-            font.setBold(False); font.setPixelSize(self._secondary_px())
-            artist_hovered = self.clickable_artist and (index.row() == self.hovered_artist_row)
-            if artist_hovered:
-                font.setUnderline(True)
-                painter.setPen(QColor(self.master_color))
-            else:
-                font.setUnderline(False)
-                painter.setPen(QColor(self._secondary_color()))
-            painter.setFont(font); fm = QFontMetrics(font)
-            painter.drawText(QRect(text_x, current_y, text_width, fm.height()),
-                             Qt.AlignmentFlag.AlignLeft,
-                             fm.elidedText(artist, Qt.TextElideMode.ElideRight, text_width))
-            font.setUnderline(False); painter.setFont(font)
-
-            current_y += fm.height() + 2
-            painter.setPen(QColor(self._secondary_color()))
-            painter.drawText(QRect(text_x, current_y, text_width, fm.height()), Qt.AlignmentFlag.AlignLeft, fm.elidedText(year, Qt.TextElideMode.ElideRight, text_width))
-
-        painter.restore()
-
-_DETAIL_ARTIST_SEP_RE = re.compile(
-    r'( /// | • | / |,\s+| feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. )'
-)
-
 _GENRE_SEP_RE = re.compile(r' /// | • | / |,\s*|;\s*')
 
 def _split_genres(text):
@@ -641,98 +336,6 @@ def _split_genres(text):
         if i < len(parts) - 1:
             result.append((' • ', True))
     return result
-
-class ClickableArtistLabel(QWidget):
-    artist_clicked = pyqtSignal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._parts = []       # list of (text, is_separator)
-        self.artist_rects = [] # list of (text, QRect) for non-separators only
-        self.hovered_artist = None
-        self.setMouseTracking(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(20)
-        self.setMaximumHeight(30)
-
-    def setText(self, text):
-        if not text or text == "Loading...":
-            self._parts = [(text, False)] if text else []
-        else:
-            self._parts = [
-                (p, bool(_DETAIL_ARTIST_SEP_RE.match(p)))
-                for p in _DETAIL_ARTIST_SEP_RE.split(text) if p
-            ]
-        self.artist_rects = []
-        self.hovered_artist = None
-        self.updateGeometry()
-        self.update()
-
-    def text(self):
-        return "".join(p for p, _ in self._parts)
-
-    def _primary_px(self) -> int:
-        theme = getattr(self.window(), 'theme', None)
-        return getattr(theme, 'font_size_primary', 14) if theme else 14
-
-    def sizeHint(self):
-        font = QFont()
-        font.setPixelSize(self._primary_px())
-        font.setBold(True)
-        fm = QFontMetrics(font)
-        text = self.text()
-        return QSize(fm.horizontalAdvance(text) if text else 100, fm.height() + 4)
-
-    def set_color(self, color: str):
-        self._color = color
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        font = QFont()
-        font.setPixelSize(self._primary_px())
-        font.setBold(True)
-        painter.setFont(font)
-        fm = painter.fontMetrics()
-        x = 0
-        y = fm.ascent() + 2
-        artist_color = QColor(getattr(self, '_color', '#cccccc'))
-        self.artist_rects = []
-        for text, is_sep in self._parts:
-            is_hovered = (not is_sep and self.hovered_artist == text)
-            font.setUnderline(is_hovered)
-            painter.setFont(font)
-            painter.setPen(QColor("#777777") if is_sep else artist_color)
-            w = fm.horizontalAdvance(text)
-            if not is_sep:
-                self.artist_rects.append((text, QRect(x, 0, w, self.height())))
-            painter.drawText(x, y, text)
-            x += w
-        painter.end()
-
-    def mouseMoveEvent(self, event):
-        pos = event.pos()
-        old_hovered = self.hovered_artist
-        self.hovered_artist = None
-        for artist, rect in self.artist_rects:
-            if rect.contains(pos):
-                self.hovered_artist = artist
-                break
-        if old_hovered != self.hovered_artist:
-            self.update()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            for artist, rect in self.artist_rects:
-                if rect.contains(event.pos()):
-                    self.artist_clicked.emit(artist)
-                    break
-
-    def leaveEvent(self, event):
-        if self.hovered_artist is not None:
-            self.hovered_artist = None
-            self.update()
 
 class _TrackHeader(QHeaderView):
     _FLEX_COL   = 1   # TITLE — Stretch, absorbs space
@@ -2157,8 +1760,6 @@ class LibraryGridBrowser(QWidget):
         self.current_header_cover_id = None
         self.current_album_id = None
         self._active_workers = set()
-        self.all_albums_cache = []      # Full sorted list, sliced per page
-        self.all_albums_sort = None     # Sort key used to build the cache
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -2195,7 +1796,6 @@ class LibraryGridBrowser(QWidget):
         self.grid_bridge.itemClicked.connect(self.album_clicked.emit)
         self.grid_bridge.playClicked.connect(lambda data: self.start_play_fetch(data['id']))
         self.grid_bridge.visibleRangeChanged.connect(self.check_viewport_qml)
-        self.grid_bridge.artistClicked.connect(self.on_grid_artist_clicked)
         self.grid_bridge.artistNameClicked.connect(self._on_grid_artist_name_clicked)
 
         # OMNI-SCROLLER FIX: Python-side middle-click scroller for the QML grid.
@@ -2250,14 +1850,7 @@ class LibraryGridBrowser(QWidget):
         self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)
-        
-        self.artist_detail_list = QListWidget()
-        self.artist_detail_list.setStyleSheet("QListWidget { background: transparent; border: none; } QListWidget::item { color: #ddd; padding: 10px; border-bottom: 1px solid #333; }")
-        self.artist_detail_list.itemClicked.connect(self.on_artist_album_clicked)
-        self.stack.addWidget(self.artist_detail_list) 
 
-        
-        
         self.is_fetching_next = False
 
         self.set_accent_color("#888888")
@@ -2266,13 +1859,7 @@ class LibraryGridBrowser(QWidget):
         self.add_to_history({'type': 'root'})
 
         self.refresh_grid()
-      
-    def on_grid_artist_clicked(self, album_data):
-        artist_name = album_data.get('albumArtist') or album_data.get('artist', '')
-        if artist_name:
-            # You already have this signal set up, we just fire it!
-            self.switch_to_artist_tab.emit(artist_name)
-    
+
     def change_page(self, page):
         if page < 1 or page > self.total_pages: 
             return
@@ -2359,9 +1946,6 @@ class LibraryGridBrowser(QWidget):
         if hasattr(self, 'active_chunk_workers'):
             self.active_chunk_workers.clear()
 
-    def on_sort_changed(self):
-        self.load_albums_page(reset=True)
-
     def show_sort_menu_at(self, global_x, global_y):
         """Show dropdown menu with sort options when the burger icon is clicked"""
         from player.widgets import themed_shadow_menu, popup_menu_at_global
@@ -2383,48 +1967,6 @@ class LibraryGridBrowser(QWidget):
 
         popup_menu_at_global(menu, global_x, global_y, window=self.window())
 
-    def update_cover(self, data):
-        from PyQt6.QtGui import QPixmap
-        pix = QPixmap()
-        pix.loadFromData(data)
-        self.cover_label.setPixmap(_square_cover(pix))
-
-    def get_tinted_sort_icon(self, sort_type, is_ascending):
-        """Get a tinted icon for the sort menu based on current accent color"""
-        if sort_type == 'song_count':
-            suffix = 'asc' if is_ascending else 'desc'
-            icon_path = resource_path(f"img/sort-num-{suffix}.png")
-        else:
-            suffix = 'a' if is_ascending else 'd'
-            icon_path = resource_path(f"img/sort-{sort_type}-{suffix}.png")
-        try:
-            pixmap = QPixmap(icon_path)
-            if not pixmap.isNull() and hasattr(self, 'current_accent'):
-                painter = QPainter(pixmap)
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                painter.fillRect(pixmap.rect(), QColor(self.current_accent))
-                painter.end()
-                return QIcon(pixmap)
-        except Exception as e:
-            print(f"Error tinting sort icon: {e}")
-        
-        # Fallback to untinted
-        return QIcon(icon_path)
-
-    def create_sort_action(self, menu, sort_type, label):
-        """Create a toggleable sort action with icon"""
-        # Get current state (True = ascending, False = descending)
-
-        is_ascending = self.sort_states[sort_type]
-        
-        # Get tinted icon based on state
-        icon = self.get_tinted_sort_icon(sort_type, is_ascending)
-
-        # Create action
-        action = QAction(icon, f"  {label}", self)
-        action.triggered.connect(lambda: self.toggle_sort_state(sort_type))
-        menu.addAction(action)
-
     def toggle_sort_state(self, sort_type):
         """Toggle the sort state and update display"""
         if sort_type in ('favorites', 'compilations'):
@@ -2445,8 +1987,6 @@ class LibraryGridBrowser(QWidget):
             for k in keys_to_delete:
                 del self.client._api_cache.cache[k]
             
-        self.all_albums_cache = []   # invalidate cache
-        self.all_albums_sort = None
         self.true_server_count = 0   # force re-count from new sort endpoint
         self.update_burger_icon()
         self.load_albums_page(reset=True)
@@ -2469,10 +2009,6 @@ class LibraryGridBrowser(QWidget):
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.burgerIconChanged.emit(name)
-
-    def get_filtered_count(self):
-        # Count comes from the live API pagination — not needed for local DB queries
-        return getattr(self, 'total_items', 0)
 
     def load_album(self, album_data):
         """Bridge method: main.py calls this to navigate to an album from other tabs."""
@@ -2585,20 +2121,6 @@ class LibraryGridBrowser(QWidget):
         
         self.render_state(state)
 
-    def on_nav_back(self):
-        # If a hardcoded Back command comes through, ignore it if we are typing!
-        if getattr(self, 'grid_bridge', None) and self.grid_bridge.search.active:
-            return
-
-        if self.nav_index > 0:
-            self.nav_index -= 1
-            self.render_state(self.nav_history[self.nav_index])
-
-    def on_nav_fwd(self):
-        if self.nav_index < len(self.nav_history) - 1:
-            self.nav_index += 1
-            self.render_state(self.nav_history[self.nav_index])
-   
     def render_state(self, state):
         s_type = state.get('type')
         self.current_album_id = None 
@@ -2610,24 +2132,6 @@ class LibraryGridBrowser(QWidget):
             self.show_album_details(state['data'], record_history=False)
         elif s_type == 'artist':
             self.show_artist_details(state['data'], record_history=False)
-
-    def on_grid_item_clicked(self, item):
-        data = item.data(Qt.ItemDataRole.UserRole)
-        if not data: return
-        
-        visual_rect = self.grid_view.visualItemRect(item)
-        mouse_pos = self.grid_view.mapFromGlobal(QCursor.pos())
-        rect = visual_rect
-        icon_width = rect.width() - 20 
-        center_x = rect.x() + 10 + (icon_width // 2)
-        center_y = rect.y() + 10 + (icon_width // 2)
-        play_radius = min(60, icon_width // 2) // 2 
-        dist = ((mouse_pos.x() - center_x)**2 + (mouse_pos.y() - center_y)**2) ** 0.5
-        
-        if dist <= play_radius:
-            self.start_play_fetch(data['id'])
-        else:
-            self.album_clicked.emit(data)
 
     def start_play_fetch(self, album_id):
         if not album_id: return
@@ -2641,11 +2145,6 @@ class LibraryGridBrowser(QWidget):
 
     def show_artist_details(self, artist_data, record_history=True):
         self.switch_to_artist_tab.emit(artist_data['name'])
-
-    def on_artist_album_clicked(self, item):
-        data = item.data(Qt.ItemDataRole.UserRole)
-        if data and data['type'] == 'album_drill':
-            self.add_to_history({'type': 'album', 'data': data['data']})
 
     def _on_detail_track_play(self, tracks, start_index):
         if 0 <= start_index < len(tracks):
@@ -2853,60 +2352,6 @@ class LibraryGridBrowser(QWidget):
         if hasattr(self, 'cover_worker') and self.cover_worker:
             self.cover_worker.queue_batch(covers_to_queue, priority=True)
 
-    def _on_song_count_loaded(self, albums, total, cache_key):
-        """Called when the full sorted list is ready. Caches it and repopulates in chunks."""
-        if hasattr(self, 'live_worker') and self.live_worker:
-            self._safe_discard_worker(self.live_worker)
-            self.live_worker = None
-        if not albums:
-            return
-        self.all_albums_cache = albums
-        self.all_albums_sort = cache_key
-        self.set_status_text(f"{len(albums):,} albums".replace(",", " "))
-        # Reset model: seed each slot with real metadata so text shows immediately;
-        # type='placeholder' keeps IS_LOADING=True so QML still shows image skeleton.
-        placeholders = [dict(a, type='placeholder') for a in albums]
-        self.album_model.clear()
-        self.album_model.append_albums(placeholders)
-        self._fill_song_count_chunks(albums)
-
-    def _fill_song_count_chunks(self, albums, chunk_size=50, chunk_index=0):
-        """Populate the model chunk by chunk via QTimer so the main thread isn't blocked."""
-        start = chunk_index * chunk_size
-        if start >= len(albums):
-            return
-        end = min(start + chunk_size, len(albums))
-        client = getattr(self, 'client', None)
-        name_id_cache = getattr(client, '_artist_name_id', None) if client else None
-        covers_to_queue = []
-        for i, album in enumerate(albums[start:end]):
-            row = start + i
-            if row >= len(self.album_model.albums):
-                break
-            cid = album.get('cover_id') or album.get('coverArt') or album.get('id')
-            if cid:
-                album['cover_id'] = cid
-                covers_to_queue.append(cid)
-            if name_id_cache is not None:
-                aid = album.get('artistId') or album.get('albumArtistId')
-                aname = album.get('artist') or album.get('albumArtist') or album.get('name', '')
-                if aid and aname:
-                    name_id_cache[aname.lower().strip()] = aid
-            self.album_model.albums[row] = album
-        self.album_model.dataChanged.emit(
-            self.album_model.index(start, 0),
-            self.album_model.index(end - 1, 0),
-            [self.album_model.TITLE_ROLE, self.album_model.ARTIST_ROLE,
-             self.album_model.YEAR_ROLE, self.album_model.COVER_ID_ROLE,
-             self.album_model.IS_LOADING_ROLE]
-        )
-        if hasattr(self, 'cover_worker') and self.cover_worker:
-            for cid in reversed(covers_to_queue):
-                self.cover_worker.queue_cover(cid)
-        if end < len(albums):
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(16, lambda: self._fill_song_count_chunks(albums, chunk_size, chunk_index + 1))
-
     def load_albums_page(self, reset=False):
         # If we just restored from a save file, don't let it reset our page!
         if getattr(self, '_restored_state_waiting', False):
@@ -3100,8 +2545,6 @@ class LibraryGridBrowser(QWidget):
         if not getattr(self, '_stale_count_set', False):
             self.true_server_count = 0
         self._stale_count_set = False
-        self.all_albums_cache = []
-        self.all_albums_sort = None
 
         # 2. Brutally wipe the API cache so we don't just reload the old albums from memory!
         if hasattr(self, 'client') and self.client and hasattr(self.client, '_api_cache'):
