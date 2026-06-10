@@ -28,7 +28,7 @@ Rectangle {
     property bool   albumFavorite: false
     property string playingTrackId:      ""
     property bool   isCurrentlyPlaying:  false
-    property string searchText:    ""
+    readonly property string searchText: trackSearchBar.searchText
     property string panelBgColor:  "#0e0e0e"
     property int    selectedTrkIdx: -1
 
@@ -108,29 +108,15 @@ Rectangle {
         function onScrollToBottomOfView() {
             scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height)
         }
-        function onSearchReset() {
-            trackSearchInput.text = ""
-            if (searchOverlay.srchInpW > 0) {
-                searchOverlay.srchInpW = 0
-                albumBridge.setSearchActive(false)
-            }
-        }
-        function onSearchOpen() {
-            if (searchOverlay.srchInpW === 0) {
-                searchOverlay.srchInpW = 204
-                albumBridge.setSearchActive(true)
-            }
-        }
-        function onSearchTextAppend(ch) { trackSearchInput.text += ch }
-        function onSearchTextBackspace() {
-            if (trackSearchInput.text.length > 0)
-                trackSearchInput.text = trackSearchInput.text.slice(0, -1)
-        }
-        function onSearchClose() {
-            trackSearchInput.text = ""
-            searchOverlay.srchInpW = 0
-            albumBridge.setSearchActive(false)
-        }
+    }
+
+    Connections {
+        target: albumBridge.searchCtl
+        function onSearchReset()         { trackSearchBar.reset() }
+        function onSearchOpen()          { trackSearchBar.open() }
+        function onSearchTextAppend(ch)  { trackSearchBar.appendChar(ch) }
+        function onSearchTextBackspace() { trackSearchBar.backspace() }
+        function onSearchClose()         { trackSearchBar.close() }
     }
 
     // ── Freestanding scrollbar ─────────────────────────────────────────────────
@@ -525,105 +511,24 @@ Rectangle {
                     x: 8; y: 12
                     width: parent.width - 16; height: 36
 
-                    Item {
-                        id: searchOverlay
+                    SearchBar {
+                        id: trackSearchBar
                         anchors.right: parent.right
                         anchors.top:   parent.top
                         anchors.bottom: parent.bottom
 
-                        property real srchInpW: 0
-                        Behavior on srchInpW { NumberAnimation { duration: 250; easing.type: Easing.InOutQuart } }
-                        width: 32 + srchInpW
+                        accentColor:       root.accentColor
+                        textPrimary:       root.textPrimary
+                        textSecondary:     root.textSecondary
+                        panelBgColor:      root.panelBgColor
+                        borderColor:       root.cardBorderColor
+                        hoverColor:        root.hoverColor
+                        fontFamily:        root.fontFamily
+                        fontSizeSecondary: root.fontSizeSecondary
+                        placeholderText:   "Search tracks..."
 
-                        Rectangle {
-                            id: srchBox
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: Math.max(0, searchOverlay.srchInpW - 4)
-                            height: 28; radius: 4
-                            color: root.panelBgColor
-                            border.color: root.cardBorderColor; border.width: 1
-                            clip: true
-                            visible: width > 2
-
-                            TextInput {
-                                id: trackSearchInput
-                                anchors.left: parent.left; anchors.leftMargin: 8
-                                anchors.right: srchClearBtn.visible ? srchClearBtn.left : parent.right
-                                anchors.rightMargin: 4
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: root.textPrimary
-                                font.pixelSize: 13
-                                font.family: root.fontFamily
-                                selectionColor: root.accentColor
-                                selectedTextColor: "#111"
-                                clip: true
-
-                                onTextChanged: root.searchText = text
-
-                            }
-
-                            Text {
-                                anchors.left: parent.left; anchors.leftMargin: 8
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "Search tracks..."
-                                color: root.textSecondary
-                                font.pixelSize: root.fontSizeSecondary
-                                font.family: root.fontFamily
-                                visible: !trackSearchInput.text
-                            }
-
-                            Item {
-                                id: srchClearBtn
-                                width: 24; height: parent.height
-                                anchors.right: parent.right
-                                visible: trackSearchInput.text !== ""
-
-                                Image {
-                                    anchors.centerIn: parent; width: 10; height: 10
-                                    source: "image://albumicons/sub_close_" + root.textSecondary.replace("#", "")
-                                    cache: false; mipmap: true; smooth: true
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: trackSearchInput.text = ""
-                                }
-                            }
-                        }
-
-                        Item {
-                            id: srchIconArea
-                            width: 32; height: parent.height
-                            anchors.right: parent.right
-
-                            Rectangle {
-                                anchors.fill: parent; radius: 4
-                                color: srchIconHov.containsMouse ? root.hoverColor : "transparent"
-                            }
-                            Image {
-                                anchors.centerIn: parent; width: 18; height: 18
-                                source: "image://albumicons/search_" + root.accentColor.replace("#", "")
-                                cache: false; mipmap: true; smooth: true
-                            }
-                            MouseArea {
-                                id: srchIconHov
-                                anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (searchOverlay.srchInpW > 0) {
-                                        if (!trackSearchInput.text) {
-                                            searchOverlay.srchInpW = 0
-                                            albumBridge.setSearchActive(false)
-                                        }
-                                    } else {
-                                        searchOverlay.srchInpW = 204
-                                        albumBridge.setSearchActive(true)
-                                    }
-                                }
-                            }
-                        }
-
+                        onOpened: albumBridge.searchCtl.setSearchActive(true)
+                        onClosed: albumBridge.searchCtl.setSearchActive(false)
                     }
                 }
 

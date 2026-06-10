@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QLineEdit, QToolButton, QScrollArea) 
 
 from PyQt6.QtCore import (Qt, QSize, pyqtSignal, QThread, QRect, QPoint, QTimer, QRectF,
-                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl, Qt, QVariantAnimation, QSettings)
+                          QEvent, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, pyqtProperty, QObject, QUrl, Qt, QVariantAnimation, QSettings)
+from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
 from PyQt6.QtGui import (QIcon, QPixmap, QPainter, QColor, QFontMetrics,
                          QBrush, QPen, QPolygon, QPainterPath, QCursor, QFont, QAction,
                          QTextDocument, QAbstractTextDocumentLayout, QPalette, QImage)
@@ -31,7 +32,7 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-from components import PaginationFooter, SmartSearchContainer
+from components import PaginationFooter
 from tracks_browser import TracksBrowser, MiddleClickScroller
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
@@ -85,17 +86,35 @@ class GridBridge(QObject):
     fontColorSecondaryChanged = pyqtSignal(str)
     skeletonBaseColorChanged  = pyqtSignal(str)
     infoLineCountChanged      = pyqtSignal(int)
+    hoverColorChanged         = pyqtSignal(str)
+    panelBgChanged            = pyqtSignal(str)
+    cardBorderChanged         = pyqtSignal(str)
+    fontFamilyChanged         = pyqtSignal(str)
+    statusTextChanged         = pyqtSignal(str)
+    burgerIconChanged         = pyqtSignal(str)
     cancelScroll = pyqtSignal()
     scrollBy = pyqtSignal(float)
     indexChanged = pyqtSignal(int)
     requestFocusNext = pyqtSignal()
     requestFocusPrev = pyqtSignal()
     takeFocus = pyqtSignal()
-    
-    def __init__(self, album_model):
+
+    def __init__(self, album_model, view):
         super().__init__()
         self.album_model = album_model
-        
+        self._view = view
+        self.search = SearchController(
+            on_active_changed=lambda active: view._set_window_shortcuts_enabled(not active),
+            on_text_changed=view._on_grid_search_text_changed)
+
+    @pyqtProperty(QObject, constant=True)
+    def searchCtl(self):
+        return self.search
+
+    @pyqtSlot(float, float)
+    def showSortMenu(self, gx, gy):
+        self._view.show_sort_menu_at(gx, gy)
+
     @pyqtSlot(int, int)
     def reportVisibleRange(self, start, end):
         self.last_start, self.last_end = start, end
@@ -1527,18 +1546,17 @@ class AlbumDetailBridge(QObject):
     scrollToModelRow          = pyqtSignal(int)         # model row → QML scroll
     scrollToTopOfView         = pyqtSignal()
     scrollToBottomOfView      = pyqtSignal()
-    searchReset               = pyqtSignal()
-    searchTextAppend          = pyqtSignal(str)
-    searchTextBackspace       = pyqtSignal()
-    searchClose               = pyqtSignal()
-    searchOpen                = pyqtSignal()
 
     def __init__(self, view):
         super().__init__()
         self._view = view
         self._selected_trkidx = -1
-        self._search_active = False
-        self._search_text = ""
+        self.search = SearchController(
+            on_active_changed=lambda active: view._set_window_shortcuts_enabled(not active))
+
+    @pyqtProperty(QObject, constant=True)
+    def searchCtl(self):
+        return self.search
 
     @pyqtSlot()
     def playClicked(self):
@@ -1553,7 +1571,7 @@ class AlbumDetailBridge(QObject):
         rows = self._view._track_model._rows
         if not rows:
             return
-        st = self._search_text.lower()
+        st = self.search.text.lower()
         if st:
             nav = [(i, r['_idx']) for i, r in enumerate(rows)
                    if not r.get('_disc') and (
@@ -1671,21 +1689,6 @@ class AlbumDetailBridge(QObject):
     def favHeaderClicked(self):
         self._view.fav_header_clicked.emit()
 
-    @pyqtSlot(bool)
-    def setSearchActive(self, active: bool):
-        from PyQt6.QtCore import QDateTime
-        now = QDateTime.currentMSecsSinceEpoch()
-        if not active and self._search_active:
-            elapsed = now - getattr(self, '_activated_at', 0)
-            if elapsed < 50:
-                return
-        self._search_active = active
-        if active:
-            self._activated_at = now
-        else:
-            self._search_text = ""
-        self._view._set_window_shortcuts_enabled(not active)
-
     @pyqtSlot(result='QVariantList')
     def getColWidths(self):
         from PyQt6.QtCore import QSettings
@@ -1700,36 +1703,19 @@ class AlbumDetailBridge(QObject):
         QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
 
 
-class _AlbumKeyFilter(QObject):
-    """Widget-level key filter — fires regardless of QML focus state."""
+class _AlbumKeyFilter(SearchKeyFilter):
+    """Widget-level key filter — fires regardless of QML focus state.
+
+    Routes typing into the track search box while active; otherwise
+    handles tracklist row navigation/play/escape shortcuts.
+    """
 
     def __init__(self, bridge, qml_widget, parent=None):
-        super().__init__(parent)
+        super().__init__(bridge.search, on_navigate=self._navigate, parent=parent)
         self._b   = bridge
         self._qml = qml_widget
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.ShortcutOverride:
-            if self._b._search_active:
-                event.accept()
-                return True
-        if event.type() != QEvent.Type.KeyPress:
-            return False
-        if self._b._search_active:
-            key = event.key()
-            if key == Qt.Key.Key_Escape:
-                self._b.searchClose.emit()
-                return True
-            if key == Qt.Key.Key_Backspace:
-                self._b._search_text = self._b._search_text[:-1]
-                self._b.searchTextBackspace.emit()
-                return True
-            ch = event.text()
-            if ch and ch.isprintable():
-                self._b._search_text += ch
-                self._b.searchTextAppend.emit(ch)
-                return True
-            # let navigation keys (arrows, enter, etc.) fall through
+    def _navigate(self, event):
         key  = event.key()
         mods = event.modifiers()
         b    = self._b
@@ -1864,19 +1850,13 @@ class AlbumDetailView(QWidget):
         self._bridge.playingStatusChanged.emit(str(playing_id) if playing_id else '', is_playing)
 
     def _toggle_track_search(self):
-        if self._bridge._search_active:
-            self._bridge.searchClose.emit()
+        if self._bridge.search.active:
+            self._bridge.search.close()
         else:
-            self._bridge.searchOpen.emit()
+            self._bridge.search.open()
 
     def _set_window_shortcuts_enabled(self, enabled: bool):
-        from PyQt6.QtGui import QShortcut
-        main = self.window()
-        if main is None:
-            return
-        self._qml._search_active = not enabled
-        for sc in main.findChildren(QShortcut):
-            sc.setEnabled(enabled)
+        set_window_shortcuts_enabled(self, self._qml, enabled)
 
     def set_bg_color(self, c: str):
         self._bg_color = c
@@ -1930,7 +1910,7 @@ class AlbumDetailView(QWidget):
         self._cur_type    = alb_type
         self._cur_cov_id  = ''
 
-        self._bridge.searchReset.emit()
+        self._bridge.search.reset()
         self._bridge.albumDataChanged.emit(title, album_artist, "Loading...", alb_type, '', self._album_liked)
         self._track_model.set_tracks([])
         self._tracks = []
@@ -2070,19 +2050,8 @@ class AlbumDetailView(QWidget):
             return
         track = self._tracks[track_idx]
         main  = self.window()
-        from player.widgets import ShadowContextMenu
-        _theme = getattr(main, 'theme', None)
-        bg  = getattr(self, '_bg_color', getattr(_theme, 'main_panel_bg', '14,14,14'))
-        bc  = getattr(_theme, 'border_color',        '#2a2a2a') if _theme else '#2a2a2a'
-        fg  = getattr(_theme, 'font_color_primary',  '#dddddd') if _theme else '#dddddd'
-        fg2 = getattr(_theme, 'font_color_secondary','#555555') if _theme else '#555555'
-        px  = getattr(_theme, 'font_size_primary',   14)        if _theme else 14
-        acc = getattr(_theme, 'accent',              '#cccccc') if _theme else '#cccccc'
-        if _theme and not getattr(_theme, 'auto_border_from_accent', True):
-            bc = getattr(_theme, 'manual_border_color', '#2a2a2a')
-        hov = resolve_menu_hover(_theme)
-        menu = ShadowContextMenu(self)
-        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
+        from player.widgets import themed_shadow_menu, popup_menu_at_global
+        menu = themed_shadow_menu(self, bg=getattr(self, '_bg_color', None))
         track_id = str(track.get('id', ''))
         artist   = track.get('artist', '')
         menu.add_action('Play Now',     lambda: self.track_play_signal.emit([track], 0), icon_path='img/sub_play.png')
@@ -2108,9 +2077,7 @@ class AlbumDetailView(QWidget):
                         lambda i=track_idx: self._bridge.trackFavoriteClicked(i),
                         color='#E91E63',
                         icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
-        from PyQt6.QtCore import QPoint
-        gp = QPoint(global_x, global_y)
-        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=main)
+        popup_menu_at_global(menu, global_x, global_y, window=main)
 
     def _add_to_new_playlist(self, main, track_ids):
         client = getattr(main, 'navidrome_client', None)
@@ -2273,6 +2240,27 @@ class QMLMiddleClickScroller(QObject):
         direction = 1 if delta > 0 else -1
         self.bridge.scrollBy.emit(speed * direction)
 
+
+class _GridKeyFilter(SearchKeyFilter):
+    """Widget-level key filter for the albums grid's inline search box.
+
+    Routes typing into the grid search box while active; Return commits the
+    search instantly and jumps focus to the first grid item. All other keys
+    (arrows, page up/down, space, enter when not searching) fall through
+    unhandled to the QML GridView's own Keys.onPressed.
+    """
+
+    def __init__(self, view, parent=None):
+        super().__init__(view.grid_bridge.search, on_navigate=self._navigate, parent=parent)
+        self._view = view
+
+    def _navigate(self, event):
+        if self._ctl.active and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._view.focus_first_grid_item()
+            return True
+        return False
+
+
 class LibraryGridBrowser(QWidget):
     play_track_signal = pyqtSignal(dict) 
     play_album_signal = pyqtSignal(list) 
@@ -2329,19 +2317,6 @@ class LibraryGridBrowser(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # --- HEADER ---
-        self.header_container = QWidget()
-        self.header_container.setFixedHeight(50)
-        self.header_container.setStyleSheet("QWidget { background-color: #111; border-top-left-radius: 5px; border-top-right-radius: 5px; border-bottom: 1px solid #222; }")
-        
-        header_layout = QHBoxLayout(self.header_container)
-        header_layout.setContentsMargins(15, 0, 10, 0) 
-        header_layout.setSpacing(15)
-        
-        self.status_label = QLabel(f"Loading albums...")
-        self.status_label.setStyleSheet("color: #888888; font-weight: bold; background: transparent; border: none;")
-        
-        
         self.sort_states = {
             'random': True,
             'latest': True,
@@ -2351,26 +2326,6 @@ class LibraryGridBrowser(QWidget):
             'song_count': False,
         }
         self.current_sort = 'latest'
-        
-        
-        # --- SMART SEARCH CONTAINER ---
-        self.search_container = SmartSearchContainer(placeholder="Search albums...")
-        self.search_container.text_changed.connect(self.on_search_text_changed)
-        self.search_container.burger_clicked.connect(self.show_sort_menu)
-        self.burger_btn = self.search_container.get_burger_btn()
-        
-        # Catch the Enter key inside the search box!
-        if hasattr(self.search_container, 'search_input'):
-            self.search_container.search_input.returnPressed.connect(self.focus_first_grid_item)
-            self.search_container.search_input.installEventFilter(self)
-
-        
-        # Main Header Assembly
-        header_layout.addWidget(self.status_label)
-        header_layout.addStretch() 
-        header_layout.addWidget(self.search_container, 0, Qt.AlignmentFlag.AlignRight)
-
-        self.layout.addWidget(self.header_container)
 
         self.stack = QStackedWidget()
         # PREVENT GHOSTING: Tell the stack to be transparent so QML can composite cleanly!
@@ -2388,7 +2343,7 @@ class LibraryGridBrowser(QWidget):
         self.qml_view.setStyleSheet("border: none;")
         
         self.album_model = AlbumModel()
-        self.grid_bridge = GridBridge(self.album_model)
+        self.grid_bridge = GridBridge(self.album_model, self)
 
         self.grid_bridge.itemClicked.connect(self.album_clicked.emit)
         self.grid_bridge.playClicked.connect(lambda data: self.start_play_fetch(data['id']))
@@ -2411,7 +2366,13 @@ class LibraryGridBrowser(QWidget):
         if not self.cover_provider:
             self.cover_provider = CoverImageProvider()
             engine.addImageProvider("covers", self.cover_provider)
-            
+
+        self._icon_provider = AlbumIconProvider()
+        engine.addImageProvider("albumicons", self._icon_provider)
+
+        self._grid_key_filter = _GridKeyFilter(self)
+        self.qml_view.installEventFilter(self._grid_key_filter)
+
         self.qml_view.setSource(QUrl.fromLocalFile(resource_path("album_grid.qml")))
         # Push initial theme typography values to QML immediately
         from PyQt6.QtCore import QTimer as _QTimer
@@ -2465,42 +2426,33 @@ class LibraryGridBrowser(QWidget):
             # You already have this signal set up, we just fire it!
             self.switch_to_artist_tab.emit(artist_name)
     
-    def eventFilter(self, source, event):
-        from PyQt6.QtCore import Qt, QEvent
-        from PyQt6.QtGui import QKeyEvent
-        
-        is_search_box = hasattr(self, 'search_container') and source == getattr(self.search_container, 'search_input', None)
-
-        # THE TEXT BOX SHIELD: Protect the search box from global shortcuts!
-        if is_search_box:
-            if event.type() == QEvent.Type.ShortcutOverride:
-                if isinstance(event, QKeyEvent) and event.key() == Qt.Key.Key_Backspace:
-                    event.accept() 
-                    return True
-            # Let the text box process normal typing without stealing it!
-            if event.type() == QEvent.Type.KeyPress:
-                return False 
-
-        # THE SPOTLIGHT FIX: Route normal typing to the global search ONLY if we aren't already in a text box
-        if event.type() == QEvent.Type.KeyPress:
-            if event.text().isprintable() and event.text().strip() and not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
-                main_win = self.window()
-                if main_win:
-                    main_win.keyPressEvent(event)
-                return True 
-                    
-        return super().eventFilter(source, event)
-    
     def change_page(self, page):
         if page < 1 or page > self.total_pages: 
             return
         self.current_page = page
         self.load_albums_page(reset=False)
 
-    def on_search_text_changed(self, text):
+    def _on_grid_search_text_changed(self, text):
         self.current_query = text.strip()
         self.search_timer.start()
-    
+
+    def _set_window_shortcuts_enabled(self, enabled: bool):
+        set_window_shortcuts_enabled(self, self.qml_view, enabled)
+
+    def _toggle_track_search(self):
+        if self.stack.currentIndex() == 1:
+            self.detail_view._toggle_track_search()
+            return
+        if self.grid_bridge.search.active:
+            self.grid_bridge.search.close()
+        else:
+            self.grid_bridge.search.open()
+
+    def set_status_text(self, text):
+        if hasattr(self, 'grid_bridge'):
+            self.grid_bridge.statusTextChanged.emit(text)
+
+
     def focus_first_grid_item(self):
         """Forces an instant search and jumps keyboard focus to the first item."""
         if self.search_timer.isActive():
@@ -2563,21 +2515,10 @@ class LibraryGridBrowser(QWidget):
     def on_sort_changed(self):
         self.load_albums_page(reset=True)
 
-    def show_sort_menu(self):
-        """Show dropdown menu with sort options when burger is clicked"""
-        from player.widgets import ShadowContextMenu
-        from player.mixins.visuals import resolve_menu_hover
-        _theme = getattr(self.window(), 'theme', None)
-        _bg  = getattr(_theme, 'main_panel_bg',       '14,14,14') if _theme else '14,14,14'
-        _bc  = getattr(_theme, 'border_color',         '#2a2a2a') if _theme else '#2a2a2a'
-        _fg  = getattr(_theme, 'font_color_primary',   '#dddddd') if _theme else '#dddddd'
-        _fg2 = getattr(_theme, 'font_color_secondary', '#555555') if _theme else '#555555'
-        _px  = getattr(_theme, 'font_size_primary',    14)        if _theme else 14
-        _acc = getattr(_theme, 'accent',               '#cccccc') if _theme else '#cccccc'
-        _hov = resolve_menu_hover(_theme)
-
-        menu = ShadowContextMenu(self)
-        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
+    def show_sort_menu_at(self, global_x, global_y):
+        """Show dropdown menu with sort options when the burger icon is clicked"""
+        from player.widgets import themed_shadow_menu, popup_menu_at_global
+        menu = themed_shadow_menu(self)
 
         def _sort_icon(sort_type):
             is_asc = self.sort_states.get(sort_type, True)
@@ -2593,8 +2534,7 @@ class LibraryGridBrowser(QWidget):
         menu.add_action('Favourites',    lambda: self.toggle_sort_state('favorites'),    icon_path='img/heart.png')
         menu.add_action('Compilations',  lambda: self.toggle_sort_state('compilations'), icon_path='img/comp.png')
 
-        gp = self.burger_btn.mapToGlobal(self.burger_btn.rect().bottomLeft())
-        menu.exec_at(gp.__class__(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self.window())
+        popup_menu_at_global(menu, global_x, global_y, window=self.window())
 
     def update_cover(self, data):
         from PyQt6.QtGui import QPixmap
@@ -2638,20 +2578,6 @@ class LibraryGridBrowser(QWidget):
         action.triggered.connect(lambda: self.toggle_sort_state(sort_type))
         menu.addAction(action)
 
-    def _get_tinted_icon(self, icon_path):
-        """Load an icon and tint it with the current accent color."""
-        try:
-            pixmap = QPixmap(icon_path)
-            if not pixmap.isNull() and hasattr(self, 'current_accent'):
-                painter = QPainter(pixmap)
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                painter.fillRect(pixmap.rect(), QColor(self.current_accent))
-                painter.end()
-                return QIcon(pixmap)
-        except Exception:
-            pass
-        return QIcon(icon_path)
-
     def toggle_sort_state(self, sort_type):
         """Toggle the sort state and update display"""
         if sort_type in ('favorites', 'compilations'):
@@ -2679,43 +2605,24 @@ class LibraryGridBrowser(QWidget):
         self.load_albums_page(reset=True)
 
     def update_burger_icon(self):
-        """Update burger button to show the currently active sort icon"""
+        """Update the burger icon name to reflect the currently active sort."""
         if not hasattr(self, 'current_sort'):
             return
-        
-        # Pure-filter sorts use their own icons
+
         if self.current_sort == 'favorites':
-            self.burger_btn.setIcon(self._get_tinted_icon(resource_path("img/heart.png")))
-            return
-        if self.current_sort == 'compilations':
-            self.burger_btn.setIcon(self._get_tinted_icon(resource_path("img/comp.png")))
-            return
-
-        # Get the current sort state (ascending/descending)
-        is_ascending = self.sort_states.get(self.current_sort, True)
-
-        # Load the icon for current sort
-        if self.current_sort == 'song_count':
-            suffix = 'asc' if is_ascending else 'desc'
-            icon_path = resource_path(f"img/sort-num-{suffix}.png")
+            name = 'heart'
+        elif self.current_sort == 'compilations':
+            name = 'comp'
         else:
-            suffix = 'a' if is_ascending else 'd'
-            icon_path = resource_path(f"img/sort-{self.current_sort}-{suffix}.png")
-        
-        try:
-            pixmap = QPixmap(icon_path)
-            if not pixmap.isNull():
-                # Tint with accent color if available
-                if hasattr(self, 'current_accent'):
-                    painter = QPainter(pixmap)
-                    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                    painter.fillRect(pixmap.rect(), QColor(self.current_accent))
-                    painter.end()
+            is_ascending = self.sort_states.get(self.current_sort, True)
+            if self.current_sort == 'song_count':
+                name = f"sort-num-{'asc' if is_ascending else 'desc'}"
+            else:
+                name = f"sort-{self.current_sort}-{'a' if is_ascending else 'd'}"
 
-                self.burger_btn.setIcon(QIcon(pixmap))
-        except Exception as e:
-            print(f"Error updating burger icon: {e}")
- 
+        if hasattr(self, 'grid_bridge'):
+            self.grid_bridge.burgerIconChanged.emit(name)
+
     def get_filtered_count(self):
         # Count comes from the live API pagination — not needed for local DB queries
         return getattr(self, 'total_items', 0)
@@ -2738,33 +2645,31 @@ class LibraryGridBrowser(QWidget):
             self.live_worker = None
             
         self.album_model.clear()
-        
+
         if not albums:
-            self.status_label.setText("0 albums")
+            self.set_status_text("0 albums")
             return
 
         # Safely handle if the API returns 'None' instead of 0!
         tc = total_count if total_count is not None else 0
         display_count = tc if tc > 0 else len(albums)
-        
-        self.status_label.setText(f"{display_count:,} albums".replace(",", " "))
+
+        self.set_status_text(f"{display_count:,} albums".replace(",", " "))
         self.populate_grid(albums)
-        
+
         if hasattr(self, 'qml_view') and self.isVisible():
-            search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
-            if search_input is None or not search_input.hasFocus():
+            if not self.grid_bridge.search.active:
                 self.qml_view.setFocus()
 
     def _on_compilations_loaded(self, albums):
         self.album_model.clear()
         if not albums:
-            self.status_label.setText("0 albums")
+            self.set_status_text("0 albums")
             return
-        self.status_label.setText(f"{len(albums):,} albums".replace(",", " "))
+        self.set_status_text(f"{len(albums):,} albums".replace(",", " "))
         self.populate_grid(albums)
         if hasattr(self, 'qml_view') and self.isVisible():
-            search_input = getattr(getattr(self, 'search_container', None), 'search_input', None)
-            if search_input is None or not search_input.hasFocus():
+            if not self.grid_bridge.search.active:
                 self.qml_view.setFocus()
 
     def _on_grid_artist_name_clicked(self, name, artist_id):
@@ -2781,11 +2686,7 @@ class LibraryGridBrowser(QWidget):
         if record_history:
             self.add_to_history({'type': 'album', 'data': album_data})
             return
-        
-        if hasattr(self, 'search_container'):
-            self.search_container.hide_search()
-            self.search_container.hide_burger()
-        
+
         # Switch the UI view
         self.stack.setCurrentIndex(1)
 
@@ -2839,12 +2740,9 @@ class LibraryGridBrowser(QWidget):
 
     def on_nav_back(self):
         # If a hardcoded Back command comes through, ignore it if we are typing!
-        from PyQt6.QtWidgets import QApplication, QLineEdit
-        focused = QApplication.focusWidget()
-        if isinstance(focused, QLineEdit) and hasattr(self, 'search_container'):
-            if focused == getattr(self.search_container, 'search_input', None):
-                return
-                
+        if getattr(self, 'grid_bridge', None) and self.grid_bridge.search.active:
+            return
+
         if self.nav_index > 0:
             self.nav_index -= 1
             self.render_state(self.nav_history[self.nav_index])
@@ -2858,14 +2756,6 @@ class LibraryGridBrowser(QWidget):
         s_type = state.get('type')
         self.current_album_id = None 
         if s_type == 'root':
-            if hasattr(self, '_show_controls_timer') and self._show_controls_timer:
-                 self._show_controls_timer.stop()
-                 
-            self._show_controls_timer = QTimer()
-            self._show_controls_timer.setSingleShot(True)
-            self._show_controls_timer.timeout.connect(self.ensure_grid_controls_visible)
-            self._show_controls_timer.start(50)
-            
             self.stack.setCurrentIndex(0)
             if self.album_model.rowCount() == 0: self.refresh_grid()
         elif s_type == 'album':
@@ -2935,13 +2825,6 @@ class LibraryGridBrowser(QWidget):
             self.qml_view.setClearColor(self._qml_bg_color())
 
     def set_accent_color(self, color):
-        if hasattr(self, 'status_label'):
-            _theme = getattr(self.window(), 'theme', None)
-            _sec_color = getattr(_theme, 'font_color_secondary', '#888888') if _theme else '#888888'
-            self.status_label.setStyleSheet(
-                f"color: {_sec_color}; font-weight: bold; background: transparent; border: none;"
-            )
-
         if hasattr(self, 'grid_bridge'):
             theme = getattr(self.window(), 'theme', None)
             if theme:
@@ -2951,6 +2834,22 @@ class LibraryGridBrowser(QWidget):
                 self.grid_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
                 self.grid_bridge.skeletonBaseColorChanged.emit(
                     getattr(theme, 'skeleton_base', '#282828'))
+                self.grid_bridge.fontFamilyChanged.emit(getattr(theme, 'app_font', ''))
+
+                from player.mixins.visuals import resolve_menu_hover
+                self.grid_bridge.hoverColorChanged.emit(resolve_menu_hover(theme))
+
+                border = getattr(theme, 'border_color', '#2a2a2a')
+                if not getattr(theme, 'auto_border_from_accent', True):
+                    border = getattr(theme, 'manual_border_color', '#2a2a2a')
+                self.grid_bridge.cardBorderChanged.emit(border)
+
+                raw_bg = getattr(theme, 'main_panel_bg', '14,14,14')
+                try:
+                    r, g, b = (int(x) for x in raw_bg.split(','))
+                    self.grid_bridge.panelBgChanged.emit('#{:02x}{:02x}{:02x}'.format(r, g, b))
+                except Exception:
+                    self.grid_bridge.panelBgChanged.emit('#0e0e0e')
 
         if getattr(self, 'current_accent', None) == color:
             return
@@ -2959,10 +2858,6 @@ class LibraryGridBrowser(QWidget):
 
         # Force Python to paint the darkness so the GPU clears its old frames!
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
-        if hasattr(self, 'header_container'):
-            self.header_container.setStyleSheet(
-                "QWidget { background-color: transparent; border: none; }"
-            )
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.accentColorChanged.emit(color)
@@ -2971,33 +2866,13 @@ class LibraryGridBrowser(QWidget):
         # Update the detail view behind the scenes
         if hasattr(self, 'detail_view'):
             self.detail_view.set_accent_color(color)
-        
-        # Keep the search bar and burger menu colors synced
-        in_detail = self.stack.currentIndex() != 0
-        if hasattr(self, 'search_container'):
-            h = self.search_container.isHidden()
-            self.search_container.set_accent_color(color)
-            if h or in_detail: self.search_container.hide()
-            
-        if hasattr(self, 'burger_btn'):
-            h = self.burger_btn.isHidden()
-            if hasattr(self, 'update_burger_icon'):
-                self.update_burger_icon()
-            if h or in_detail: self.burger_btn.hide()
-  
+
+        if hasattr(self, 'update_burger_icon'):
+            self.update_burger_icon()
+
     def mousePressEvent(self, event):
         self.setFocus()
         super().mousePressEvent(event)
-    
-    def ensure_grid_controls_visible(self):
-        if self.stack.currentIndex() == 0:
-            self.header_container.show()
-            self.status_label.show()
-            
-            if hasattr(self, 'search_container'):
-                self.search_container.show()
-                self.search_container.show_search()
-                self.search_container.show_burger()
 
     def check_viewport_qml(self, start_idx, end_idx):
         if self.album_model.rowCount() == 0: return
@@ -3140,7 +3015,7 @@ class LibraryGridBrowser(QWidget):
             return
         self.all_albums_cache = albums
         self.all_albums_sort = cache_key
-        self.status_label.setText(f"{len(albums):,} albums".replace(",", " "))
+        self.set_status_text(f"{len(albums):,} albums".replace(",", " "))
         # Reset model: seed each slot with real metadata so text shows immediately;
         # type='placeholder' keeps IS_LOADING=True so QML still shows image skeleton.
         placeholders = [dict(a, type='placeholder') for a in albums]
@@ -3241,7 +3116,7 @@ class LibraryGridBrowser(QWidget):
             return
 
         if self.true_server_count > 0:
-            self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
+            self.set_status_text(f"{self.true_server_count:,} albums".replace(",", " "))
             pending = getattr(self, '_pending_cached_chunk', None)
             _is_random = getattr(self, 'current_sort', 'latest') == 'random'
             if pending:
@@ -3310,7 +3185,8 @@ class LibraryGridBrowser(QWidget):
         return worker
 
     def filter_grid(self, text):
-        self.current_query = ""; self.search_container.search_input.clear()
+        self.current_query = ""
+        self.grid_bridge.search.reset()
         self.load_albums_page(reset=True)
 
     def set_client(self, client):
@@ -3355,7 +3231,7 @@ class LibraryGridBrowser(QWidget):
         
         # Only update the base label if we are NOT currently searching
         if not getattr(self, 'current_query', ''):
-            self.status_label.setText(f"{self.true_server_count:,} albums".replace(",", " "))
+            self.set_status_text(f"{self.true_server_count:,} albums".replace(",", " "))
             
         # If we are in descending mode but had 0 items when we loaded, trigger a reload now that we have the count!
         is_ascending = self.sort_states.get(getattr(self, 'current_sort', 'latest'), True)
@@ -3370,8 +3246,7 @@ class LibraryGridBrowser(QWidget):
         self.album_model.append_albums(
             [{'type': 'placeholder', 'title': '', 'cover_id': ''} for _ in range(20)]
         )
-        if hasattr(self, 'status_label'):
-            self.status_label.setText("Loading...")
+        self.set_status_text("Loading...")
 
     def refresh_grid(self):
         # 1. Reset the server count unless stale cache provided it
@@ -3390,12 +3265,6 @@ class LibraryGridBrowser(QWidget):
         self.load_albums_page(reset=True)
 
     def go_to_root(self):
-        self.status_label.show()
-        if hasattr(self, 'search_container'):
-            self.search_container.show()
-            self.search_container.show_search()
-            self.search_container.show_burger()
-        
         self.stack.setCurrentIndex(0)
         
         # Force the OS to send keyboard strokes to the QML grid!
@@ -3477,13 +3346,12 @@ class LibraryGridBrowser(QWidget):
             self.sort_states[k] = v
             
         self.current_query = state.get('query', '')
-        
+
         # Update the search bar UI silently
-        if hasattr(self, 'search_container') and self.current_query:
-            self.search_container.search_input.blockSignals(True)
-            self.search_container.search_input.setText(self.current_query)
-            self.search_container.search_input.blockSignals(False)
-            
+        if hasattr(self, 'grid_bridge') and self.current_query:
+            self.grid_bridge.search.restore(self.current_query)
+
+
         # Update the sort icon in the burger menu
         if hasattr(self, 'update_burger_icon'):
             self.update_burger_icon()

@@ -1608,3 +1608,32 @@ class ShadowContextMenu(QFrame):
                               10+ex*.25, 10+ex*.25)
         p.setPen(self._bc); p.setBrush(self._bg)
         p.drawRoundedRect(content, 10, 10); p.end()
+
+
+def themed_shadow_menu(parent, bg: str = None) -> ShadowContextMenu:
+    """Create a ShadowContextMenu pre-configured with the window's current theme.
+
+    `bg` overrides the panel background (e.g. a view's own _bg_color) when the
+    theme's main_panel_bg shouldn't be used directly.
+    """
+    from player.mixins.visuals import resolve_menu_hover
+    theme = getattr(parent.window(), 'theme', None)
+    if bg is None:
+        bg = getattr(theme, 'main_panel_bg', '14,14,14') if theme else '14,14,14'
+    bc = getattr(theme, 'border_color', '#2a2a2a') if theme else '#2a2a2a'
+    if theme and not getattr(theme, 'auto_border_from_accent', True):
+        bc = getattr(theme, 'manual_border_color', '#2a2a2a')
+    fg  = getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd'
+    fg2 = getattr(theme, 'font_color_secondary', '#555555') if theme else '#555555'
+    px  = getattr(theme, 'font_size_primary',    14)        if theme else 14
+    acc = getattr(theme, 'accent',               '#cccccc') if theme else '#cccccc'
+    hov = resolve_menu_hover(theme)
+    menu = ShadowContextMenu(parent)
+    menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
+    return menu
+
+
+def popup_menu_at_global(menu: ShadowContextMenu, global_x: float, global_y: float, window=None):
+    """Show `menu` so its padded edge aligns with the given global (x, y)."""
+    gp = QPoint(int(global_x), int(global_y))
+    menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=window)

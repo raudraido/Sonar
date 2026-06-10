@@ -17,7 +17,9 @@
       "Bash(find /home/raudraido/psysonic/src -name \"*GenreFilterBar*\" -o -name \"*genreFilter*\")",
       "Read(//home/raudraido/psysonic/src/**)",
       "Bash(python main.py)",
-      "Bash(taskkill /F /IM python.exe /T)"
+      "Bash(taskkill /F /IM python.exe /T)",
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\home.py\"\\).Count)",
+      "PowerShell(Add-Type -AssemblyName System.Drawing; $src = [System.Drawing.Image]::FromFile\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\screen1.png\"\\); $crop = New-Object System.Drawing.Bitmap\\(900, 300\\); $g = [System.Drawing.Graphics]::FromImage\\($crop\\); $g.DrawImage\\($src, [System.Drawing.Rectangle]::new\\(0,0,900,300\\), [System.Drawing.Rectangle]::new\\(130,230,900,300\\), [System.Drawing.GraphicsUnit]::Pixel\\); $g.Dispose\\(\\); $src.Dispose\\(\\); $crop.Save\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\tracklist_header.png\"\\); $crop.Dispose\\(\\); echo \"cropped\")"
     ]
   }
 }

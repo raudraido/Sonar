@@ -331,9 +331,12 @@ class KeyboardMixin:
             from PyQt6.QtWidgets import QLineEdit, QApplication
             focus_widget = QApplication.focusWidget()
 
-            # SLASH: toggle track search in album detail view
+            # SLASH: toggle inline search in the grid / album detail view
             if event.key() == Qt.Key.Key_Slash and not isinstance(focus_widget, QLineEdit):
                 current_widget = self.tabs.currentWidget()
+                if hasattr(current_widget, '_toggle_track_search'):
+                    current_widget._toggle_track_search()
+                    return True
                 if hasattr(current_widget, 'stack') and current_widget.stack.currentIndex() == 1:
                     dv = getattr(current_widget, 'detail_view', None)
                     if dv and hasattr(dv, '_toggle_track_search'):
