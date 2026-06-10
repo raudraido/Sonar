@@ -2045,6 +2045,357 @@ class CombinedTrackDelegate(QStyledItemDelegate):
             self.current_hover = (None, None)
             if self.parent(): self.parent().viewport().update()
 
+
+_ARTIST_SEP_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
+
+def _split_artist(artist: str):
+    return [(p, bool(_ARTIST_SEP_RE.match(p))) for p in _ARTIST_SEP_RE.split(artist) if p]
+
+
+_GENRE_SEP_RE = re.compile(r' /// | • | / |,\s*|;\s*')
+
+def _split_genres(text):
+    """Return list of (text, is_sep) pairs, splitting on bullet/comma/semicolon/slash."""
+    parts = [p.strip() for p in _GENRE_SEP_RE.split(text.strip()) if p.strip()]
+    result = []
+    for i, p in enumerate(parts):
+        result.append((p, False))
+        if i < len(parts) - 1:
+            result.append((' • ', True))
+    return result
+
+
+class _TrackHeader(QHeaderView):
+    _FLEX_COL   = 1   # TITLE — Stretch, absorbs space
+    _FLEX_NEXT  = 2   # ARTIST — resized when TITLE's right boundary is dragged
+    _HANDLE_PX  = 5   # hit-test tolerance in pixels
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._accent = QColor('#555555')
+        self._left_drag = False
+        self._left_start_x = 0
+        self._left_start_w = 0
+
+    def set_accent(self, color: str):
+        self._accent = QColor(color)
+        self.update()
+
+    def _theme(self):
+        w = self.window() if hasattr(self, 'window') else None
+        return getattr(w, 'theme', None)
+    def _secondary_px(self):
+        t = self._theme(); return getattr(t, 'font_size_secondary', 12) if t else 12
+    def _secondary_color(self):
+        t = self._theme(); return getattr(t, 'font_color_secondary', '#555555') if t else '#555555'
+    def _border_qcolor(self):
+        t = self._theme()
+        if t is None:
+            return QColor('#2a2a2a')
+        if getattr(t, 'auto_border_from_accent', True):
+            return QColor(getattr(t, 'accent', '#cccccc')).darker(250)
+        return QColor(getattr(t, 'manual_border_color', '#2a2a2a'))
+
+    def _flex_boundary_x(self):
+        return self.sectionViewportPosition(self._FLEX_COL) + self.sectionSize(self._FLEX_COL)
+
+    def _near_flex_boundary(self, x):
+        return abs(x - self._flex_boundary_x()) <= self._HANDLE_PX
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._near_flex_boundary(event.pos().x()):
+            self._left_drag = True
+            self._left_start_x = event.pos().x()
+            self._left_start_w = self.sectionSize(self._FLEX_NEXT)
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._left_drag:
+            delta = event.pos().x() - self._left_start_x
+            # drag right → ARTIST shrinks (direction = -1, matching psysonic)
+            new_w = max(80, self._left_start_w - delta)
+            self.resizeSection(self._FLEX_NEXT, new_w)
+            event.accept()
+            return
+        if self._near_flex_boundary(event.pos().x()):
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._left_drag:
+            self._left_drag = False
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintSection(self, painter, rect, logical_index):
+        if not rect.isValid():
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(rect, Qt.GlobalColor.transparent)
+
+        text = self.model().headerData(logical_index, Qt.Orientation.Horizontal) or ''
+        f = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
+        painter.setFont(f)
+        painter.setPen(QColor(self._secondary_color()))
+        h_align = Qt.AlignmentFlag.AlignHCenter if logical_index in (0, 3, 5) else Qt.AlignmentFlag.AlignLeft
+        painter.drawText(rect.adjusted(4, 0, -4, -8),
+                         h_align | Qt.AlignmentFlag.AlignBottom, text)
+
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+
+        if logical_index > 0:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            pen = QPen(self._border_qcolor(), 2)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawLine(rect.right(), rect.top() - 5, rect.right(), rect.bottom() - 8)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        painter.restore()
+
+
+class _TrackListDelegate(QStyledItemDelegate):
+    """Adds 8px top gap on row 0; draws hover/selection/playing backgrounds manually."""
+    def __init__(self, parent=None, heart_col=3):
+        super().__init__(parent)
+        self._heart_col = heart_col   # column index that shows ♥/♡ (-1 = none)
+        self.playing_row = -1
+        self.accent = QColor('#cccccc')
+        self._active_hover = QColor(204, 204, 204, 45)  # updated via set_active_hover
+        self.font_size = 14
+        self._movie = None
+        self._is_playing = False
+        self._hover_artist = None   # (row, part_text)
+        self._hover_genre  = None   # (row, genre_text)
+        self._heart_filled_pix = QPixmap()
+        self._heart_empty_pix  = QPixmap()
+        self._kbd_row = -1
+        self.max_genres = -1   # -1 = no limit
+
+    def set_font_size(self, size: int):
+        self.font_size = size
+
+    def _primary_px(self) -> int:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_size_primary', self.font_size) if _theme else self.font_size
+
+    def _secondary_px(self) -> int:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_size_secondary', max(self.font_size - 2, 10)) if _theme else max(self.font_size - 2, 10)
+
+    def _primary_color(self) -> str:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_color_primary', '#dddddd') if _theme else '#dddddd'
+
+    def _secondary_color(self) -> str:
+        _p = self.parent()
+        _theme = getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+        return getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
+
+    def _theme(self):
+        _p = self.parent()
+        return getattr(getattr(_p, 'window', lambda: None)(), 'theme', None) if _p else None
+
+    def _hover_qcolor(self) -> QColor:
+        return QColor(resolve_menu_hover(self._theme()))
+
+    def set_movie(self, movie):
+        self._movie = movie
+
+    def set_heart_pixmaps(self, filled: QPixmap, empty: QPixmap):
+        self._heart_filled_pix = filled
+        self._heart_empty_pix  = empty
+
+    def set_active_hover(self, color: 'QColor'):
+        self._active_hover = color
+        if self.parent():
+            self.parent().viewport().update()
+
+    def set_playing(self, row: int, accent: str, is_playing: bool = True):
+        self.playing_row = row
+        self._is_playing = is_playing
+        self.accent = QColor(accent)
+        if self.parent():
+            self.parent().viewport().update()
+
+    def sizeHint(self, option, index):
+        return super().sizeHint(option, index)
+
+    def paint(self, painter, option, index):
+        from PyQt6.QtWidgets import QStyle
+        draw_rect = option.rect
+        is_playing_row = (index.row() == self.playing_row)
+
+        # Disc separator rows — draw label in col 1 only, skip everything else
+        user_data = index.sibling(index.row(), 0).data(Qt.ItemDataRole.UserRole)
+        if isinstance(user_data, dict) and user_data.get('_is_disc_header'):
+            if index.column() == 1:
+                text = index.data() or ''
+                view = option.widget
+                full_w = view.viewport().width() if view else draw_rect.width()
+                span_rect = draw_rect.__class__(draw_rect.left(), draw_rect.y(), full_w - draw_rect.left(), draw_rect.height())
+                f = QFont()
+                f.setPixelSize(self._secondary_px())
+                f.setBold(True)
+                fm = QFontMetrics(f)
+                painter.save()
+                painter.setFont(f)
+                painter.setPen(QColor(self._secondary_color()))
+                painter.drawText(span_rect.left() + 4, span_rect.center().y() + fm.ascent() // 2, text)
+                painter.restore()
+            return
+
+        # Draw background once per row (col 0 only) spanning full width
+        if index.column() == 0:
+            is_kbd = (index.row() == self._kbd_row)
+            if option.state & QStyle.StateFlag.State_MouseOver:
+                color = self._hover_qcolor()
+            elif is_kbd:
+                color = self._active_hover
+            else:
+                color = None
+            if color:
+                view = option.widget
+                full_w = view.viewport().width() if view else option.rect.width()
+                row_rect = option.rect.__class__(0, option.rect.y(), full_w, option.rect.height())
+                painter.save()
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(row_rect, 6, 6)
+                painter.restore()
+
+            # Draw playing GIF instead of track number
+            if is_playing_row and self._movie and self._is_playing:
+                pix = self._movie.currentPixmap()
+                if not pix.isNull():
+                    px = draw_rect.left() + (draw_rect.width() - pix.width()) // 2
+                    py = draw_rect.top()  + (draw_rect.height() - pix.height()) // 2
+                    painter.drawPixmap(px, py, pix)
+                return  # skip text rendering for col 0 on playing row
+
+        # Col 3 — draw heart pixmap centered
+        if self._heart_col >= 0 and index.column() == self._heart_col:
+            is_fav = index.data() == '♥'
+            pix = self._heart_filled_pix if is_fav else self._heart_empty_pix
+            if not pix.isNull():
+                px = draw_rect.center().x() - pix.width() // 2
+                py = draw_rect.center().y() - pix.height() // 2
+                painter.drawPixmap(px, py, pix)
+            return
+
+        # Col 2 — draw artist parts manually so we can underline on hover
+        if index.column() == 2:
+            artist = index.data() or ''
+            f = QFont()
+            f.setPixelSize(self._secondary_px())
+            fm = QFontMetrics(f)
+            ax = draw_rect.left() + 4
+            ay = draw_rect.center().y()
+            right_edge = draw_rect.right() - 4
+            row = index.row()
+            painter.save()
+            painter.setFont(f)
+            for part, is_sep in _split_artist(artist):
+                pw = fm.horizontalAdvance(part)
+                available = right_edge - ax
+                if ax + pw > right_edge:
+                    if available > 0:
+                        elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
+                        painter.setPen(QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor(self._secondary_color())))
+                        painter.drawText(ax, ay + fm.ascent() // 2, elided)
+                    break
+                hovered = (not is_sep and self._hover_artist == (row, part.strip()))
+                if is_sep:
+                    painter.setPen(QColor(120, 120, 120))
+                else:
+                    painter.setPen(self.accent if row == self.playing_row else QColor(self._secondary_color()))
+                painter.drawText(ax, ay + fm.ascent() // 2, part)
+                if hovered:
+                    painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
+                ax += pw
+            painter.restore()
+            return
+
+        # Col 1 — title at theme primary font size
+        if index.column() == 1:
+            text = index.data() or ''
+            f = QFont()
+            f.setPixelSize(self._primary_px())
+            f.setBold(True)
+            fm = QFontMetrics(f)
+            painter.save()
+            painter.setFont(f)
+            painter.setPen(QColor(index.data(Qt.ItemDataRole.ForegroundRole)) if index.data(Qt.ItemDataRole.ForegroundRole) else QColor(self._primary_color()))
+            x = draw_rect.left() + 4
+            y = draw_rect.center().y() + fm.ascent() // 2
+            painter.drawText(x, y, fm.elidedText(text, Qt.TextElideMode.ElideRight, draw_rect.width() - 8))
+            painter.restore()
+            return
+
+        # Col 4 — genre, each part separately clickable with hover underline
+        if index.column() == 4:
+            genre_text = index.data() or ''
+            if genre_text:
+                f = QFont()
+                f.setPixelSize(self._secondary_px())
+                fm = QFontMetrics(f)
+                ax = draw_rect.left() + 4
+                ay = draw_rect.center().y()
+                right_edge = draw_rect.right() - 4
+                row = index.row()
+                painter.save()
+                painter.setFont(f)
+                genre_count = 0
+                for part, is_sep in _split_genres(genre_text):
+                    if self.max_genres > 0 and genre_count >= self.max_genres:
+                        break
+                    if not is_sep:
+                        genre_count += 1
+                    pw = fm.horizontalAdvance(part)
+                    available = right_edge - ax
+                    if ax >= right_edge:
+                        break
+                    if ax + pw > right_edge and available > 0:
+                        elided = fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
+                        painter.setPen(QColor(120, 120, 120) if is_sep else QColor(self._secondary_color()))
+                        painter.drawText(ax, ay + fm.ascent() // 2, elided)
+                        break
+                    hovered = (not is_sep and self._hover_genre == (row, part))
+                    painter.setPen(QColor(120, 120, 120) if is_sep else QColor(self._secondary_color()))
+                    painter.drawText(ax, ay + fm.ascent() // 2, part)
+                    if hovered:
+                        painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
+                    ax += pw
+                painter.restore()
+                return
+
+        # All other columns — strip hover/selected so super() doesn't re-draw background
+        opt = option.__class__(option)
+        opt.rect = draw_rect
+        opt.state = opt.state & ~QStyle.StateFlag.State_MouseOver & ~QStyle.StateFlag.State_Selected
+        f = QFont(opt.font)
+        f.setPixelSize(self._secondary_px())
+        opt.font = f
+        from PyQt6.QtGui import QPalette
+        pal = QPalette(opt.palette)
+        pal.setColor(QPalette.ColorRole.Text, QColor(self._secondary_color()))
+        opt.palette = pal
+        super().paint(painter, opt, index)
+
+
 class TracksBrowser(QWidget):
     play_track = pyqtSignal(dict)
     play_multiple_tracks = pyqtSignal(list)

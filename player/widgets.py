@@ -7,6 +7,7 @@ parent reference so it can write back to visual_settings).
 """
 import os
 import re
+import time
 from version import __version__
 
 from PyQt6.QtWidgets import (
@@ -15,11 +16,15 @@ from PyQt6.QtWidgets import (
     QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog,
     QStyledItemDelegate, QStyle
 )
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent, QPropertyAnimation, QTimer, QVariantAnimation, QEasingCurve
+from PyQt6.QtCore import (Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSettings, QProcess, QEvent,
+                          QPropertyAnimation, QTimer, QVariantAnimation, QEasingCurve,
+                          QAbstractListModel, QModelIndex, QObject)
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
+from PyQt6.QtQuickWidgets import QQuickWidget
+from PyQt6.QtQuick import QQuickImageProvider
 from PyQt6.QtGui import (
     QFont, QFontMetrics, QColor, QMouseEvent, QPainter, QPen,
-    QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence, QIcon
+    QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence, QIcon, QCursor
 )
 
 from audio_engine import AudioEngine
@@ -1638,6 +1643,244 @@ def popup_menu_at_global(menu: ShadowContextMenu, global_x: float, global_y: flo
     """Show `menu` so its padded edge aligns with the given global (x, y)."""
     gp = QPoint(int(global_x), int(global_y))
     menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=window)
+
+
+class CoverImageProvider(QQuickImageProvider):
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self.image_cache = {}
+
+    def requestImage(self, id, requestedSize):
+        from PyQt6.QtGui import QImage, QPainter, QPainterPath
+        from PyQt6.QtCore import Qt, QRectF
+
+        real_id = id.split("?t=")[0]
+        data = self.image_cache.get(real_id)
+
+
+        size = 250
+        img = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+
+        if data:
+            source = QImage()
+            source.loadFromData(data)
+            if not source.isNull():
+                source = source.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+
+                # Slice the corners off the QImage perfectly!
+                painter = QPainter(img)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
+
+                painter.setClipPath(path)
+                painter.drawImage(0, 0, source)
+                painter.end()
+
+        return img, img.size()
+
+
+class AlbumModel(QAbstractListModel):
+    TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
+    ARTIST_ROLE = Qt.ItemDataRole.UserRole + 2
+    YEAR_ROLE = Qt.ItemDataRole.UserRole + 3
+    COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 4
+    RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
+    IS_LOADING_ROLE = Qt.ItemDataRole.UserRole + 6
+    SONG_COUNT_ROLE = Qt.ItemDataRole.UserRole + 7
+    ARTIST_ID_ROLE = Qt.ItemDataRole.UserRole + 8
+
+    def __init__(self):
+        super().__init__()
+        self.albums = []
+
+    def rowCount(self, parent=QModelIndex()): return len(self.albums)
+
+    def data(self, index, role):
+        if not index.isValid(): return None
+        a = self.albums[index.row()]
+        if role == self.TITLE_ROLE:
+            if a.get('type') == 'placeholder': return ''
+            return a.get('title') or a.get('name') or 'Unknown'
+        if role == self.ARTIST_ROLE: return a.get('artist') or a.get('albumArtist') or ''
+        if role == self.YEAR_ROLE: return str(a.get('year') or a.get('minYear') or a.get('maxYear') or '').replace('None', '')
+        if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
+        if role == self.RAW_DATA_ROLE: return a
+        if role == self.IS_LOADING_ROLE: return a.get('type') == 'placeholder'
+        if role == self.SONG_COUNT_ROLE:
+            n = a.get('songCount') or a.get('trackCount') or ''
+            return f"{n} tracks" if n else ''
+        if role == self.ARTIST_ID_ROLE:
+            return a.get('artistId') or a.get('albumArtistId') or ''
+        return None
+
+    def roleNames(self):
+        return {
+            self.TITLE_ROLE: b"albumTitle", self.ARTIST_ROLE: b"albumArtist",
+            self.YEAR_ROLE: b"albumYear", self.COVER_ID_ROLE: b"coverId",
+            self.RAW_DATA_ROLE: b"rawData", self.IS_LOADING_ROLE: b"isLoading",
+            self.SONG_COUNT_ROLE: b"albumSongCount",
+            self.ARTIST_ID_ROLE: b"albumArtistId",
+        }
+
+    def append_albums(self, new_albums):
+        start = len(self.albums)
+        self.beginInsertRows(QModelIndex(), start, start + len(new_albums) - 1)
+        self.albums.extend(new_albums)
+        self.endInsertRows()
+
+    def clear(self):
+        self.beginResetModel()
+        self.albums = []
+        self.endResetModel()
+
+    def update_cover(self, cover_id):
+        import time
+        forced_id = f"{cover_id}?t={time.time()}"
+        for i, a in enumerate(self.albums):
+            if a.get('cover_id') == cover_id:
+                a['coverId_forced'] = forced_id
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
+
+
+class DummyScrollBar:
+    def value(self): return 0
+    def setValue(self, val): pass
+    def setStyleSheet(self, style): pass
+    def setSingleStep(self, step): pass
+
+
+class QMLGridWrapper(QQuickWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._dummy_scroll = DummyScrollBar()
+
+    def verticalScrollBar(self): return self._dummy_scroll
+
+    def viewport(self): return self
+
+    # Silently absorb all legacy QListWidget commands from main.py!
+    def setLayoutMode(self, *args): pass
+
+    def setUniformItemSizes(self, *args): pass
+
+    def setBatchSize(self, *args): pass
+
+    def setSpacing(self, *args): pass
+
+    def setGridSize(self, *args): pass
+
+    def setIconSize(self, *args): pass
+
+    def setMovement(self, *args): pass
+
+    def setVerticalScrollMode(self, *args): pass
+
+    def setViewMode(self, *args): pass
+
+    def doItemsLayout(self, *args): pass
+
+    def clear(self): pass
+
+    def count(self): return 0
+
+    def currentItem(self): return None
+
+    def currentRow(self): return -1
+
+    def setCurrentRow(self, *args): pass
+
+    def setCurrentItem(self, *args): pass
+
+    def item(self, *args): return None
+
+    def setResizeMode(self, mode):
+        from PyQt6.QtQuickWidgets import QQuickWidget
+        if isinstance(mode, QQuickWidget.ResizeMode):
+            super().setResizeMode(mode)
+
+
+class QMLMiddleClickScroller(QObject):
+    """
+    Middle-click omni-scroller for QMLGridWrapper.
+    Mirrors MiddleClickScroller but pushes pixel deltas via GridBridge.scrollBy
+    instead of writing to a QScrollBar (which is a no-op stub on QMLGridWrapper).
+    """
+    def __init__(self, qml_widget, bridge):
+        super().__init__(qml_widget)
+        self.target = qml_widget
+        self.bridge = bridge
+        self.is_scrolling = False
+        self.origin_y = 0
+        self.click_time = 0
+
+        self.timer = QTimer(self)
+        self.timer.start(7)
+        self.timer.timeout.connect(self._process_scroll)
+
+        # Monitor the widget itself (QQuickWidget has no separate viewport)
+        self.target.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == self.target and event.type() == QEvent.Type.Hide:
+            if self.is_scrolling:
+                self._stop()
+            return False
+
+        if obj == self.target:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.MiddleButton:
+                    if self.is_scrolling:
+                        self._stop()
+                    else:
+                        self._start(event.globalPosition().toPoint().y())
+                    return True          # swallow — QML native handler not needed
+                elif self.is_scrolling:
+                    self._stop()
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                if event.button() == Qt.MouseButton.MiddleButton and self.is_scrolling:
+                    if time.time() - self.click_time > 0.2:
+                        self._stop()
+                    return True
+
+        return super().eventFilter(obj, event)
+
+    def _start(self, start_y):
+        self.is_scrolling = True
+        self.origin_y = start_y
+        self.click_time = time.time()
+        self.target.setCursor(Qt.CursorShape.SizeVerCursor)
+
+    def _stop(self):
+        self.is_scrolling = False
+        self.target.unsetCursor()
+        self.bridge.cancelScroll.emit()     # also kills the QML-side cursor if active
+
+    def _process_scroll(self):
+        if not self.is_scrolling:
+            return
+
+        buttons = QApplication.mouseButtons()
+        if (not self.target.isVisible()
+                or not QApplication.activeWindow()
+                or (buttons & Qt.MouseButton.LeftButton)
+                or (buttons & Qt.MouseButton.RightButton)):
+            self._stop()
+            return
+
+        delta = QCursor.pos().y() - self.origin_y
+        deadzone = 15
+        if abs(delta) < deadzone:
+            return
+
+        speed = (abs(delta) - deadzone) * 0.03
+        direction = 1 if delta > 0 else -1
+        self.bridge.scrollBy.emit(speed * direction)
 
 
 class GridItemDelegate(QStyledItemDelegate):

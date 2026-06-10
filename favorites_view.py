@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QRect
 from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter, QCursor
 
 from home_widgets import HomeAlbumRowWidget
-from tracks_browser import _checkmark_svg_path
+from tracks_browser import _checkmark_svg_path, _TrackHeader, _TrackListDelegate
 from player.widgets import ShadowContextMenu as _ShadowContextMenu
 
 
@@ -176,7 +176,6 @@ class _GenrePopup(QFrame):
         self._selected.clear()
         self._rebuild()
         self.selection_changed.emit(set())
-from albums_browser import _TrackListDelegate, _TrackHeader
 from player import resource_path
 from player.workers import GridCoverWorker
 from now_playing_info import _Card
