@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QListWidgetItem, QPushButton, QStackedWidget, QApplication,
                              QLabel, QScrollArea, QSizePolicy, QFrame, QGridLayout,
                              QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QComboBox,
-                             QLineEdit, QToolButton, QMenu, QStyledItemDelegate, QStyle, QAbstractButton,
+                             QLineEdit, QToolButton, QMenu, QStyledItemDelegate, QStyle,
                              QGraphicsDropShadowEffect)
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QEvent, QAbstractListModel, QModelIndex, QByteArray, pyqtSlot, QObject, QUrl
@@ -19,7 +19,7 @@ from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
 from albums_browser import AlbumDetailView
-from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel
+from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton
 from player import resource_path
 from player.workers import GridCoverWorker
 
@@ -1350,45 +1350,6 @@ class CircularArtistDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-class _ArrowButton(QAbstractButton):
-    def __init__(self, direction, color, parent=None):
-        super().__init__(parent)
-        self._direction = direction  # "left" or "right"
-        self._color = QColor(color)
-        self.setFixedSize(30, 30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-
-    def set_color(self, color):
-        self._color = QColor(color)
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        if self.underMouse():
-            p.setBrush(QColor(255, 255, 255, 20))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 5, 5)
-
-        color = self._color if self.isEnabled() else QColor("#333")
-        p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-
-        cx, cy = self.width() / 2, self.height() / 2
-        s = 6  # half-height of the chevron
-        o = 3  # horizontal offset from center
-
-        if self._direction == "right":
-            p.drawLine(int(cx - o), int(cy - s), int(cx + o), int(cy))
-            p.drawLine(int(cx + o), int(cy), int(cx - o), int(cy + s))
-        else:
-            p.drawLine(int(cx + o), int(cy - s), int(cx - o), int(cy))
-            p.drawLine(int(cx - o), int(cy), int(cx + o), int(cy + s))
-
-        p.end()
-
-
 class RelatedArtistRowWidget(QWidget):
     """Single-row horizontally scrollable circular artist strip (max 10 items)."""
     artist_clicked = pyqtSignal(dict)
@@ -1418,8 +1379,8 @@ class RelatedArtistRowWidget(QWidget):
         self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_count.setStyleSheet("color: #aaa; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
         self._accent_color = "#888888"
-        self._btn_left  = _ArrowButton("left",  self._accent_color)
-        self._btn_right = _ArrowButton("right", self._accent_color)
+        self._btn_left  = ArrowButton("left",  self._accent_color)
+        self._btn_right = ArrowButton("right", self._accent_color)
 
         self._btn_left.clicked.connect(lambda: self._scroll_by(-self.CELL_W))
         self._btn_right.clicked.connect(lambda: self._scroll_by(self.CELL_W))

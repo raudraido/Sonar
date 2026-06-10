@@ -1,17 +1,13 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QScrollArea, QPushButton,
                              QListWidget, QListWidgetItem, QAbstractItemView,
-                             QAbstractButton, QFrame, QGraphicsOpacityEffect,
-                             QApplication, QStyledItemDelegate, QStyleOptionViewItem)
-from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer, QSize, QEvent, QRect,
-                          QRectF, QSettings, QPropertyAnimation, QParallelAnimationGroup,
+                             QStyledItemDelegate, QStyleOptionViewItem)
+from PyQt6.QtCore import (Qt, pyqtSignal, QTimer, QSize, QEvent, QRect,
+                          QRectF, QPropertyAnimation, QParallelAnimationGroup,
                           QEasingCurve, QPoint)
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QPen, QCursor, QBrush, QImage
-from player.widgets import GridItemDelegate
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QCursor, QBrush, QImage
+from player.widgets import GridItemDelegate, ArrowButton
 from player import resource_path
-from player.workers import GridCoverWorker
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker, SpinRefreshButton
-from tracks_browser import MiddleClickScroller
+from player.mixins.visuals import SpinRefreshButton
 
 class _ShimmerDelegate(QStyledItemDelegate):
     """Paints animated shimmer cards for skeleton placeholder items."""
@@ -29,7 +25,6 @@ class _ShimmerDelegate(QStyledItemDelegate):
         self._timer.start(40)   # ~25 fps
 
     def _tick(self):
-        import math
         self._phase = (self._phase + 0.04) % 1.0
         self._viewport.update()
 
@@ -91,49 +86,6 @@ class _HomeGridDelegate(GridItemDelegate):
         opt = QStyleOptionViewItem(option)
         opt.rect = option.rect.adjusted(0, 0, self._SB_W - 4, 0)
         super().paint(painter, opt, index)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Arrow button (same as RelatedArtistRowWidget uses)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class _ArrowButton(QAbstractButton):
-    def __init__(self, direction, color, parent=None):
-        super().__init__(parent)
-        self._direction = direction
-        self._color = QColor(color)
-        self._active = True
-        self.setFixedSize(30, 30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-
-    def set_color(self, color):
-        self._color = QColor(color)
-        self.update()
-
-    def set_active(self, active: bool):
-        self._active = active
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.underMouse():
-            _theme = getattr(self.window(), 'theme', None)
-            p.setBrush(QColor(resolve_menu_hover(_theme)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 12, 12)
-        color = self._color if self._active else QColor("#333")
-        p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        cx, cy = self.width() / 2, self.height() / 2
-        s, o = 6, 3
-        if self._direction == "right":
-            p.drawLine(int(cx - o), int(cy - s), int(cx + o), int(cy))
-            p.drawLine(int(cx + o), int(cy), int(cx - o), int(cy + s))
-        else:
-            p.drawLine(int(cx + o), int(cy - s), int(cx - o), int(cy))
-            p.drawLine(int(cx - o), int(cy), int(cx + o), int(cy + s))
-        p.end()
 
 
 def _RefreshButton(color, parent=None):
@@ -248,8 +200,8 @@ class HomeAlbumRowWidget(QWidget):
             self.btn_refresh.setToolTip(refresh_tooltip)
             title_layout.addWidget(self.btn_refresh)
 
-        self._btn_left  = _ArrowButton("left",  self._accent)
-        self._btn_right = _ArrowButton("right", self._accent)
+        self._btn_left  = ArrowButton("left",  self._accent)
+        self._btn_right = ArrowButton("right", self._accent)
         self._btn_left.clicked.connect(self._page_left)
         self._btn_right.clicked.connect(self._page_right)
         title_layout.addWidget(self._btn_left)

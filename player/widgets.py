@@ -12,7 +12,7 @@ from version import __version__
 
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
-    QSlider, QPushButton, QCheckBox, QApplication,
+    QSlider, QPushButton, QCheckBox, QApplication, QAbstractButton,
     QMessageBox, QScrollArea, QFrame, QGridLayout, QFileDialog, QGroupBox, QDialog,
     QStyledItemDelegate, QStyle
 )
@@ -1881,6 +1881,44 @@ class QMLMiddleClickScroller(QObject):
         speed = (abs(delta) - deadzone) * 0.03
         direction = 1 if delta > 0 else -1
         self.bridge.scrollBy.emit(speed * direction)
+
+
+class ArrowButton(QAbstractButton):
+    """Small left/right chevron button with a themed hover highlight."""
+
+    def __init__(self, direction, color, parent=None):
+        super().__init__(parent)
+        self._direction = direction
+        self._color = QColor(color)
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def set_color(self, color):
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, _):
+        from player.mixins.visuals import resolve_menu_hover
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.underMouse():
+            theme = getattr(self.window(), 'theme', None)
+            p.setBrush(QColor(resolve_menu_hover(theme)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(self.rect(), 12, 12)
+        color = self._color if self.isEnabled() else QColor("#333")
+        p.setPen(QPen(color, 2, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        cx, cy = self.width() / 2, self.height() / 2
+        s, o = 6, 3
+        if self._direction == "right":
+            p.drawLine(int(cx - o), int(cy - s), int(cx + o), int(cy))
+            p.drawLine(int(cx + o), int(cy), int(cx - o), int(cy + s))
+        else:
+            p.drawLine(int(cx + o), int(cy - s), int(cx - o), int(cy))
+            p.drawLine(int(cx - o), int(cy), int(cx + o), int(cy + s))
+        p.end()
 
 
 class GridItemDelegate(QStyledItemDelegate):
