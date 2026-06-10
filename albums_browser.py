@@ -1111,10 +1111,11 @@ class AlbumDetailView(QWidget):
 class _GridKeyFilter(SearchKeyFilter):
     """Widget-level key filter for the albums grid's inline search box.
 
-    Routes typing into the grid search box while active; Return commits the
-    search instantly and jumps focus to the first grid item. All other keys
-    (arrows, page up/down, space, enter when not searching) fall through
-    unhandled to the QML GridView's own Keys.onPressed.
+    Routes typing into the grid search box while active. If Return is
+    pressed while a search is still debouncing, commits it instantly and
+    jumps focus to the first grid item. Once the search has settled (or
+    isn't active), Return falls through unhandled to the QML GridView's
+    own Keys.onPressed, which opens the currently-selected album.
     """
 
     def __init__(self, view, parent=None):
@@ -1122,7 +1123,8 @@ class _GridKeyFilter(SearchKeyFilter):
         self._view = view
 
     def _navigate(self, event):
-        if self._ctl.active and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if (self._ctl.active and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self._view.search_timer.isActive()):
             self._view.focus_first_grid_item()
             return True
         return False
@@ -1309,12 +1311,11 @@ class LibraryGridBrowser(QWidget):
         if self.search_timer.isActive():
             self.search_timer.stop()
             self.execute_search()
-            
+
         def apply_focus():
-            if self.grid_view.count() > 0:
-                self.grid_view.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                self.grid_view.setCurrentRow(0)
-                
+            if self.album_model.rowCount() > 0:
+                self.qml_view.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
         # Wait 50ms before grabbing focus so the Enter key doesn't bleed into the grid!
         QTimer.singleShot(50, apply_focus)
     
