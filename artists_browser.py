@@ -15,7 +15,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QBrush
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import AlbumDetailView
+from albums_browser import AlbumDetailView, AlbumDetailCoverProvider
 from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider
 from player.qml_search import SearchController, GridSearchKeyFilter, set_window_shortcuts_enabled
 from player import resource_path
@@ -1502,6 +1502,98 @@ class _ArtistPhotoOverlay(QWidget):
         self.deleteLater()
 
 
+class ArtistDetailCoverProvider(AlbumDetailCoverProvider):
+    """Same shadow/halo rendering as AlbumDetailCoverProvider, but with a
+    circular shadow + clip to suit the round artist photo."""
+
+    def _shadow_shape(self, pad, oy, art, r):
+        path = QPainterPath()
+        path.addEllipse(QRectF(pad, pad + oy, art, art))
+        return path
+
+    def _art_clip(self, pad, art, r):
+        path = QPainterPath()
+        path.addEllipse(QRectF(pad, pad, art, art))
+        return path
+
+
+class ArtistDetailBridge(QObject):
+    # → QML
+    accentColorChanged        = pyqtSignal(str)
+    hoverColorChanged         = pyqtSignal(str)
+    skeletonColorChanged      = pyqtSignal(str)
+    cardBgChanged             = pyqtSignal(str)
+    cardBorderChanged         = pyqtSignal(str)
+    panelBgChanged            = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
+    fontFamilyChanged         = pyqtSignal(str)
+    artistDataChanged         = pyqtSignal(str, str, bool)  # name, stats, isFav
+    photoIdChanged            = pyqtSignal(str)
+    bioChanged                = pyqtSignal(str)
+
+    def __init__(self, view):
+        super().__init__()
+        self._view = view
+
+    @pyqtSlot()
+    def playClicked(self):
+        self._view.play_current_artist_tracks()
+
+    @pyqtSlot()
+    def likeClicked(self):
+        self._view._toggle_artist_like()
+
+    @pyqtSlot()
+    def lastfmClicked(self):
+        self._view._open_artist_url('lastfm')
+
+    @pyqtSlot()
+    def wikipediaClicked(self):
+        self._view._open_artist_url('wikipedia')
+
+    @pyqtSlot()
+    def photoClicked(self):
+        self._view._show_photo_zoom()
+
+    @pyqtSlot(float)
+    def reportHeight(self, h: float):
+        self._view._on_qml_height_changed(h)
+
+    @pyqtSlot(str, int, int, int)
+    def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
+        from PyQt6.QtWidgets import QApplication
+        t = getattr(self, '_tip_hide_timer', None)
+        if t and t.isActive():
+            t.stop()
+        for w in QApplication.topLevelWidgets():
+            tf = getattr(w, '_tooltip_filter', None)
+            if tf:
+                tf._qml_mode = True
+                tf._ensure_tip().show_at(cx, above_y, below_y, text)
+                break
+
+    @pyqtSlot()
+    def hideTooltip(self):
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QTimer
+        def _do_hide():
+            for w in QApplication.topLevelWidgets():
+                tf = getattr(w, '_tooltip_filter', None)
+                if tf:
+                    tf._qml_mode = False
+                    if tf._tip and tf._tip.isVisible():
+                        tf._tip.hide()
+                    break
+        t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(_do_hide)
+        t.start(120)
+        self._tip_hide_timer = t
+
+
 class _ArtistPhotoWidget(QWidget):
     """Circular artist photo with hover-zoom and click-to-expand."""
     def __init__(self, size=286, parent=None):
@@ -1627,165 +1719,43 @@ class ArtistRichDetailView(QWidget):
         self.content_layout.setContentsMargins(0, 0, 0, 50)
         self.content_layout.setSpacing(10)
 
-        # HEADER CARD
-        from now_playing_info import _Card
+        # HEADER + ABOUT — full QML (artist_detail.qml)
+        from player import resource_path
+
+        self._artist_liked = False
+        self._artist_stats_text = "Loading..."
+        self._bio_full_text = ""
+        self._cur_photo_pixmap = None
+        self.current_header_cover_id = None
+
+        self._photo_provider = ArtistDetailCoverProvider()
+        self._artist_icon_provider = AlbumIconProvider()
+        self._artist_bridge = ArtistDetailBridge(self)
+
+        self._qml = QQuickWidget()
+        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        engine = self._qml.engine()
+        engine.addImageProvider("artistdetailcover", self._photo_provider)
+        engine.addImageProvider("albumicons",         self._artist_icon_provider)
+
+        ctx = self._qml.rootContext()
+        ctx.setContextProperty("artistBridge", self._artist_bridge)
+
+        self._qml.setSource(QUrl.fromLocalFile(resource_path("artist_detail.qml")))
+
         _header_wrapper = QWidget()
         _header_wrapper.setObjectName('_hw')
         _header_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         _header_wrapper.setStyleSheet('#_hw { background: transparent; }')
         _hw_lo = QVBoxLayout(_header_wrapper)
-        _hw_lo.setContentsMargins(12, 12, 6, 0)
+        _hw_lo.setContentsMargins(0, 0, 0, 0)
         _hw_lo.setSpacing(0)
-
-        self.header_container = _Card()
-        _hw_lo.addWidget(self.header_container)
-
-        header_lo = QHBoxLayout(self.header_container)
-        header_lo.setContentsMargins(28, 28, 28, 28)
-        header_lo.setSpacing(28)
-
-        self.img_label = _ArtistPhotoWidget(286)
-
-        info_col = QWidget()
-        info_col.setStyleSheet('background: transparent;')
-        info_layout = QVBoxLayout(info_col)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-
-        self.lbl_name = QLabel("Artist Name")
-        self.lbl_name.setStyleSheet("font-weight: 900; color: white; font-size: 48px; background: transparent;")
-
-        self.lbl_stats = QLabel("Loading...")
-        self.lbl_stats.setStyleSheet("color: #ddd; font-size: 14px; background: transparent;")
-
-        btn_bar = QWidget()
-        btn_bar.setStyleSheet('background: transparent;')
-        btn_layout = QHBoxLayout(btn_bar)
-        btn_layout.setContentsMargins(0, 20, 0, 0)
-        btn_layout.setSpacing(2)
-        btn_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-
-        # --- ARTIST VIEW PLAY BUTTON ---
-        from player import resource_path
-
-        def _tint_icon(path, color, size=24):
-            p = QPixmap(resource_path(path))
-            if p.isNull():
-                return QIcon()
-            p = p.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
-            out = QPixmap(p.size())
-            out.fill(QColor(0, 0, 0, 0))
-            painter = QPainter(out)
-            painter.drawPixmap(0, 0, p)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            painter.fillRect(out.rect(), QColor(color))
-            painter.end()
-            return QIcon(out)
-
-        from player.widgets import PlayButton as _PlayButton, tint_icon as _tint
-        self.btn_play = _PlayButton()
-        self.btn_play.setFixedSize(60, 60)
-        self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_play.setIcon(_tint('img/play.png', '#cccccc'))
-        self.btn_play.setIconSize(QSize(18, 18))
-        self.btn_play.ensure_glow()
-        self.btn_play.clicked.connect(self.play_current_artist_tracks)
-        btn_layout.addWidget(self.btn_play)
-        self.btn_play.setToolTip("Play all tracks (Ctrl+Enter)")
-
-        _icon_btn_style = (
-            'QPushButton { background: transparent; border: none; border-radius: 4px; }'
-            ' QPushButton:hover { background: rgba(255, 255, 255, 0.1); }'
-        )
-
-        self._artist_liked = False
-        self.btn_like = QPushButton()
-        self.btn_like.setFlat(True)
-        self.btn_like.setFixedSize(36, 36)
-        self.btn_like.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_like.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_like.setToolTip("Add to Favorites")
-        self.btn_like.setStyleSheet(_icon_btn_style)
-        self.btn_like.setIcon(_tint_icon('img/heart.png', '#666666'))
-        self.btn_like.setIconSize(QSize(22, 22))
-        self.btn_like.clicked.connect(self._toggle_artist_like)
-        btn_layout.addWidget(self.btn_like)
-
-        self.btn_lastfm = QPushButton()
-        self.btn_lastfm.setFlat(True)
-        self.btn_lastfm.setFixedSize(36, 36)
-        self.btn_lastfm.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_lastfm.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_lastfm.setToolTip('Open on Last.fm')
-        self.btn_lastfm.setStyleSheet(_icon_btn_style)
-        self.btn_lastfm.setIcon(_tint_icon('img/lastfm.png', '#888888'))
-        self.btn_lastfm.setIconSize(QSize(22, 22))
-        self.btn_lastfm.clicked.connect(lambda: self._open_artist_url('lastfm'))
-        btn_layout.addWidget(self.btn_lastfm)
-
-        self.btn_wikipedia = QPushButton()
-        self.btn_wikipedia.setFlat(True)
-        self.btn_wikipedia.setFixedSize(36, 36)
-        self.btn_wikipedia.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_wikipedia.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.btn_wikipedia.setToolTip('Open on Wikipedia')
-        self.btn_wikipedia.setStyleSheet(_icon_btn_style)
-        self.btn_wikipedia.setIcon(_tint_icon('img/wikipedia.png', '#888888'))
-        self.btn_wikipedia.setIconSize(QSize(22, 22))
-        self.btn_wikipedia.clicked.connect(lambda: self._open_artist_url('wikipedia'))
-        btn_layout.addWidget(self.btn_wikipedia)
-
-        info_layout.addWidget(self.lbl_name)
-        info_layout.addWidget(self.lbl_stats)
-        info_layout.addWidget(btn_bar)
-
-        header_lo.addWidget(self.img_label)
-        header_lo.addWidget(info_col, 1)
+        _hw_lo.addWidget(self._qml)
 
         self.header = _header_wrapper
         self.content_layout.addWidget(self.header)
-
-        # ABOUT SECTION — wrapped in a card
-        from now_playing_info import _Card
-        self.bio_card = _Card()
-        _bio_lo = QVBoxLayout(self.bio_card)
-        _bio_lo.setContentsMargins(16, 16, 16, 16)
-        _bio_lo.setSpacing(8)
-
-        self.lbl_about_header = QLabel()
-        self.lbl_about_header.setStyleSheet("color: white; font-size: 20px; font-weight: bold;")
-        self._bio_collapsed = True
-        self._bio_full_text = ""
-
-        self.lbl_bio = QLabel()
-        self.lbl_bio.setWordWrap(True)
-        self.lbl_bio.setStyleSheet("color: #bbb; font-size: 14px; line-height: 1.4;")
-        self.lbl_bio.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.lbl_bio.mousePressEvent = lambda e: self._toggle_bio()
-
-        self.lbl_bio_toggle = QLabel("Show more")
-        self.lbl_bio_toggle.setStyleSheet("color: #888; font-size: 13px; padding-top: 2px;")
-        self.lbl_bio_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.lbl_bio_toggle.mousePressEvent = lambda e: self._toggle_bio()
-        self.lbl_bio_toggle.hide()
-
-        _bio_lo.addWidget(self.lbl_about_header)
-        _bio_lo.addWidget(self.lbl_bio)
-        _bio_lo.addWidget(self.lbl_bio_toggle)
-
-        _bio_wrap = QWidget()
-        _bio_wrap.setObjectName('_biow')
-        _bio_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _bio_wrap.setStyleSheet('#_biow { background: transparent; }')
-        _biow_lo = QVBoxLayout(_bio_wrap)
-        _biow_lo.setContentsMargins(12, 0, 6, 0)
-        _biow_lo.setSpacing(0)
-        _biow_lo.addWidget(self.bio_card)
-        self._bio_wrapper = _bio_wrap
-        self._bio_wrapper.hide()
-        self.content_layout.addWidget(self._bio_wrapper)
 
         # POPULAR TRACKS
         self.lbl_top_tracks = QLabel("Popular")
@@ -2009,9 +1979,9 @@ class ArtistRichDetailView(QWidget):
                             
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.btn_play.click()
+                        self.play_current_artist_tracks()
                         return True
-                        
+
                     curr_item = tree.currentItem()
                     if curr_item:
                         data = curr_item.data(0, Qt.ItemDataRole.UserRole)
@@ -2114,7 +2084,7 @@ class ArtistRichDetailView(QWidget):
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     if event.isAutoRepeat(): return True
                     if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.btn_play.click(); return True
+                        self.play_current_artist_tracks(); return True
                     curr_item = source.currentItem()
                     if curr_item:
                         data = curr_item.data(Qt.ItemDataRole.UserRole)
@@ -2177,7 +2147,7 @@ class ArtistRichDetailView(QWidget):
                 if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     if event.isAutoRepeat(): return True
                     if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.btn_play.click(); return True
+                        self.play_current_artist_tracks(); return True
                     if 0 <= idx < count:
                         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                             self.play_album.emit(section.album_model.albums[idx])
@@ -2195,7 +2165,7 @@ class ArtistRichDetailView(QWidget):
     def keyPressEvent(self, event):
         if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
                 event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)):
-            self.btn_play.animateClick()
+            self.play_current_artist_tracks()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -2219,76 +2189,40 @@ class ArtistRichDetailView(QWidget):
             {scrollbar_css(color)}
         """
         self.scroll.setStyleSheet(scrollbar_style)
-        if hasattr(self, 'header_container') and hasattr(self.header_container, 'set_border'):
-            theme = getattr(self.window(), 'theme', None)
-            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
-            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
-            self.header_container.set_border(border)
-            self.header_container.set_bg(card_bg)
-        
-        self.btn_play.apply_accent(color, getattr(self.window(), 'theme', None))
 
-        if hasattr(self, 'btn_lastfm'):
-            theme = getattr(self.window(), 'theme', None)
-            _hov  = resolve_menu_hover(theme)
-            _icon_btn_style = (
-                f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
-                f' QPushButton:hover {{ background: {_hov}; }}'
-            )
-            sec_color = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
-            self.btn_lastfm.setStyleSheet(_icon_btn_style)
-            self.btn_wikipedia.setStyleSheet(_icon_btn_style)
-            from player import resource_path as _rp
-            def _tint(path, col, size=24):
-                from PyQt6.QtGui import QPixmap as _QP, QPainter as _QPA, QColor as _QC, QIcon as _QI
-                p = _QP(_rp(path))
-                if p.isNull():
-                    return _QI()
-                p = p.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
-                out = _QP(p.size())
-                out.fill(_QC(0, 0, 0, 0))
-                painter = _QPA(out)
-                painter.drawPixmap(0, 0, p)
-                painter.setCompositionMode(_QPA.CompositionMode.CompositionMode_SourceIn)
-                painter.fillRect(out.rect(), _QC(col))
-                painter.end()
-                return _QI(out)
-            self.btn_lastfm.setIcon(_tint('img/lastfm.png', sec_color))
-            self.btn_lastfm.setIconSize(QSize(22, 22))
-            self.btn_wikipedia.setIcon(_tint('img/wikipedia.png', sec_color))
-            self.btn_wikipedia.setIconSize(QSize(22, 22))
-            if hasattr(self, 'btn_like'):
-                self.btn_like.setStyleSheet(_icon_btn_style)
-                self._update_like_btn()
+        theme = getattr(self.window(), 'theme', None)
+        self._artist_bridge.accentColorChanged.emit(color)
+        self._artist_bridge.hoverColorChanged.emit(resolve_menu_hover(theme) if theme else '#555555')
+        if theme:
+            self._artist_bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+            self._artist_bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+            self._artist_bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+            self._artist_bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            self._artist_bridge.fontFamilyChanged.emit(getattr(theme, 'app_font', ''))
+            self._artist_bridge.skeletonColorChanged.emit(
+                getattr(theme, 'skeleton_base', '#282828'))
+            self._artist_bridge.cardBgChanged.emit(
+                getattr(theme, 'now_playing_card_bg', '#1e1e1e'))
+            border = getattr(theme, 'border_color', '#2a2a2a')
+            if not getattr(theme, 'auto_border_from_accent', True):
+                border = getattr(theme, 'manual_border_color', '#2a2a2a')
+            self._artist_bridge.cardBorderChanged.emit(border)
+            raw_bg = getattr(theme, 'main_panel_bg', '14,14,14')
+            try:
+                r, g, b = (int(x) for x in raw_bg.split(','))
+                panel_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
+            except Exception:
+                panel_hex = '#0e0e0e'
+            self._artist_bridge.panelBgChanged.emit(panel_hex)
+
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
         self._scroll_reveal.color = color
 
-        theme = getattr(self.window(), 'theme', None)
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
-        sec_size  = getattr(theme, 'font_size_secondary', 12) if theme else 12
-        sec_color = getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa'
-        if hasattr(self, 'lbl_name'):
-            self.lbl_name.setStyleSheet(f"font-weight: 900; color: {color}; font-size: 48px;")
-        if hasattr(self, 'lbl_about_header'):
-            self.lbl_about_header.setStyleSheet(f"color: {pri_color}; font-size: 20px; font-weight: bold;")
         if hasattr(self, 'lbl_top_tracks'):
             self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
-        if hasattr(self, 'lbl_stats'):
-            self.lbl_stats.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px;")
-        if hasattr(self, 'lbl_bio'):
-            self.lbl_bio.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; line-height: 1.4;")
-        if hasattr(self, 'lbl_bio_toggle'):
-            self.lbl_bio_toggle.setStyleSheet(f"color: {sec_color}; font-size: {sec_size}px; padding-top: 2px;")
-        border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
-        card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
-        if hasattr(self, 'bio_card'):
-            self.bio_card.set_border(border)
-            self.bio_card.set_bg(card_bg)
 
-
-        
         for i in range(self.sections_layout.count()):
             row = self.sections_layout.itemAt(i).widget()
             if row and hasattr(row, 'set_accent_color'):
@@ -2297,58 +2231,42 @@ class ArtistRichDetailView(QWidget):
 
     def set_header_image(self, pixmap):
         from PyQt6.QtGui import QPixmap as _QPixmap
-        self.img_label.set_pixmap(pixmap if (pixmap and not pixmap.isNull()) else _QPixmap())
+        from PyQt6.QtCore import QBuffer, QByteArray
+        import time as _time
+
+        if pixmap and not pixmap.isNull():
+            self._cur_photo_pixmap = pixmap
+            cov_id = self.current_header_cover_id or "artist"
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QBuffer.OpenModeFlag.WriteOnly)
+            pixmap.save(buf, "PNG")
+            buf.close()
+            self._photo_provider.cache[cov_id] = bytes(ba)
+            self._artist_bridge.photoIdChanged.emit(f"{cov_id}?t={_time.time()}")
+        else:
+            self._cur_photo_pixmap = None
+            self._artist_bridge.photoIdChanged.emit("")
 
     def set_bio(self, text):
-        w = getattr(self, '_skeleton_bio', None)
-        if w:
-            try:
-                self.content_layout.removeWidget(w)
-                w.deleteLater()
-            except Exception:
-                pass
-            self._skeleton_bio = None
-
         if text:
             import re as _re
             clean = _re.sub(r'<[^>]+>', '', text).strip()
             clean = _re.sub(r'\s*Read more on Last\.fm\.?\s*$', '', clean, flags=_re.IGNORECASE).strip()
             if clean:
                 self._bio_full_text = clean
-                self._bio_collapsed = True
-                self._render_bio()
-                artist = getattr(self, 'current_artist_name', '')
-                self.lbl_about_header.setText(f'About {artist}')
-                self._bio_wrapper.show()
+                self._artist_bridge.bioChanged.emit(clean)
                 return
         self._bio_full_text = ""
-        self.lbl_bio.hide()
-        self.lbl_bio_toggle.hide()
-        self._bio_wrapper.hide()
+        self._artist_bridge.bioChanged.emit("")
 
-    def _render_bio(self):
-        text = self._bio_full_text
-        lines = text.splitlines()
-        n = 10  # collapsed line count
-        if self._bio_collapsed:
-            if len(lines) > n:
-                preview = '\n'.join(lines[:n])
-            else:
-                chars = n * 100
-                preview = text[:chars].rsplit(' ', 1)[0] + '…' if len(text) > chars else text
-            self.lbl_bio.setText(preview)
-            needs_toggle = len(lines) > n or len(text) > n * 100
-            self.lbl_bio_toggle.setText("Show more")
-            self.lbl_bio_toggle.setVisible(needs_toggle)
-        else:
-            self.lbl_bio.setText(text)
-            self.lbl_bio_toggle.setText("Show less")
-            self.lbl_bio_toggle.show()
-        self.lbl_bio.show()
+    def _show_photo_zoom(self):
+        pix = getattr(self, '_cur_photo_pixmap', None)
+        if pix and not pix.isNull():
+            _ArtistPhotoOverlay(pix, self.window())
 
-    def _toggle_bio(self):
-        self._bio_collapsed = not self._bio_collapsed
-        self._render_bio()
+    def _on_qml_height_changed(self, h):
+        self._qml.setFixedHeight(max(1, round(h)))
 
     def set_related_artists(self, similar_artists):
         # Remove old row if present
@@ -2607,7 +2525,7 @@ class ArtistRichDetailView(QWidget):
             self._worker_graveyard.clear()
    
     def _cleanup_section_skeletons(self):
-        for attr in ('_skeleton_bio', '_skeleton_songs'):
+        for attr in ('_skeleton_songs',):
             w = getattr(self, attr, None)
             if w:
                 try:
@@ -2625,11 +2543,9 @@ class ArtistRichDetailView(QWidget):
         self.current_artist_name = artist_data.get('name', 'Unknown')
         self.current_artist_id = artist_data.get('id')
         self._artist_liked = bool(artist_data.get('starred'))
-        self._update_like_btn()
 
         # 1. INSTANT VISUALS
-        self.lbl_name.setText(self.current_artist_name)
-        self.lbl_stats.setText("Loading...")
+        self._set_stats("Loading...")
         self._cleanup_section_skeletons()
         self.set_bio("")
         self.set_top_songs([])
@@ -2637,13 +2553,11 @@ class ArtistRichDetailView(QWidget):
         self.clear_sections()
         self._show_album_skeleton()
 
-        # Insert structural skeletons for bio and popular tracks
+        # Insert structural skeleton for popular tracks
         header_idx = self.content_layout.indexOf(self.header)
         sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
-        self._skeleton_bio = _SectionSkeleton('bio', base_color=sk_color)
         self._skeleton_songs = _SectionSkeleton('songs', base_color=sk_color)
-        self.content_layout.insertWidget(header_idx + 1, self._skeleton_bio)
-        self.content_layout.insertWidget(header_idx + 2, self._skeleton_songs)
+        self.content_layout.insertWidget(header_idx + 1, self._skeleton_songs)
 
         if not getattr(self, '_header_already_loaded', False):
             sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
@@ -2723,12 +2637,12 @@ class ArtistRichDetailView(QWidget):
         appears_count  = len(getattr(self, '_loaded_appears_on', []))
 
         if total_releases == 0 and appears_count == 0:
-            self.lbl_stats.setText("Loading...")
+            self._set_stats("Loading...")
         elif total_releases == 0:
-            self.lbl_stats.setText(f"Guest Artist • {appears_count} appearances")
+            self._set_stats(f"Guest Artist • {appears_count} appearances")
         else:
             suffix = f" • {appears_count} appearances" if appears_count else ""
-            self.lbl_stats.setText(f"{total_releases} releases{suffix}")
+            self._set_stats(f"{total_releases} releases{suffix}")
 
         # Rebuild album sections (clear old ones first to avoid duplicates on second emit)
         # Only rebuild if the counts actually changed to avoid visual flicker
@@ -2763,12 +2677,12 @@ class ArtistRichDetailView(QWidget):
         total_releases = sum(getattr(self, '_loaded_album_counts', (0, 0)))
         appears_count  = len(appears_on)
         if total_releases == 0 and appears_count == 0:
-            self.lbl_stats.setText("No releases found")
+            self._set_stats("No releases found")
         elif total_releases == 0:
-            self.lbl_stats.setText(f"Guest Artist • {appears_count} appearances")
+            self._set_stats(f"Guest Artist • {appears_count} appearances")
         else:
             suffix = f" • {appears_count} appearances" if appears_count else ""
-            self.lbl_stats.setText(f"{total_releases} releases{suffix}")
+            self._set_stats(f"{total_releases} releases{suffix}")
 
         QTimer.singleShot(100, self.check_viewport)
 
@@ -2807,24 +2721,13 @@ class ArtistRichDetailView(QWidget):
         self.artist_favorite_toggled.emit(self._artist_liked)
 
     def _update_like_btn(self):
-        if not hasattr(self, 'btn_like'):
-            return
-        from player import resource_path as _rp
-        path  = 'img/heart_filled.png' if self._artist_liked else 'img/heart.png'
-        color = '#E91E63' if self._artist_liked else '#666666'
-        p = QPixmap(_rp(path))
-        if not p.isNull():
-            p = p.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
-            out = QPixmap(p.size())
-            out.fill(QColor(0, 0, 0, 0))
-            painter = QPainter(out)
-            painter.drawPixmap(0, 0, p)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            painter.fillRect(out.rect(), QColor(color))
-            painter.end()
-            self.btn_like.setIcon(QIcon(out))
-        self.btn_like.setIconSize(QSize(22, 22))
+        self._artist_bridge.artistDataChanged.emit(
+            self.current_artist_name, self._artist_stats_text, self._artist_liked)
+
+    def _set_stats(self, text):
+        self._artist_stats_text = text
+        self._artist_bridge.artistDataChanged.emit(
+            self.current_artist_name, text, self._artist_liked)
 
     def _open_artist_url(self, service: str):
         import urllib.parse
@@ -2841,7 +2744,7 @@ class ArtistRichDetailView(QWidget):
     def play_current_artist_tracks(self):
         """Fetches all artist tracks and emits them for playback — no parent relay needed."""
         client = getattr(self, 'client', None)
-        name   = getattr(self, 'current_artist_name', None) or self.lbl_name.text()
+        name   = getattr(self, 'current_artist_name', None)
         if not client or not name or name in ('Loading...', 'Artist Name'):
             return
         self._play_artist_worker = ArtistPlayWorker(client, name)
@@ -3749,7 +3652,7 @@ class ArtistGridBrowser(QWidget):
 
     def play_current_artist(self):
         """Live fetches all tracks for the artist and plays them."""
-        artist_name = self.artist_view.lbl_name.text()
+        artist_name = getattr(self.artist_view, 'current_artist_name', None)
         if not artist_name or artist_name == "Loading...":
             return
         self.play_worker = ArtistPlayWorker(self.client, artist_name)

@@ -459,9 +459,7 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
         mask_img.fill(Qt.GlobalColor.transparent)
         mp = QPainter(mask_img)
         mp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        shadow_shape = QPainterPath()
-        shadow_shape.addRoundedRect(QRectF(pad, pad + OY, art, art), r, r)
-        mp.fillPath(shadow_shape, QColor(255, 255, 255, 255))
+        mp.fillPath(self._shadow_shape(pad, OY, art, r), QColor(255, 255, 255, 255))
         mp.end()
 
         # Step 2: extract alpha, apply Gaussian blur
@@ -484,13 +482,21 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
         # Step 4: composite shadow then art
         painter.drawImage(0, 0, shad_qimg)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        clip = QPainterPath()
-        clip.addRoundedRect(QRectF(pad, pad, art, art), r, r)
-        painter.setClipPath(clip)
+        painter.setClipPath(self._art_clip(pad, art, r))
         painter.drawImage(pad, pad, source)
         painter.end()
 
         return img, img.size()
+
+    def _shadow_shape(self, pad, oy, art, r):
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(pad, pad + oy, art, art), r, r)
+        return path
+
+    def _art_clip(self, pad, art, r):
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(pad, pad, art, art), r, r)
+        return path
 
 
 class AlbumDetailBridge(QObject):
