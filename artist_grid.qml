@@ -29,6 +29,12 @@ Rectangle {
     property string fontColorSecondary: "#aaaaaa"
     property string skeletonBaseColor:  "#282828"
     property int    infoLineCount:      3
+    property string hoverColor:    "#333333"
+    property string panelBgColor:  "#181818"
+    property string cardBorderColor: "#2a2a2a"
+    property string fontFamily:    ""
+    property string statusText:    "Loading artists..."
+    property string burgerIconName: "sort-latest-a"
 
     Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
 
@@ -42,6 +48,12 @@ Rectangle {
         function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
         function onSkeletonBaseColorChanged(color) { root.skeletonBaseColor = color }
         function onInfoLineCountChanged(count)     { root.infoLineCount = count }
+        function onHoverColorChanged(color)        { root.hoverColor = color }
+        function onPanelBgChanged(color)           { root.panelBgColor = color }
+        function onCardBorderChanged(color)        { root.cardBorderColor = color }
+        function onFontFamilyChanged(family)       { root.fontFamily = family }
+        function onStatusTextChanged(text)         { root.statusText = text }
+        function onBurgerIconChanged(name)         { root.burgerIconName = name }
 
         // 👇 🟢 CATCH THE KILL SIGNAL FROM PYTHON
         function onCancelScroll() {
@@ -59,9 +71,76 @@ Rectangle {
         }
     }
 
+    Connections {
+        target: artistBridge.searchCtl
+        function onSearchReset()         { gridSearchBar.reset() }
+        function onSearchOpen()          { gridSearchBar.open() }
+        function onSearchTextAppend(ch)  { gridSearchBar.appendChar(ch) }
+        function onSearchTextBackspace() { gridSearchBar.backspace() }
+        function onSearchClose()         { gridSearchBar.close() }
+    }
+
+    // ── TOOLBAR ──────────────────────────────────────────────────────────────
+    Item {
+        id: toolbarRow
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: 15
+        anchors.rightMargin: 10
+        height: 50
+
+        Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.statusText
+            color: root.fontColorSecondary
+            font.bold: true
+            font.pixelSize: root.fontSizeSecondary
+            font.family: root.fontFamily
+            renderType: Text.NativeRendering
+        }
+
+        Row {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: 32
+            spacing: 4
+
+            SearchBar {
+                id: gridSearchBar
+                anchors.verticalCenter: parent.verticalCenter
+                height: 32
+
+                accentColor:       root.accentColor
+                textPrimary:       root.fontColorPrimary
+                textSecondary:     root.fontColorSecondary
+                panelBgColor:      root.panelBgColor
+                borderColor:       root.cardBorderColor
+                hoverColor:        root.hoverColor
+                fontFamily:        root.fontFamily
+                fontSizeSecondary: root.fontSizeSecondary
+                placeholderText:   "Search artists..."
+
+                onOpened: artistBridge.searchCtl.setSearchActive(true)
+                onClosed: artistBridge.searchCtl.setSearchActive(false)
+            }
+
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                iconSource: "image://albumicons/" + root.burgerIconName + "_" + root.accentColor.replace("#", "")
+                hoverColor: root.hoverColor
+                onTriggered: (gx, gy) => artistBridge.showSortMenu(gx, gy)
+            }
+        }
+    }
+
     GridView {
         id: grid
-        anchors.fill: parent
+        anchors.top: toolbarRow.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
 
         leftMargin: 4
         rightMargin: 4

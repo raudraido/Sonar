@@ -1747,6 +1747,42 @@ class AlbumModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
 
 
+class AlbumIconProvider(QQuickImageProvider):
+    """QML image provider serving `img/{name}.png`, optionally tinted with a
+    `_rrggbb` suffix (e.g. `image://albumicons/sort-random-a_ffffff`)."""
+
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self._cache = {}
+
+    def requestImage(self, icon_id, requestedSize):
+        from player import resource_path
+        from PyQt6.QtGui import QImage
+        parts     = icon_id.rsplit('_', 1)
+        name      = parts[0]
+        color_hex = ('#' + parts[1]) if len(parts) > 1 else '#ffffff'
+        cache_key = f"{name}_{color_hex}"
+        if cache_key in self._cache:
+            img = self._cache[cache_key]
+            return img, img.size()
+        path = resource_path(f"img/{name}.png")
+        base = QImage(path)
+        if base.isNull():
+            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
+            empty.fill(Qt.GlobalColor.transparent)
+            return empty, empty.size()
+        result = QImage(base.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        result.fill(Qt.GlobalColor.transparent)
+        p = QPainter(result)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(0, 0, base)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+        p.fillRect(result.rect(), QColor(color_hex))
+        p.end()
+        self._cache[cache_key] = result
+        return result, result.size()
+
+
 class DummyScrollBar:
     def value(self): return 0
     def setValue(self, val): pass

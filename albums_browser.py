@@ -10,12 +10,12 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout,
 
 from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer, QRectF,
                           QAbstractListModel, QModelIndex, pyqtSlot, pyqtProperty, QObject, QUrl, Qt)
-from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
+from player.qml_search import SearchController, SearchKeyFilter, GridSearchKeyFilter, set_window_shortcuts_enabled
 from PyQt6.QtGui import (QPainter, QColor, QPainterPath, QImage)
 
 from player import resource_path
 from player.workers import GridCoverWorker
-from player.widgets import CoverImageProvider, AlbumModel, QMLGridWrapper, QMLMiddleClickScroller
+from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, QMLGridWrapper, QMLMiddleClickScroller
 
 
 class GridBridge(QObject):
@@ -491,37 +491,6 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
         painter.end()
 
         return img, img.size()
-
-
-class AlbumIconProvider(QQuickImageProvider):
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self._cache = {}
-
-    def requestImage(self, icon_id, requestedSize):
-        parts     = icon_id.rsplit('_', 1)
-        name      = parts[0]
-        color_hex = ('#' + parts[1]) if len(parts) > 1 else '#ffffff'
-        cache_key = f"{name}_{color_hex}"
-        if cache_key in self._cache:
-            img = self._cache[cache_key]
-            return img, img.size()
-        path = resource_path(f"img/{name}.png")
-        base = QImage(path)
-        if base.isNull():
-            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
-            empty.fill(Qt.GlobalColor.transparent)
-            return empty, empty.size()
-        result = QImage(base.size(), QImage.Format.Format_ARGB32_Premultiplied)
-        result.fill(Qt.GlobalColor.transparent)
-        p = QPainter(result)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(0, 0, base)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(result.rect(), QColor(color_hex))
-        p.end()
-        self._cache[cache_key] = result
-        return result, result.size()
 
 
 class AlbumDetailBridge(QObject):
@@ -1108,28 +1077,6 @@ class AlbumDetailView(QWidget):
     # ─── end of AlbumDetailView ───────────────────────────────────────────────
 
 
-class _GridKeyFilter(SearchKeyFilter):
-    """Widget-level key filter for the albums grid's inline search box.
-
-    Routes typing into the grid search box while active. If Return is
-    pressed while a search is still debouncing, commits it instantly and
-    jumps focus to the first grid item. Once the search has settled (or
-    isn't active), Return falls through unhandled to the QML GridView's
-    own Keys.onPressed, which opens the currently-selected album.
-    """
-
-    def __init__(self, view, parent=None):
-        super().__init__(view.grid_bridge.search, on_navigate=self._navigate, parent=parent)
-        self._view = view
-
-    def _navigate(self, event):
-        if (self._ctl.active and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and self._view.search_timer.isActive()):
-            self._view.focus_first_grid_item()
-            return True
-        return False
-
-
 class LibraryGridBrowser(QWidget):
     play_track_signal = pyqtSignal(dict) 
     play_album_signal = pyqtSignal(list) 
@@ -1236,7 +1183,7 @@ class LibraryGridBrowser(QWidget):
         self._icon_provider = AlbumIconProvider()
         engine.addImageProvider("albumicons", self._icon_provider)
 
-        self._grid_key_filter = _GridKeyFilter(self)
+        self._grid_key_filter = GridSearchKeyFilter(self)
         self.qml_view.installEventFilter(self._grid_key_filter)
 
         self.qml_view.setSource(QUrl.fromLocalFile(resource_path("album_grid.qml")))

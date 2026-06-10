@@ -120,6 +120,28 @@ class SearchKeyFilter(QObject):
         return False
 
 
+class GridSearchKeyFilter(SearchKeyFilter):
+    """Widget-level key filter for a grid view's inline search box.
+
+    Routes typing into the grid search box while active. If Return is
+    pressed while a search is still debouncing, commits it instantly and
+    jumps focus to the first grid item. Once the search has settled (or
+    isn't active), Return falls through unhandled to the QML GridView's
+    own Keys.onPressed, which opens the currently-selected item.
+    """
+
+    def __init__(self, view, parent=None):
+        super().__init__(view.grid_bridge.search, on_navigate=self._navigate, parent=parent)
+        self._view = view
+
+    def _navigate(self, event):
+        if (self._ctl.active and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self._view.search_timer.isActive()):
+            self._view.focus_first_grid_item()
+            return True
+        return False
+
+
 def set_window_shortcuts_enabled(host, qml_widget, enabled: bool):
     """Enable/disable all QShortcuts on the top-level window, and flag
     `qml_widget` so the global type-to-search interceptor leaves it alone
