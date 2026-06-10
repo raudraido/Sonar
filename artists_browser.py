@@ -18,9 +18,11 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QActio
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import (AlbumDetailView, GridItemDelegate, GridCoverWorker, resource_path,
+from albums_browser import (AlbumDetailView, GridItemDelegate,
                               CoverImageProvider, QMLGridWrapper, DummyScrollBar,
                               QMLMiddleClickScroller, AlbumModel)
+from player import resource_path
+from player.workers import GridCoverWorker
 
 from components import PaginationFooter, SmartSearchContainer
 from tracks_browser import MiddleClickScroller
@@ -1711,7 +1713,7 @@ class ArtistRichDetailView(QWidget):
         btn_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # --- ARTIST VIEW PLAY BUTTON ---
-        from albums_browser import resource_path
+        from player import resource_path
 
         def _tint_icon(path, color, size=24):
             p = QPixmap(resource_path(path))
@@ -2284,7 +2286,7 @@ class ArtistRichDetailView(QWidget):
             sec_color = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
             self.btn_lastfm.setStyleSheet(_icon_btn_style)
             self.btn_wikipedia.setStyleSheet(_icon_btn_style)
-            from albums_browser import resource_path as _rp
+            from player import resource_path as _rp
             def _tint(path, col, size=24):
                 from PyQt6.QtGui import QPixmap as _QP, QPainter as _QPA, QColor as _QC, QIcon as _QI
                 p = _QP(_rp(path))
@@ -2699,7 +2701,7 @@ class ArtistRichDetailView(QWidget):
         self._exact_artist_image = False     
 
         if not hasattr(self, 'cover_worker') and getattr(self, 'client', None):
-            from albums_browser import GridCoverWorker
+            from player.workers import GridCoverWorker
             self.cover_worker = GridCoverWorker(self.client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
             self.cover_worker.start()
@@ -2860,7 +2862,7 @@ class ArtistRichDetailView(QWidget):
     def _update_like_btn(self):
         if not hasattr(self, 'btn_like'):
             return
-        from albums_browser import resource_path as _rp
+        from player import resource_path as _rp
         path  = 'img/heart_filled.png' if self._artist_liked else 'img/heart.png'
         color = '#E91E63' if self._artist_liked else '#666666'
         p = QPixmap(_rp(path))

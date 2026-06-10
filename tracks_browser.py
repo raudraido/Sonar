@@ -21,7 +21,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, QTimer, QModelIndex, QEvent, QPoint, Q
 
 from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont, QPen
 
-from albums_browser import resource_path
+from player import resource_path
 from components import PaginationFooter, SmartSearchContainer, TrackInfoDialog
 
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED

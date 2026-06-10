@@ -1,5 +1,3 @@
-import os
-import sys
 import math
 
 from PyQt6.QtWidgets import QWidget, QPushButton, QGraphicsOpacityEffect, QLabel, QHBoxLayout, QApplication
@@ -9,18 +7,7 @@ from PyQt6.QtGui import (
     QIcon, QPixmap
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, QSize, QPropertyAnimation, QEvent, QSettings, QTimer
-
-
-import os
-import sys
-
-def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+from player import resource_path
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline constants

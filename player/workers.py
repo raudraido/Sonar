@@ -419,6 +419,150 @@ class PlaylistCoverWorker(QThread):
 
 
 
+class GridCoverWorker(QThread):
+    """
+    Downloads thumb-size (300 px) cover art for grid/list/row display.
+    Uses CoverCache for all disk I/O — no direct file access here.
+    Emits cover_ready(cover_id, raw_bytes) on the main thread.
+    """
+    cover_ready = pyqtSignal(str, bytes)
+
+    def __init__(self, client):
+        super().__init__()
+        self.client  = client
+        self.queue   = []
+        self.running = True
+        self._abort_requested  = False
+        self._urgent_in_flight = set()
+
+        from cover_cache import CoverCache
+        self._cache  = CoverCache.instance()
+
+    def queue_cover(self, cover_id, priority=False):
+        cid = str(cover_id)
+
+
+        resolved = getattr(self, '_cover_aliases', {}).get(cid, cid)
+
+
+        data = self._cache.get_thumb(resolved)
+        if data:
+            self.cover_ready.emit(cid, data)
+            return
+        if resolved != cid:
+            data = self._cache.get_thumb(cid)
+            if data:
+                self.cover_ready.emit(cid, data)
+                return
+
+
+        if cid not in self.queue:
+            if priority:
+                self.queue.insert(0, cid)
+            else:
+                self.queue.append(cid)
+
+    def _download_task(self, cover_id):
+
+        cid = str(cover_id)
+
+        # 1. Disk cache (instant)
+        data = self._cache.get_thumb(cid)
+        if data:
+            return cid, data
+
+        # 2. Network download
+        try:
+            from cover_cache import THUMB_SIZE
+            data = self.client.get_cover_art(cid, size=THUMB_SIZE)
+            if data:
+                self._cache.save_thumb(cid, data)
+
+                if not hasattr(self, '_cover_aliases'):
+                    self._cover_aliases = {}
+                if cid.startswith('ar-'):
+                    bare = cid[3:]
+                    self._cover_aliases[bare] = cid
+                    self._cache.save_thumb(bare, data)
+                else:
+                    ar_id = f'ar-{cid}'
+                    self._cover_aliases[ar_id] = cid
+                    self._cache.save_thumb(ar_id, data)
+
+                return cid, data
+        except Exception:
+            pass
+
+        return cid, None
+
+    def abort_current_batch(self):
+        """Clear the queue and cancel any not-yet-running futures on the next loop tick."""
+        self.queue.clear()
+        self._abort_requested = True
+
+    def load_urgent(self, cover_ids):
+        """Move visible covers to the front of the download queue for priority processing."""
+        for cid in reversed(cover_ids):
+            cid = str(cid)
+            data = self._cache.get_thumb(cid)
+            if data:
+                self.cover_ready.emit(cid, data)
+                continue
+            if cid in self.queue:
+                self.queue.remove(cid)
+            self.queue.insert(0, cid)
+
+    def queue_batch(self, cover_ids, priority=False):
+        """Queue covers without any main-thread disk reads — worker handles cache checks."""
+        for cid in (reversed(cover_ids) if priority else cover_ids):
+            cid = str(cid)
+            if cid not in self.queue:
+                if priority:
+                    self.queue.insert(0, cid)
+                else:
+                    self.queue.append(cid)
+
+    def run(self):
+        with ThreadPoolExecutor(max_workers=_COVER_WORKERS) as executor:
+            futures = []
+
+            while self.running:
+                try:
+                    if getattr(self, '_abort_requested', False):
+                        self._abort_requested = False
+                        for f in futures:
+                            f.cancel()
+                        futures = [f for f in futures if not f.done() and not f.cancelled()]
+
+                    while self.queue and len(futures) < _COVER_WORKERS:
+                        cover_id = str(self.queue.pop(0))
+
+                        data = self._cache.get_thumb(cover_id)
+                        if data:
+                            self.cover_ready.emit(cover_id, data)
+                        else:
+                            futures.append(executor.submit(self._download_task, cover_id))
+
+                    if futures:
+                        done, not_done = wait(futures, timeout=0.1, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            try:
+                                res_id, data = future.result()
+                                if data:
+                                    self.cover_ready.emit(res_id, data)
+                            except Exception:
+                                pass
+                        futures = list(not_done)
+                    else:
+                        time.sleep(0.1)
+                except Exception as e:
+                    print(f"GridWorker loop error safely caught: {e}")
+                    time.sleep(0.5)
+
+    def stop(self):
+        self.running = False
+
+
 class PlaylistLoaderWorker(QThread):
     progress = pyqtSignal(list)
     finished = pyqtSignal()

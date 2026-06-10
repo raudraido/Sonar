@@ -1,4 +1,4 @@
-import os, sys, threading
+import os, threading
 
 from PyQt6.QtWidgets import (QDialog, QToolButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                               QPushButton, QWidget, QCheckBox, QFrame, QScrollArea, QSizePolicy,
@@ -6,13 +6,7 @@ from PyQt6.QtWidgets import (QDialog, QToolButton, QVBoxLayout, QHBoxLayout, QLa
 from PyQt6.QtCore import (Qt, pyqtSignal, pyqtProperty, QSize,
                           QPropertyAnimation, QEasingCurve, QMetaObject, Q_ARG, QObject, QPoint, QUrl, QTimer, QEvent)
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QDesktopServices, QGuiApplication
-
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+from player import resource_path
 
 class ToggleSwitch(QCheckBox):
     def __init__(self, accent_color, parent=None):

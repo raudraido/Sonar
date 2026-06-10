@@ -69,7 +69,7 @@ class NowPlayingHeader(QHeaderView):
         self.viewport().setMouseTracking(True)
 
         try:
-            from albums_browser import resource_path
+            from player import resource_path
             self._up_icon   = QIcon(resource_path("img/filter_up.png"))
             self._down_icon = QIcon(resource_path("img/filter_down.png"))
         except Exception:
@@ -493,7 +493,7 @@ class NowPlayingPanel(QWidget):
         # Tint burger icon
         if self.burger_btn is not None:
             try:
-                from albums_browser import resource_path
+                from player import resource_path
                 pix = QPixmap(resource_path("img/burger.png"))
                 if not pix.isNull():
                     tinted = QPixmap(pix.size())

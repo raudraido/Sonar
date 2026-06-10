@@ -258,7 +258,7 @@ class PersistenceMixin:
     def _init_tab_artists(self, client):
         self.artist_browser.client = client
         if not getattr(self.artist_browser, 'cover_worker', None):
-            from albums_browser import GridCoverWorker
+            from player.workers import GridCoverWorker
             self.artist_browser.cover_worker = GridCoverWorker(client)
             self.artist_browser.cover_worker.cover_ready.connect(self.artist_browser.apply_cover)
             self.artist_browser.cover_worker.start()

@@ -20,7 +20,8 @@ from PyQt6.QtCore import QRectF
 from PyQt6.QtQuick import QQuickImageProvider
 from PyQt6.QtQuickWidgets import QQuickWidget
 
-from albums_browser import GridCoverWorker, resource_path
+from player import resource_path
+from player.workers import GridCoverWorker
 
 _PAGE        = 50
 _RANDOM_PAGE = 100

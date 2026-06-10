@@ -9,7 +9,9 @@ from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hov
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import resource_path, GridItemDelegate, GridCoverWorker, CoverImageProvider, QMLGridWrapper
+from albums_browser import GridItemDelegate, CoverImageProvider, QMLGridWrapper
+from player import resource_path
+from player.workers import GridCoverWorker
 from components import PaginationFooter, SmartSearchContainer, ToggleSwitch
 from tracks_browser import TracksBrowser
 
@@ -253,7 +255,7 @@ class PlaylistDetailView(QWidget):
         from PyQt6.QtGui import QIcon
         from PyQt6.QtCore import QSize
         try:
-            from albums_browser import resource_path
+            from player import resource_path
             self.btn_play.setIcon(QIcon(resource_path("img/play.png")))
             self.btn_play.setIconSize(QSize(15, 15)) 
         except: pass
@@ -579,7 +581,7 @@ class PlaylistDetailView(QWidget):
         from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
         from PyQt6.QtCore import QSize
         try:
-            from albums_browser import resource_path
+            from player import resource_path
             icon_path = resource_path("img/shuffle.png")
             if os.path.exists(icon_path):
                 pixmap = QPixmap(icon_path)

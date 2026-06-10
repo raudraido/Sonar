@@ -176,7 +176,9 @@ class _GenrePopup(QFrame):
         self._selected.clear()
         self._rebuild()
         self.selection_changed.emit(set())
-from albums_browser import GridCoverWorker, _TrackListDelegate, _TrackHeader, resource_path
+from albums_browser import _TrackListDelegate, _TrackHeader
+from player import resource_path
+from player.workers import GridCoverWorker
 from now_playing_info import _Card
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, SmoothScroller
 
