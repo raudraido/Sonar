@@ -1,6 +1,5 @@
 import random
 import re
-from collections import OrderedDict
 import time
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QListWidgetItem, QStackedWidget,
@@ -9,11 +8,10 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QStyledItemDelegate, QStyle)
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon, QPalette
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import AlbumDetailView
 from player.widgets import CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider, AlbumDetailCoverProvider
 from player.qml_search import SearchController, GridSearchKeyFilter, set_window_shortcuts_enabled
 from player import resource_path
@@ -61,8 +59,6 @@ class LiveArtistDetailWorker(QThread):
     albums_ready    = pyqtSignal(dict, list, list)   # info, main_albums, singles
     top_songs_ready = pyqtSignal(list)               # top_songs
     appears_ready   = pyqtSignal(list)               # appears_on
-    # Legacy single-shot signal kept for any external callers
-    details_ready   = pyqtSignal(dict, list, list, list, list)
 
     def __init__(self, client, artist_id, artist_name):
         super().__init__()
@@ -287,11 +283,9 @@ class LiveArtistDetailWorker(QThread):
                 self.appears_ready.emit(appears_on)
 
             print(f"[TIMING] {self.artist_name!r} — worker DONE at {_ms(_t0)}")
-            self.details_ready.emit(info, top_songs, main_albums, singles, appears_on)
 
         except Exception as e:
             print(f"[LiveArtistDetailWorker] Error: {e}")
-            self.details_ready.emit({}, [], [], [], [])
 
 class LiveArtistWorker(QThread):
     page_ready = pyqtSignal(list, int, int)
@@ -790,8 +784,11 @@ class QMLAlbumSectionWidget(QWidget):
         # ── QML grid ───────────────────────────────────────────────────────
         self.qml_widget = QQuickWidget()
         self.qml_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self.qml_widget.setClearColor(QColor(14, 14, 14))
         self.qml_widget.setMinimumHeight(10)
+        # QQuickWidget paints white for the first frame or two before its scene
+        # graph is ready, so give it an opaque palette matching the clear color
+        # to avoid a white flash while the QML content is still loading.
+        self._set_qml_widget_color(QColor(14, 14, 14))
         outer.addWidget(self.qml_widget)
 
         self.album_model = AlbumModel()
@@ -824,7 +821,6 @@ class QMLAlbumSectionWidget(QWidget):
 
         # facade so legacy code doing `row.list_widget.count()` etc. still works
         self.list_widget = _SectionListFacade(self)
-        self.full_albums = []  # kept for compat
         self.current_index = 0
 
         self.populate(albums)
@@ -840,9 +836,6 @@ class QMLAlbumSectionWidget(QWidget):
         idx = max(0, min(idx, count - 1))
         self.current_index = idx
         self.bridge.selectIndex.emit(idx)
-
-    def add_action_widget(self, widget):
-        self.title_layout.insertWidget(2, widget)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -878,7 +871,14 @@ class QMLAlbumSectionWidget(QWidget):
     def set_bg_color(self, c: str):
         self._bg_color = c
         r, g, b = (int(x) for x in c.split(','))
-        self.qml_widget.setClearColor(QColor(r, g, b))
+        self._set_qml_widget_color(QColor(r, g, b))
+
+    def _set_qml_widget_color(self, color: QColor):
+        self.qml_widget.setClearColor(color)
+        self.qml_widget.setAutoFillBackground(True)
+        pal = self.qml_widget.palette()
+        pal.setColor(QPalette.ColorRole.Window, color)
+        self.qml_widget.setPalette(pal)
 
     def set_accent_color(self, color):
         self.bridge.accentColorChanged.emit(color)
@@ -1345,6 +1345,11 @@ class ArtistRichDetailView(QWidget):
         self._qml = QQuickWidget()
         self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # QQuickWidget defaults to a white clear color, and the QML root Rectangle's
+        # height can briefly lag behind the widget's own height (set via reportHeight)
+        # while content is loading. Match the panel background so any gap reads as
+        # background instead of a white flash.
+        self._set_header_qml_color(QColor(14, 14, 14))
 
         engine = self._qml.engine()
         engine.addImageProvider("artistdetailcover", self._photo_provider)
@@ -1395,7 +1400,7 @@ class ArtistRichDetailView(QWidget):
         
         self.scroll.setWidget(self.content_widget)
         self.layout.addWidget(self.scroll)
-        SmoothScroller(self.scroll)
+        self._smooth_scroller = SmoothScroller(self.scroll)
 
 
         # For the artist view, song_list has FocusPolicy.NoFocus so no child
@@ -1745,8 +1750,10 @@ class ArtistRichDetailView(QWidget):
                 r, g, b = (int(x) for x in raw_bg.split(','))
                 panel_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
             except Exception:
+                r, g, b = 14, 14, 14
                 panel_hex = '#0e0e0e'
             self._artist_bridge.panelBgChanged.emit(panel_hex)
+            self._set_header_qml_color(QColor(r, g, b))
 
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
@@ -1797,6 +1804,13 @@ class ArtistRichDetailView(QWidget):
 
     def _on_qml_height_changed(self, h):
         self._qml.setFixedHeight(max(1, round(h)))
+
+    def _set_header_qml_color(self, color: QColor):
+        self._qml.setClearColor(color)
+        self._qml.setAutoFillBackground(True)
+        pal = self._qml.palette()
+        pal.setColor(QPalette.ColorRole.Window, color)
+        self._qml.setPalette(pal)
 
     def set_related_artists(self, similar_artists):
         # Remove old row if present
@@ -2060,6 +2074,16 @@ class ArtistRichDetailView(QWidget):
             self._worker_graveyard.clear()
 
     def load_artist(self, artist_data):
+        # Always start a freshly-loaded artist page from the top, regardless
+        # of where the previous artist's view was scrolled to. If a smooth-scroll
+        # animation is mid-flight, stop it and reset its target too -- otherwise
+        # it keeps animating back toward the old (pre-reset) position.
+        smoother = getattr(self, '_smooth_scroller', None)
+        if smoother:
+            smoother._timer.stop()
+            smoother._target = 0.0
+        self.scroll.verticalScrollBar().setValue(0)
+
         self.pending_items = {}
         self.pending_qml_sections = {}  # cover_id -> [QMLAlbumSectionWidget]
         self.current_artist_name = artist_data.get('name', 'Unknown')
@@ -2075,7 +2099,6 @@ class ArtistRichDetailView(QWidget):
         self._show_section_skeleton()
 
         if not getattr(self, '_header_already_loaded', False):
-            sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
             self.set_header_image(None)
         self._header_already_loaded = False  
         self._exact_artist_image = False     
@@ -2088,7 +2111,7 @@ class ArtistRichDetailView(QWidget):
 
         
         if getattr(self, 'live_detail_worker', None) and self.live_detail_worker.isRunning():
-            for sig in ('albums_ready', 'top_songs_ready', 'appears_ready', 'details_ready'):
+            for sig in ('albums_ready', 'top_songs_ready', 'appears_ready'):
                 try: getattr(self.live_detail_worker, sig).disconnect()
                 except: pass
             self._safe_discard_worker(self.live_detail_worker)
@@ -2472,9 +2495,10 @@ class ArtistGridBrowser(QWidget):
             'random': True,
             'most_played': False,
             'alphabetical': True,
-            'albums_count': False, 
+            'albums_count': False,
         }
         self.current_sort = 'most_played'
+        self.random_seed = time.time()
 
         self.cover_worker = None
         if self.client:
@@ -2487,8 +2511,6 @@ class ArtistGridBrowser(QWidget):
         self.page_size = 50
         self.current_page = 1
         self.total_pages = 1
-        self.total_items = 0
-        
         # Search timer for debounced search
         self.search_timer = QTimer()
         self.search_timer.setSingleShot(True)
@@ -2496,10 +2518,6 @@ class ArtistGridBrowser(QWidget):
         self.search_timer.timeout.connect(self.execute_search) 
         
         self.pending_items = {}
-        self.track_cache = OrderedDict()
-        self.nav_history = []  
-        self.nav_index = -1   
-        self.current_album_id = None 
         self.current_header_cover_id = None
         self.current_artist_id = None
         self._active_workers = set()
@@ -2559,18 +2577,6 @@ class ArtistGridBrowser(QWidget):
         self.grid_view = self.qml_view  # keep alias so existing code doesn't break
         self.stack.addWidget(self.grid_view)
 
-        # 🟢 NEW: Pass the client
-        self.detail_view = AlbumDetailView(self.client)
-        
-
-        # Wire up the header buttons
-        self.detail_view.play_clicked.connect(self.on_play_all_clicked)
-        self.detail_view.shuffle_clicked.connect(self.on_shuffle_album_clicked)
-        self.detail_view.album_favorite_toggled.connect(self.on_album_heart_clicked)
-        self.detail_view.artist_clicked.connect(lambda name: self.show_artist_details({'name': name, 'id': None}))
-        
-        self.stack.addWidget(self.detail_view)
-        
         self.artist_view = ArtistRichDetailView()
         self.artist_view._browser = self  # back-reference for related artist navigation
         self.artist_view.album_clicked.connect(self.on_artist_album_clicked)
@@ -2580,10 +2586,7 @@ class ArtistGridBrowser(QWidget):
         self.artist_view.play_artist.connect(self.play_current_artist)
         self.artist_view.artist_clicked.connect(self.show_artist_details)
         self.artist_view.artist_favorite_toggled.connect(self._on_artist_favorite_toggled)
-        self.stack.addWidget(self.artist_view) 
-
-      
-        self.add_to_history({'type': 'root'})
+        self.stack.addWidget(self.artist_view)
 
         self.set_accent_color("#888888")
 
@@ -2736,12 +2739,13 @@ class ArtistGridBrowser(QWidget):
         
         # LiveArtistWorker uses "page" math, so chunk 0 = page 1
         worker = LiveArtistWorker(
-            self.client, 
-            query=query, 
-            sort_type=sort_type, 
-            is_ascending=is_ascending, 
-            page=chunk_index + 1, 
-            page_size=50
+            self.client,
+            query=query,
+            sort_type=sort_type,
+            is_ascending=is_ascending,
+            page=chunk_index + 1,
+            page_size=50,
+            random_seed=getattr(self, 'random_seed', 0)
         )
         worker.page_ready.connect(lambda items, total, pages: self._on_chunk_loaded(items, chunk_index))
         worker.start()
@@ -2778,10 +2782,6 @@ class ArtistGridBrowser(QWidget):
 
         if hasattr(self, 'grid_bridge'):
             self.grid_bridge.burgerIconChanged.emit(name)
-
-    def get_filtered_count(self):
-        # The Live Worker handles math now, so we just return the tracked variable!
-        return getattr(self, 'total_items', 0)
 
     def toggle_sort_state(self, sort_type):
         """Toggle the sort state and update display"""
@@ -2841,7 +2841,8 @@ class ArtistGridBrowser(QWidget):
         
         # 2. If it's a search, dump everything instantly (no virtualization)
         if query:
-            worker = LiveArtistWorker(self.client, query, sort_type, is_ascending, page=1, page_size=500)
+            worker = LiveArtistWorker(self.client, query, sort_type, is_ascending, page=1, page_size=500,
+                                       random_seed=getattr(self, 'random_seed', 0))
             worker.page_ready.connect(self._on_search_loaded)
             worker.start()
             self.live_worker = worker
@@ -2947,9 +2948,6 @@ class ArtistGridBrowser(QWidget):
         if hasattr(self, 'qml_view'):
             self.qml_view.setFocus()
 
-    def check_for_updates(self):
-        pass
-    
     def set_client(self, client):
         self.client = client
         if self.client:
@@ -3032,7 +3030,7 @@ class ArtistGridBrowser(QWidget):
         if worker in self._active_workers:
             self._active_workers.remove(worker)
 
-    def show_artist_details(self, artist_data, record_history=True):
+    def show_artist_details(self, artist_data):
         if not artist_data: return
         if isinstance(artist_data, str):
             artist_data = {'name': artist_data, 'id': None}
@@ -3044,9 +3042,8 @@ class ArtistGridBrowser(QWidget):
                 if cached_id:
                     artist_data = dict(artist_data)
                     artist_data['id'] = cached_id
-        if record_history: self.add_to_history({'type': 'artist', 'data': artist_data})
 
-        self.stack.setCurrentIndex(2)
+        self.stack.setCurrentIndex(1)
         self.artist_view.setFocus()
         self.artist_view.client = self.client
 
@@ -3061,8 +3058,6 @@ class ArtistGridBrowser(QWidget):
             self.artist_view._cover_worker_connected = True
 
         self.artist_view.load_artist(artist_data)
-        # Scroll back to top so the user sees the new artist header
-        self.artist_view.scroll.verticalScrollBar().setValue(0)
 
     def apply_cover(self, cover_id, image_data):
         # Feed bytes into the QML image provider
@@ -3119,7 +3114,6 @@ class ArtistGridBrowser(QWidget):
                 except Exception:
                     self.grid_bridge.panelBgChanged.emit('#0e0e0e')
 
-        self.detail_view.set_accent_color(color)
         self.artist_view.set_accent_color(color)
 
         self.update_burger_icon()
@@ -3153,158 +3147,10 @@ class ArtistGridBrowser(QWidget):
         self.play_worker.tracks_ready.connect(self.play_album_signal.emit)
         self.play_worker.start()
 
-    def _sort_and_play(self, tracks, info, artist_id, target_name):
-        if not tracks: return
-        
-        album_prio = {}
-        raw_albums = info.get('album', [])
-        split_regex = re.compile(r'(?: /// | • | / | feat\. | Feat\. | vs\. | Vs\. | pres\. | Pres\. |, )')
-
-        def _tokens(s):
-            return {p.strip().lower() for p in split_regex.split(s) if p.strip()}
-
-        def get_priority(alb_data):
-            a_id = str(alb_data.get('artistId', ''))
-            check_tokens = _tokens(str(alb_data.get('albumArtist') or alb_data.get('artist') or ''))
-            is_main = (artist_id and a_id == str(artist_id)) or (target_name in check_tokens)
-            r_types = alb_data.get('releaseTypes', [])
-            if isinstance(r_types, list) and r_types: rtype = str(r_types[0]).lower()
-            else: rtype = str(alb_data.get('albumType') or alb_data.get('releaseType') or '').lower()
-            is_comp = alb_data.get('isCompilation', False) or 'compilation' in rtype
-            if not is_main or is_comp: return 2
-            if 'single' in rtype or 'ep' in rtype: return 1
-            return 0
-
-        for a in raw_albums:
-            aid_str = str(a.get('id', ''))
-            if aid_str: album_prio[aid_str] = get_priority(a)
-
-        filtered = []
-        for t in tracks:
-            t_artist_id       = str(t.get('artistId') or t.get('artist_id') or '')
-            artist_tokens     = _tokens(str(t.get('artist') or ''))
-            alb_artist_tokens = _tokens(str(t.get('albumArtist') or t.get('album_artist') or ''))
-            # Keep only tracks that truly belong to this artist
-            if not ((artist_id and t_artist_id == str(artist_id))
-                    or target_name in artist_tokens
-                    or target_name in alb_artist_tokens):
-                continue
-            filtered.append(t)
-
-        def sort_key(t):
-            alb_id = str(t.get('albumId') or t.get('album_id') or '')
-            if alb_id in album_prio:
-                prio = album_prio[alb_id]
-            else:
-                alb_artist_raw = str(t.get('albumArtist') or t.get('album_artist') or '')
-                is_comp = t.get('isCompilation', False) or 'various' in alb_artist_raw.lower()
-                prio = 2 if is_comp else 0
-            disc  = int(t.get('discNumber') or t.get('disc_number') or 1)
-            track = int(t.get('trackNumber') or t.get('track') or 0)
-            return (prio, (t.get('album') or '').lower(), disc, track)
-
-        filtered.sort(key=sort_key)
-        self.play_album_signal.emit(filtered)
-    
     def start_play_fetch(self, album_id):
         worker = TrackLoaderWorker(self.client, album_id)
         worker.tracks_ready.connect(lambda tracks, aid: self.play_album_signal.emit(tracks) if tracks else None)
         self.start_worker(worker)
-
-    def resolve_tracks(self, album_data):
-        album_id = album_data['id']
-        if album_id in self.track_cache:
-            self.track_cache.move_to_end(album_id)
-            self.on_tracks_loaded(self.track_cache[album_id], album_id)
-            return
-        if not self.client:
-             self.detail_view.lbl_meta.setText("Offline: Cannot load tracks")
-             return
-        worker = TrackLoaderWorker(self.client, album_id)
-        worker.tracks_ready.connect(self.on_tracks_loaded)
-        self.start_worker(worker)
-
-    def on_tracks_loaded(self, tracks, album_id):
-        if not tracks: 
-            self.detail_view.lbl_meta.setText("No tracks found.")
-            return
-            
-        self.track_cache[album_id] = tracks
-        # Keep the cache bounded — drop oldest entry when over 30 albums
-        if len(self.track_cache) > 30:
-            oldest_key = next(iter(self.track_cache))
-            del self.track_cache[oldest_key]
-        total_sec = 0
-        all_discs = set()
-        model_items = []
-        
-        for t in tracks:
-            dur_val = t.get('duration', 0)
-            seconds = 0
-            
-            # Handle both 213 (int) and "3:33" (string)
-            if isinstance(dur_val, int):
-                seconds = dur_val
-            elif isinstance(dur_val, str):
-                if ":" in dur_val:
-                    try:
-                        parts = dur_val.split(':')
-                        if len(parts) == 2: # MM:SS
-                            seconds = int(parts[0]) * 60 + int(parts[1])
-                        elif len(parts) == 3: # HH:MM:SS
-                            seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-                    except ValueError:
-                        seconds = 0
-                elif dur_val.isdigit():
-                    seconds = int(dur_val)
-
-            t['_calc_seconds'] = seconds
-            total_sec += seconds
-            
-            # Format for display column
-            m, s = divmod(seconds, 60)
-            t['_display_dur'] = f"{m}:{s:02d}"
-            
-            # Metadata for UI
-            all_discs.add(t.get('discNumber', 1) or t.get('disc_number', 1))
-            is_fav = t.get('starred', False) or t.get('favorite', False)
-            t['_display_fav'] = "♥" if is_fav else "♡"
-            t['_fav_color'] = "#E91E63" if is_fav else "#555"
-            
-            artist_str = t.get('artist', 'Unknown') or ""
-            t['_artist_tokens'] = [p for p in re.split(r'( • | / | feat\. | vs\. |, )', artist_str) if p]
-
-        # Update Meta Label
-        m, s = divmod(total_sec, 60)
-        h, m = divmod(m, 60)
-        time_str = f"{h} hr {m} min" if h else f"{m} min {s} sec"
-        
-        current_txt = self.detail_view.lbl_meta.text().split(' • ')[0]
-        self.detail_view.lbl_meta.setText(f"{current_txt} • {len(tracks)} songs • {time_str}")
-        
-        # Populate Model
-        self.full_track_context = tracks
-        show_headers = len(all_discs) > 1
-        current_disc = None
-        for i, t in enumerate(tracks):
-            disc_num = t.get('discNumber', 1) or t.get('disc_number', 1)
-            t['track_display'] = t.get('track') or t.get('trackNumber') or (i + 1)
-            if show_headers and disc_num != current_disc:
-                current_disc = disc_num
-                model_items.append({'type': 'header', 'disc': current_disc})
-            t['type'] = 'track'
-            model_items.append(t)
-            
-        self.detail_view.model.set_items(model_items)
-
-    def on_play_all_clicked(self):
-        if hasattr(self, 'full_track_context'): self.play_album_signal.emit(self.full_track_context)
-    
-    def on_shuffle_album_clicked(self):
-        if hasattr(self, 'full_track_context'): tracks = list(self.full_track_context); random.shuffle(tracks); self.play_album_signal.emit(tracks)
-    
-    def on_album_heart_clicked(self, is_liked):
-        pass
 
     def _on_artist_favorite_toggled(self, is_liked: bool):
         client = getattr(self, 'client', None)
@@ -3316,27 +3162,6 @@ class ArtistGridBrowser(QWidget):
                 daemon=True,
             ).start()
     
-    def add_to_history(self, state):
-        if self.nav_index < len(self.nav_history) - 1: self.nav_history = self.nav_history[:self.nav_index + 1]
-        self.nav_history.append(state); self.nav_index += 1
-    
-    def on_nav_back(self):
-        if self.nav_index > 0:
-            self.nav_index -= 1
-            self.render_state(self.nav_history[self.nav_index])
-            
-    def on_nav_fwd(self):
-        if self.nav_index < len(self.nav_history) - 1: self.nav_index += 1; self.render_state(self.nav_history[self.nav_index])
-
-    def render_state(self, state):
-        s_type = state.get('type')
-        if state['type'] == 'root':
-            self.stack.setCurrentIndex(0)
-        elif s_type == 'artist':
-            self.show_artist_details(state['data'], record_history=False)
-        elif s_type == 'album':
-            self.show_album_details(state['data'], record_history=False)
-
     def go_to_root(self):
         self.stack.setCurrentIndex(0)
 
@@ -3351,9 +3176,6 @@ class ArtistGridBrowser(QWidget):
                 self.grid_bridge.search.reset()
             self.load_artists_page(reset=True)
 
-        self.nav_history = [{'type': 'root'}]
-        self.nav_index = 0
-    
     def hideEvent(self, event):
         super().hideEvent(event)
         if hasattr(self, 'grid_bridge'):
