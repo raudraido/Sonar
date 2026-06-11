@@ -1732,16 +1732,21 @@ class AlbumModel(QAbstractListModel):
         self.albums.extend(new_albums)
         self.endInsertRows()
 
+    def set_albums(self, albums):
+        self.beginResetModel()
+        self.albums = list(albums)
+        self.endResetModel()
+
     def clear(self):
         self.beginResetModel()
         self.albums = []
         self.endResetModel()
 
     def update_cover(self, cover_id):
-        import time
         forced_id = f"{cover_id}?t={time.time()}"
         for i, a in enumerate(self.albums):
-            if a.get('cover_id') == cover_id:
+            raw = str(a.get('cover_id') or a.get('coverArt') or a.get('id') or '')
+            if raw == cover_id:
                 a['coverId_forced'] = forced_id
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])

@@ -17,7 +17,7 @@ from player.workers import GridCoverWorker
 from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider, QMLGridWrapper, QMLMiddleClickScroller
 
 
-class GridBridge(QObject):
+class GridBridge(QObject): # Bridge for the main album grid's QML (album_grid.qml): item/play clicks resolved via album_model, visible-range reporting for lazy loading/scroll, search controller, sort-menu requests, and theme/typography/color signals to QML.
     itemClicked = pyqtSignal(dict)
     playClicked = pyqtSignal(dict)
     artistNameClicked = pyqtSignal(str, str)  # name, artist_id
@@ -91,7 +91,7 @@ class GridBridge(QObject):
     def emitArtistNameClicked(self, name, artist_id=""):
         self.artistNameClicked.emit(name, artist_id)
 
-class LivePageWorker(QThread):
+class LivePageWorker(QThread): # Fetches one page of albums for the grid: native sort-by-songCount fast path, dedicated search endpoint, or browse mode (cached sorted list), with optional client-side reversal.
 
     page_ready = pyqtSignal(list, object)
 
@@ -150,7 +150,7 @@ class LivePageWorker(QThread):
         except Exception as e:
             print(f"[LivePageWorker] Error loading page: {e}")
 
-class CompilationsWorker(QThread):
+class CompilationsWorker(QThread): # Fetches all compilation albums via Navidrome's native /api/album?compilation=true endpoint (with native JWT auth), normalizing each album's cover_id for the grid.
     """Fetches compilation albums using Navidrome's native /api/album?compilation=true filter."""
     results_ready = pyqtSignal(list)
 
@@ -194,7 +194,7 @@ class CompilationsWorker(QThread):
             print(f"[CompilationsWorker] Error: {e}")
             self.results_ready.emit([])
 
-class ServerCountWorker(QThread):
+class ServerCountWorker(QThread): # Fetches the server's total album count (get_fast_album_count) once and emits it, used to show the total in the grid's status/sort UI.
     count_ready = pyqtSignal(int)
 
     def __init__(self, client):
@@ -214,9 +214,7 @@ class ServerCountWorker(QThread):
         except Exception as e:
             print(f"[ServerCountWorker] Safely caught error: {e}")
 
-# ── AlbumDetail QML support classes ─────────────────────────────────────────
-
-class AlbumDetailTrackModel(QAbstractListModel):
+class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing the album detail tracklist QML view, exposing per-row track number/title/artist/duration/play-count/genre/favorite roles plus disc-header rows for multi-disc albums.
     IS_DISC_HEADER = Qt.ItemDataRole.UserRole + 1
     DISC_LABEL     = Qt.ItemDataRole.UserRole + 2
     TRACK_IDX      = Qt.ItemDataRole.UserRole + 3
@@ -316,7 +314,7 @@ class AlbumDetailTrackModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
                 break
 
-class AlbumDetailBridge(QObject):
+class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detail.qml): handles play/shuffle/track clicks, search-aware row navigation, track & album favorite toggling, artist/genre link clicks, tooltips, context menu, column-width persistence, and theme/typography/color signals to QML.
     # → QML
     accentColorChanged        = pyqtSignal(str)
     hoverColorChanged         = pyqtSignal(str)
@@ -493,7 +491,7 @@ class AlbumDetailBridge(QObject):
         from PyQt6.QtCore import QSettings
         QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
 
-class _AlbumKeyFilter(SearchKeyFilter):
+class _AlbumKeyFilter(SearchKeyFilter): # Widget-level key filter for the album detail QML view: routes typed characters into the track search box, and Up/Down/PageUp/PageDown/Enter/Escape to track navigation, play, and selection-clear.
     """Widget-level key filter — fires regardless of QML focus state.
 
     Routes typing into the track search box while active; otherwise
@@ -528,7 +526,7 @@ class _AlbumKeyFilter(SearchKeyFilter):
             return True
         return False
 
-class AlbumDetailView(QWidget):
+class AlbumDetailView(QWidget): # The single-album detail page: a QML view (album_detail.qml) driven by AlbumDetailTrackModel and AlbumDetailBridge, with a class-level LRU cache of recently loaded tracklists shared across instances.
     play_clicked = pyqtSignal()
     shuffle_clicked = pyqtSignal()
     album_favorite_toggled = pyqtSignal(bool)
@@ -897,7 +895,7 @@ class AlbumDetailView(QWidget):
 
     # ─── end of AlbumDetailView ───────────────────────────────────────────────
 
-class LibraryGridBrowser(QWidget):
+class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStackedWidget toggling between the searchable/sortable album grid (album_grid.qml + AlbumModel) and AlbumDetailView for a selected album's detail page.
     play_track_signal = pyqtSignal(dict) 
     play_album_signal = pyqtSignal(list) 
     queue_track_signal = pyqtSignal(dict)

@@ -20,8 +20,8 @@ from player.workers import GridCoverWorker
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 
 
-class ArtistPlayWorker(QThread):
-    """Fetches all tracks for an artist and emits them sorted for playback."""
+class ArtistPlayWorker(QThread): # Fetches all tracks matching an artist (incl. as albumArtist, splitting multi-artist strings), sorted by album/disc/track number for playback.
+    
     tracks_ready = pyqtSignal(list)
 
     def __init__(self, client, name):
@@ -54,8 +54,7 @@ class ArtistPlayWorker(QThread):
             print(f"Error: {e}")
             self.tracks_ready.emit([])
 
-class LiveArtistDetailWorker(QThread):
-    # Progressive signals — each fires as soon as its data arrives
+class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's detail page (albums, top songs, bio/similar artists, appears-on) via parallel network calls, streaming albums_ready/top_songs_ready/appears_ready as each piece arrives.
     albums_ready    = pyqtSignal(dict, list, list)   # info, main_albums, singles
     top_songs_ready = pyqtSignal(list)               # top_songs
     appears_ready   = pyqtSignal(list)               # appears_on
@@ -287,7 +286,7 @@ class LiveArtistDetailWorker(QThread):
         except Exception as e:
             print(f"[LiveArtistDetailWorker] Error: {e}")
 
-class LiveArtistWorker(QThread):
+class LiveArtistWorker(QThread): # Fetches ONE page of artist tiles for the artist grid: server-paginated browse mode for plain sorts, or full-list fetch with local sort (incl. seeded random)/search filtering/relevance ranking + pagination otherwise.
     page_ready = pyqtSignal(list, int, int)
 
     def __init__(self, client, query, sort_type, is_ascending, page, page_size, random_seed=0):
@@ -370,8 +369,8 @@ class LiveArtistWorker(QThread):
             print(f"[LiveArtistWorker] Error: {e}")
             self.page_ready.emit([], 0, 1)
 
-class TrackLoaderWorker(QThread):
-    """Fetches the track list for a single album in the background."""
+class TrackLoaderWorker(QThread): # Fetches the track list for a single album and emits it when ready.
+    
     tracks_ready = pyqtSignal(list, str)   # (tracks, album_id)
 
     def __init__(self, client, album_id):
@@ -387,7 +386,7 @@ class TrackLoaderWorker(QThread):
             print(f"[TrackLoaderWorker] Error fetching album {self.album_id}: {e}")
             self.tracks_ready.emit([], self.album_id)
 
-class PopularTrackDelegate(QStyledItemDelegate):
+class PopularTrackDelegate(QStyledItemDelegate): # Render track items with cover art, title, and hover/selection effects.
     def __init__(self, parent=None):
         super().__init__(parent)
         self.accent_color = "#ffffff"
@@ -480,7 +479,7 @@ class PopularTrackDelegate(QStyledItemDelegate):
             
         painter.restore()
 
-class AlbumLinkDelegate(QStyledItemDelegate):
+class AlbumLinkDelegate(QStyledItemDelegate): # Render album links with hover effects and underlining when hovered.
     def __init__(self, parent=None):
         super().__init__(parent)
         self.hovered_row = -1
@@ -532,7 +531,7 @@ class AlbumLinkDelegate(QStyledItemDelegate):
         
         painter.restore()
 
-class SongListWidget(QTreeWidget):
+class SongListWidget(QTreeWidget): # Display a list of songs with cover art, title, album, and duration; supports hover effects and emits signals on interactions.
     play_track = pyqtSignal(dict)
     album_clicked = pyqtSignal(dict) 
 
@@ -679,9 +678,8 @@ class SongListWidget(QTreeWidget):
         if data:
             self.play_track.emit(data)
 
-class SectionCoverProvider(QQuickImageProvider):
-    """Image provider for artist detail section grids. Class-level cache is shared
-    across all section instances so a cover loaded once is visible everywhere."""
+class SectionCoverProvider(QQuickImageProvider): # Serves album covers for the artist detail grids, with a class-level cache to share loaded images across all sections.
+    
     _cache = {}
 
     def __init__(self):
@@ -712,7 +710,7 @@ class SectionCoverProvider(QQuickImageProvider):
                 painter.end()
         return img, img.size()
 
-class SectionGridBridge(QObject):
+class SectionGridBridge(QObject): # Bridge for signals between the QML section grids and the Python code; also reports content height changes for dynamic resizing.
     accentColorChanged        = pyqtSignal(str)
     selectIndex               = pyqtSignal(int)
     itemClicked               = pyqtSignal(int)
@@ -746,8 +744,8 @@ class SectionGridBridge(QObject):
     def reportContentHeight(self, h):
         self.contentHeightChanged.emit(max(1, int(h) + 1))
 
-class QMLAlbumSectionWidget(QWidget):
-    """Replaces AlbumRowWidget — uses a QML GridView for buttery-smooth resize."""
+class QMLAlbumSectionWidget(QWidget): # Widget for an album section in the artist detail view, using a QML GridView for smooth resizing and dynamic content.
+    
     album_clicked       = pyqtSignal(dict)
     play_album          = pyqtSignal(dict)
     artist_name_clicked = pyqtSignal(str, str)  # name, artist_id
@@ -911,9 +909,8 @@ class QMLAlbumSectionWidget(QWidget):
         SectionCoverProvider._cache[cover_id] = image_data
         self.album_model.update_cover(cover_id)
 
-class _SectionListFacade:
-    """Minimal QListWidget-compatible shim so code that checks row.list_widget
-    still works without changes (count, setFocus, setCurrentRow, etc.)."""
+class _SectionListFacade: # Adapter so QMLAlbumSectionWidget exposes the same list_widget API (count, setFocus, setCurrentRow, visualItemRect, etc.) as QListWidget-based rows, letting shared section-navigation code treat both uniformly.
+
     def __init__(self, section: QMLAlbumSectionWidget):
         self._s = section
 
@@ -946,8 +943,8 @@ class _SectionListFacade:
     def currentRow(self):
         return self._s.current_index
 
-class CircularArtistDelegate(QStyledItemDelegate):
-    """Renders artist cards with a circular photo, hover ring + play button, and name below."""
+class CircularArtistDelegate(QStyledItemDelegate): # Render artist cards with circular photos, hover effects, and names below, for the related artists strip.
+  
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1046,8 +1043,8 @@ class CircularArtistDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-class RelatedArtistRowWidget(QWidget):
-    """Single-row horizontally scrollable circular artist strip (max 10 items)."""
+class RelatedArtistRowWidget(QWidget): # A horizontally scrollable strip of related artists, showing circular photos with names below, and left/right arrows for navigation; max 10 items.
+   
     artist_clicked = pyqtSignal(dict)
 
     CELL_W = 220
@@ -1165,8 +1162,8 @@ class RelatedArtistRowWidget(QWidget):
             return True
         return super().eventFilter(source, event)
 
-class _ArtistPhotoOverlay(QWidget):
-    """Full-screen tinted overlay showing the artist photo large and centered."""
+class _ArtistPhotoOverlay(QWidget): # A full-screen tinted overlay showing the artist photo large and centered.
+   
     def __init__(self, pixmap, parent):
         super().__init__(parent)
         self._pixmap = pixmap
@@ -1203,9 +1200,8 @@ class _ArtistPhotoOverlay(QWidget):
         self.close()
         self.deleteLater()
 
-class ArtistDetailCoverProvider(AlbumDetailCoverProvider):
-    """Same shadow/halo rendering as AlbumDetailCoverProvider, but with a
-    circular shadow + clip to suit the round artist photo."""
+class ArtistDetailCoverProvider(AlbumDetailCoverProvider): # Provides the artist photo for the main header in the artist detail view, with a circular shadow and clip to suit the round photo.
+    
 
     def _shadow_shape(self, pad, oy, art, r):
         path = QPainterPath()
@@ -1217,7 +1213,7 @@ class ArtistDetailCoverProvider(AlbumDetailCoverProvider):
         path.addEllipse(QRectF(pad, pad, art, art))
         return path
 
-class ArtistDetailBridge(QObject):
+class ArtistDetailBridge(QObject): # Bridge for the artist detail header QML (artist_detail.qml): forwards button clicks (play/like/lastfm/wikipedia/photo zoom) to ArtistRichDetailView, reports content height for dynamic resizing, drives QML tooltips, and pushes theme/typography/color signals to QML.
     # → QML
     accentColorChanged        = pyqtSignal(str)
     hoverColorChanged         = pyqtSignal(str)
@@ -1293,7 +1289,7 @@ class ArtistDetailBridge(QObject):
         t.start(120)
         self._tip_hide_timer = t
 
-class ArtistRichDetailView(QWidget):
+class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML header (photo, stats, bio, action buttons) for smooth resizing, the popular tracks list, album sections (Albums/Singles/Appears On as QML grids), and the related artists strip.
     album_clicked = pyqtSignal(dict)
     play_album = pyqtSignal(dict)
     play_multiple_tracks = pyqtSignal(list)
@@ -2347,7 +2343,7 @@ class ArtistRichDetailView(QWidget):
                     pass
             threading.Thread(target=_fetch_full, daemon=True).start()
 
-class ArtistModel(QAbstractListModel):
+class ArtistModel(QAbstractListModel): # Read-only list model backing the main artist grid's QML GridView, exposing artistName/coverId/albumCount/songCount/isLoading/rawData roles per artist.
     NAME_ROLE        = Qt.ItemDataRole.UserRole + 1
     COVER_ID_ROLE    = Qt.ItemDataRole.UserRole + 2
     RAW_DATA_ROLE    = Qt.ItemDataRole.UserRole + 3
@@ -2405,7 +2401,7 @@ class ArtistModel(QAbstractListModel):
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
 
-class ArtistGridBridge(QObject):
+class ArtistGridBridge(QObject): # Bridge for the main artist grid's QML (artist_grid.qml): item/play clicks resolved via artist_model, visible-range reporting for lazy loading, search controller, sort-menu requests, and theme/typography/color signals to QML.
     itemClicked         = pyqtSignal(dict)
     playClicked         = pyqtSignal(dict)
     visibleRangeChanged = pyqtSignal(int, int)
@@ -2472,7 +2468,7 @@ class ArtistGridBridge(QObject):
         if 0 <= idx < len(self.artist_model.artists):
             self.playClicked.emit(self.artist_model.artists[idx])
 
-class ArtistGridBrowser(QWidget):
+class ArtistGridBrowser(QWidget): # Top-level artist-browsing widget: a QStackedWidget toggling between the searchable/sortable artist grid (artist_grid.qml + ArtistModel) and ArtistRichDetailView for a selected artist's detail page.
     play_track_signal = pyqtSignal(dict) 
     play_album_signal = pyqtSignal(list) 
     queue_track_signal = pyqtSignal(dict)

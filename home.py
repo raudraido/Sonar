@@ -8,26 +8,20 @@ home.qml + the thin Python bridge/model/provider classes below.
 import os as _os
 import sys as _sys
 import json as _json
-import time
 import random as _rnd
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QSettings, QTimer,
-                          QAbstractListModel, QModelIndex,
                           QObject, pyqtSlot, QUrl)
-from PyQt6.QtGui  import QImage, QPainter, QPainterPath, QColor
-from PyQt6.QtCore import QRectF
-from PyQt6.QtQuick import QQuickImageProvider
+from PyQt6.QtGui  import QColor
 from PyQt6.QtQuickWidgets import QQuickWidget
 
 from player import resource_path
 from player.workers import GridCoverWorker
+from player.widgets import AlbumModel, AlbumIconProvider, CoverImageProvider
 
 _PAGE        = 50
 _RANDOM_PAGE = 100
-
-
-# ── Disk-cache helpers (unchanged) ──────────────────────────────────────────
 
 def _home_cache_path():
     base = getattr(_sys, '_MEIPASS', _os.path.dirname(_os.path.abspath(__file__)))
@@ -50,9 +44,7 @@ def _home_cache_write(data: dict):
         pass
 
 
-# ── Workers (unchanged) ─────────────────────────────────────────────────────
-
-class HomeLoaderWorker(QThread):
+class HomeLoaderWorker(QThread): # Initial home-tab load: emits cached Recent/Random/Most-played rows immediately, then fetches fresh copies of all three in parallel via a thread pool, streaming each as it arrives and rewriting the disk cache.
     recent_ready      = pyqtSignal(list)
     random_ready      = pyqtSignal(list)
     most_played_ready = pyqtSignal(list)
@@ -107,8 +99,7 @@ class HomeLoaderWorker(QThread):
             print(f"[Home Worker] Error: {e}")
             self.data_ready.emit([], [], [])
 
-
-class HomePageWorker(QThread):
+class HomePageWorker(QThread): # Fetches one offset-based page of albums for a given sort_type, used to load more items into a home row when the user scrolls to its end.
     page_ready = pyqtSignal(list)
 
     def __init__(self, client, sort_type, offset):
@@ -128,8 +119,7 @@ class HomePageWorker(QThread):
             print(f"[HomePageWorker] Error: {e}")
             self.page_ready.emit([])
 
-
-class RandomMixReloaderWorker(QThread):
+class RandomMixReloaderWorker(QThread): # Fetches a fresh batch of random albums for the Random Mix row's reload/shuffle action.
     data_ready = pyqtSignal(list)
 
     def __init__(self, client):
@@ -147,146 +137,7 @@ class RandomMixReloaderWorker(QThread):
             print(f"[RandomMixReloader] Error: {e}")
             self.data_ready.emit([])
 
-
-# ── QAbstractListModel ───────────────────────────────────────────────────────
-
-class HomeAlbumModel(QAbstractListModel):
-    TITLE_ROLE    = Qt.ItemDataRole.UserRole + 1
-    ARTIST_ROLE   = Qt.ItemDataRole.UserRole + 2
-    YEAR_ROLE     = Qt.ItemDataRole.UserRole + 3
-    COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 4
-    RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 5
-    IS_LOADING_ROLE  = Qt.ItemDataRole.UserRole + 6
-    SONG_COUNT_ROLE  = Qt.ItemDataRole.UserRole + 7
-    ARTIST_ID_ROLE   = Qt.ItemDataRole.UserRole + 8
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._albums = []
-
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._albums)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or index.row() >= len(self._albums):
-            return None
-        a = self._albums[index.row()]
-        if role == self.IS_LOADING_ROLE:  return bool(a.get('_skeleton'))
-        if role == self.TITLE_ROLE:
-            return '' if a.get('_skeleton') else (a.get('title') or a.get('name') or 'Unknown')
-        if role == self.ARTIST_ROLE:     return a.get('artist') or a.get('albumArtist') or ''
-        if role == self.YEAR_ROLE:       return str(a.get('year') or a.get('minYear') or '').replace('None', '')
-        if role == self.COVER_ID_ROLE:   return a.get('coverId_forced') or a.get('cover_id') or ''
-        if role == self.RAW_DATA_ROLE:   return a
-        if role == self.SONG_COUNT_ROLE:
-            n = a.get('songCount') or a.get('trackCount') or ''
-            return f"{n} tracks" if n else ''
-        if role == self.ARTIST_ID_ROLE:  return a.get('artistId') or a.get('albumArtistId') or ''
-        return None
-
-    def roleNames(self):
-        return {
-            self.TITLE_ROLE:      b"albumTitle",
-            self.ARTIST_ROLE:     b"albumArtist",
-            self.YEAR_ROLE:       b"albumYear",
-            self.COVER_ID_ROLE:   b"coverId",
-            self.RAW_DATA_ROLE:   b"rawData",
-            self.IS_LOADING_ROLE: b"isLoading",
-            self.SONG_COUNT_ROLE: b"albumSongCount",
-            self.ARTIST_ID_ROLE:  b"albumArtistId",
-        }
-
-    def set_albums(self, albums):
-        self.beginResetModel()
-        self._albums = list(albums)
-        self.endResetModel()
-
-    def append_albums(self, albums):
-        if not albums:
-            return
-        start = len(self._albums)
-        self.beginInsertRows(QModelIndex(), start, start + len(albums) - 1)
-        self._albums.extend(albums)
-        self.endInsertRows()
-
-    def update_cover(self, cover_id):
-        forced = f"{cover_id}?t={time.time()}"
-        for i, a in enumerate(self._albums):
-            raw = str(a.get('cover_id') or a.get('coverArt') or a.get('id') or '')
-            if raw == cover_id:
-                a['coverId_forced'] = forced
-                idx = self.index(i, 0)
-                self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
-
-
-# ── Image provider (serves cover art to QML via image://homecovers/<id>) ────
-
-class HomeIconProvider(QQuickImageProvider):
-    """Provides accent-colour-tinted PNG icons. URL: image://homeicons/<name>_<RRGGBB>"""
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self._cache = {}
-
-    def requestImage(self, icon_id, requestedSize):
-        parts = icon_id.rsplit('_', 1)
-        name      = parts[0]
-        color_hex = ('#' + parts[1]) if len(parts) > 1 else '#ffffff'
-        cache_key = f"{name}_{color_hex}"
-        if cache_key in self._cache:
-            img = self._cache[cache_key]
-            return img, img.size()
-        path = resource_path(f"img/{name}.png")
-        base = QImage(path)
-        if base.isNull():
-            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
-            empty.fill(Qt.GlobalColor.transparent)
-            return empty, empty.size()
-        result = QImage(base.size(), QImage.Format.Format_ARGB32_Premultiplied)
-        result.fill(Qt.GlobalColor.transparent)
-        p = QPainter(result)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(0, 0, base)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(result.rect(), QColor(color_hex))
-        p.end()
-        self._cache[cache_key] = result
-        return result, result.size()
-
-
-class HomeCoverProvider(QQuickImageProvider):
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self.cache = {}  # cover_id → raw bytes
-
-    def requestImage(self, id, requestedSize):
-        real_id = id.split("?t=")[0]
-        data    = self.cache.get(real_id)
-
-        size = 250
-        img  = QImage(size, size, QImage.Format.Format_ARGB32)
-        img.fill(Qt.GlobalColor.transparent)
-
-        if data:
-            source = QImage()
-            source.loadFromData(data)
-            if not source.isNull():
-                source = source.scaled(size, size,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation)
-                painter = QPainter(img)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                path = QPainterPath()
-                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
-                painter.setClipPath(path)
-                painter.drawImage(0, 0, source)
-                painter.end()
-
-        return img, img.size()
-
-
-# ── Bridge (QML ↔ Python event routing) ─────────────────────────────────────
-
-class HomeBridge(QObject):
+class HomeBridge(QObject): # Bridge for home.qml: routes per-row album/play/artist clicks, refresh and load-more requests, row-order persistence, and pushes theme/typography signals to QML.
     # → QML (theme / spinner updates)
     accentColorChanged        = pyqtSignal(str)
     skeletonColorChanged      = pyqtSignal(str)
@@ -312,14 +163,14 @@ class HomeBridge(QObject):
     @pyqtSlot(str, int)
     def albumClicked(self, row_id, idx):
         m = self._models.get(row_id)
-        if m and 0 <= idx < len(m._albums) and not m._albums[idx].get('_skeleton'):
-            self._view.album_clicked.emit(m._albums[idx])
+        if m and 0 <= idx < len(m.albums) and m.albums[idx].get('type') != 'placeholder':
+            self._view.album_clicked.emit(m.albums[idx])
 
     @pyqtSlot(str, int)
     def playClicked(self, row_id, idx):
         m = self._models.get(row_id)
-        if m and 0 <= idx < len(m._albums) and not m._albums[idx].get('_skeleton'):
-            self._view.play_album.emit(m._albums[idx])
+        if m and 0 <= idx < len(m.albums) and m.albums[idx].get('type') != 'placeholder':
+            self._view.play_album.emit(m.albums[idx])
 
     @pyqtSlot(str, str)
     def artistNameClicked(self, name, artist_id):
@@ -344,12 +195,9 @@ class HomeBridge(QObject):
     @pyqtSlot(str, result=int)
     def rowCount(self, row_id):
         m = self._models.get(row_id)
-        return len(m._albums) if m else 0
+        return len(m.albums) if m else 0
 
-
-# ── HomeView — thin wrapper around QQuickWidget ──────────────────────────────
-
-class HomeView(QWidget):
+class HomeView(QWidget): # Top-level home tab: hosts home.qml with three AlbumModel rows (Recent/Random/Most Played), wiring HomeLoaderWorker/HomePageWorker/RandomMixReloaderWorker for data loading and HomeBridge for QML interaction.
     album_clicked  = pyqtSignal(dict)
     play_album     = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
@@ -359,12 +207,12 @@ class HomeView(QWidget):
         self.client = client
 
         # Per-row album models
-        self.recent_model      = HomeAlbumModel()
-        self.random_model      = HomeAlbumModel()
-        self.most_played_model = HomeAlbumModel()
+        self.recent_model      = AlbumModel()
+        self.random_model      = AlbumModel()
+        self.most_played_model = AlbumModel()
 
         # Cover image provider (shared across all rows)
-        self.cover_provider = HomeCoverProvider()
+        self.cover_provider = CoverImageProvider()
 
         # Bridge
         self.bridge = HomeBridge(
@@ -376,7 +224,7 @@ class HomeView(QWidget):
         self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        self.icon_provider = HomeIconProvider()
+        self.icon_provider = AlbumIconProvider()
 
         engine = self._qml.engine()
         engine.addImageProvider("homecovers", self.cover_provider)
@@ -444,7 +292,7 @@ class HomeView(QWidget):
             self._safe_discard_worker(self._loader)
 
         for m in (self.recent_model, self.random_model, self.most_played_model):
-            m.set_albums([{'_skeleton': True}] * 8)
+            m.set_albums([{'type': 'placeholder', 'title': ''}] * 8)
 
         self._loader = HomeLoaderWorker(self.client)
         self._loader.recent_ready.connect(self._on_recent_loaded)
@@ -470,7 +318,7 @@ class HomeView(QWidget):
 
     def _refresh_recent(self):
         self.bridge.recentSpinChanged.emit(True)
-        self.recent_model.set_albums([{'_skeleton': True}] * 8)
+        self.recent_model.set_albums([{'type': 'placeholder', 'title': ''}] * 8)
         if getattr(self, '_recent_loader', None) and self._recent_loader.isRunning():
             self._safe_discard_worker(self._recent_loader)
         w = HomePageWorker(self.client, "newest", 0)
@@ -486,7 +334,7 @@ class HomeView(QWidget):
 
     def _refresh_random(self):
         self.bridge.randomSpinChanged.emit(True)
-        self.random_model.set_albums([{'_skeleton': True}] * 8)
+        self.random_model.set_albums([{'type': 'placeholder', 'title': ''}] * 8)
         self._random_refresh_count += 1
         buf = self._random_buffer
         if buf:
@@ -531,7 +379,7 @@ class HomeView(QWidget):
         if row_id not in model_map:
             return
         model, sort = model_map[row_id]
-        if any(a.get('_skeleton') for a in model._albums):
+        if any(a.get('type') == 'placeholder' for a in model.albums):
             return
         setattr(self, attr, True)
         w = HomePageWorker(self.client, sort, offset)
@@ -555,7 +403,7 @@ class HomeView(QWidget):
 
     def _on_cover_ready(self, cover_id, image_data):
         cid = str(cover_id)
-        self.cover_provider.cache[cid] = image_data
+        self.cover_provider.image_cache[cid] = image_data
         for m in (self.recent_model, self.random_model, self.most_played_model):
             m.update_cover(cid)
 
