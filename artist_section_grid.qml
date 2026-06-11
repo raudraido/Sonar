@@ -94,8 +94,19 @@ Item {
                 property bool isKeyboardFocused: grid.activeFocus && grid.currentIndex === index
                 property bool isHovered: isMouseHovered || isKeyboardFocused
 
+                SkeletonCard {
+                    visible: albumTitle === ""
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    pillCount: 3
+                    baseColor: root.skeletonBaseColor
+                    cardIndex: index
+                }
+
                 Item {
                     id: coverContainer
+                    visible: albumTitle !== ""
                     width: parent.width
                     height: parent.width
                     anchors.top: parent.top
@@ -161,6 +172,7 @@ Item {
                 }
 
                 Column {
+                    visible: albumTitle !== ""
                     z: 2
                     anchors.top: coverContainer.bottom
                     anchors.topMargin: 8
@@ -235,6 +247,7 @@ Item {
 
                 MouseArea {
                     id: mouseArea
+                    enabled: albumTitle !== ""
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
@@ -248,6 +261,7 @@ Item {
 
                 MouseArea {
                     id: playArea
+                    enabled: albumTitle !== ""
                     x: coverContainer.x + playBtnObj.x
                     y: coverContainer.y + playBtnObj.y
                     width: playBtnObj.width

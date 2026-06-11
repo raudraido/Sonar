@@ -1,5 +1,4 @@
 import random
-import math
 import re
 from collections import OrderedDict
 import time
@@ -10,7 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QStyledItemDelegate, QStyle)
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QBrush, QPainterPath, QPen, QFontMetrics, QPolygon
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
@@ -56,117 +55,6 @@ class ArtistPlayWorker(QThread):
         except Exception as e:
             print(f"Error: {e}")
             self.tracks_ready.emit([])
-
-class _AlbumSkeletonRow(QWidget):
-    """Placeholder row shown while album data is being fetched. Paints shimmer-style ghost cards."""
-
-    def __init__(self, card_count=6, base_color="#282828", parent=None):
-        super().__init__(parent)
-        self._card_count = card_count
-        self._phase = 0.0
-        c = QColor(base_color)
-        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(40)  # ~25 fps shimmer
-        self.setFixedHeight(220)
-
-    def _tick(self):
-        self._phase = (self._phase + 0.04) % 1.0
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        card_w, card_h = 150, 180
-        spacing = 16
-        y = 20
-
-        import math
-        for i in range(self._card_count):
-            x = spacing + i * (card_w + spacing)
-            # Shimmer brightness offset per card
-            phase = (self._phase + i * 0.15) % 1.0
-            brightness = int(self._base + 20 * math.sin(phase * 2 * math.pi))
-
-            # Card background
-            rect = QRectF(x, y, card_w, card_h)
-            p.setBrush(QBrush(QColor(brightness, brightness, brightness)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(rect, 6, 6)
-
-            # Title pill
-            pill = QRectF(x + 8, y + card_h + 6, card_w - 16, 10)
-            p.setBrush(QBrush(QColor(brightness - 8, brightness - 8, brightness - 8)))
-            p.drawRoundedRect(pill, 5, 5)
-
-            # Subtitle pill
-            pill2 = QRectF(x + 8, y + card_h + 22, card_w * 0.6, 8)
-            p.drawRoundedRect(pill2, 4, 4)
-
-        p.end()
-
-    def hideEvent(self, event):
-        self._timer.stop()
-        super().hideEvent(event)
-
-class _SectionSkeleton(QWidget):
-    """Shimmer skeleton for bio or popular-tracks section, shown before data arrives."""
-
-    def __init__(self, mode='bio', base_color="#282828", parent=None):
-        super().__init__(parent)
-        self._mode = mode
-        self._phase = 0.0
-        c = QColor(base_color)
-        self._base = int(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue())
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(40)
-        self.setFixedHeight(180 if mode == 'bio' else 280)
-
-    def _tick(self):
-        self._phase = (self._phase + 0.04) % 1.0
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-
-        x = 8
-        phase = self._phase
-        bright = int(self._base + 15 * math.sin(phase * 2 * math.pi))
-
-        # Section title pill
-        p.setBrush(QBrush(QColor(bright + 12, bright + 12, bright + 12)))
-        p.drawRoundedRect(QRectF(x, 14, 140, 16), 8, 8)
-
-        if self._mode == 'bio':
-            line_h, gap = 10, 18
-            for i in range(6):
-                ph = (phase + i * 0.1) % 1.0
-                br = int(self._base + 10 * math.sin(ph * 2 * math.pi))
-                w = (self.width() - 16) * (0.95 if i < 5 else 0.55)
-                p.setBrush(QBrush(QColor(br, br, br)))
-                p.drawRoundedRect(QRectF(x, 46 + i * gap, w, line_h), 5, 5)
-        else:
-            for i in range(5):
-                ph = (phase + i * 0.15) % 1.0
-                br = int(self._base + 10 * math.sin(ph * 2 * math.pi))
-                y = 46 + i * 46
-                p.setBrush(QBrush(QColor(br, br, br)))
-                p.drawRoundedRect(QRectF(x, y + 2, 28, 28), 4, 4)
-                p.setBrush(QBrush(QColor(br + 6, br + 6, br + 6)))
-                p.drawRoundedRect(QRectF(x + 40, y + 5, 160, 10), 5, 5)
-                p.setBrush(QBrush(QColor(br - 4, br - 4, br - 4)))
-                p.drawRoundedRect(QRectF(x + 40, y + 20, 100, 8), 4, 4)
-
-        p.end()
-
-    def hideEvent(self, event):
-        self._timer.stop()
-        super().hideEvent(event)
 
 class LiveArtistDetailWorker(QThread):
     # Progressive signals — each fires as soon as its data arrives
@@ -897,12 +785,14 @@ class QMLAlbumSectionWidget(QWidget):
         self.title_layout.addWidget(self.lbl_count)
         self.title_layout.addStretch()
         outer.addWidget(title_container)
+        title_container.setVisible(bool(title))
 
         # ── QML grid ───────────────────────────────────────────────────────
         self.qml_widget = QQuickWidget()
         self.qml_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self.qml_widget.setClearColor(QColor(14, 14, 14))
         self.qml_widget.setMinimumHeight(10)
+        outer.addWidget(self.qml_widget)
 
         self.album_model = AlbumModel()
         self.bridge = SectionGridBridge(self.album_model)
@@ -931,7 +821,6 @@ class QMLAlbumSectionWidget(QWidget):
                 self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
                 self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
         _QTimer.singleShot(0, _emit_section_typography)
-        outer.addWidget(self.qml_widget)
 
         # facade so legacy code doing `row.list_widget.count()` etc. still works
         self.list_widget = _SectionListFacade(self)
@@ -1957,15 +1846,6 @@ class ArtistRichDetailView(QWidget):
         self.related_artists_row = row
 
     def set_top_songs(self, songs):
-        w = getattr(self, '_skeleton_songs', None)
-        if w:
-            try:
-                self.content_layout.removeWidget(w)
-                w.deleteLater()
-            except Exception:
-                pass
-            self._skeleton_songs = None
-
         if songs:
             from PyQt6.QtWidgets import QApplication
             current_focus = QApplication.focusWidget()
@@ -2016,6 +1896,20 @@ class ArtistRichDetailView(QWidget):
                 if hasattr(w, '_timer'):
                     w._timer.stop()
                 w.deleteLater()
+
+    # Sentinel title used to identify the loading-skeleton section
+    _SKELETON_SECTION_TITLE = "_skeleton"
+
+    def _show_section_skeleton(self, count=10):
+        """Instant visual feedback — animated skeleton cards (matches albums grid)."""
+        placeholders = [{'type': 'placeholder', 'title': '', 'cover_id': ''} for _ in range(count)]
+        row = QMLAlbumSectionWidget("", 0, placeholders)
+        row._section_title = self._SKELETON_SECTION_TITLE
+        if hasattr(self, '_bg_color'):
+            row.set_bg_color(self._bg_color)
+        row.set_accent_color(self.current_accent)
+        row.qml_widget.installEventFilter(self)
+        self.sections_layout.addWidget(row)
 
     # Max albums per QML widget — keeps each texture well under GPU limits
     _QML_CHUNK = 80
@@ -2164,19 +2058,6 @@ class ArtistRichDetailView(QWidget):
                     worker.terminate()
         if hasattr(self, '_worker_graveyard'):
             self._worker_graveyard.clear()
-   
-    def _cleanup_section_skeletons(self):
-        for attr in ('_skeleton_songs',):
-            w = getattr(self, attr, None)
-            if w:
-                try:
-                    if hasattr(w, '_timer'):
-                        w._timer.stop()
-                    self.content_layout.removeWidget(w)
-                    w.deleteLater()
-                except Exception:
-                    pass
-                setattr(self, attr, None)
 
     def load_artist(self, artist_data):
         self.pending_items = {}
@@ -2187,18 +2068,11 @@ class ArtistRichDetailView(QWidget):
 
         # 1. INSTANT VISUALS
         self._set_stats("Loading...")
-        self._cleanup_section_skeletons()
         self.set_bio("")
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
-        self._show_album_skeleton()
-
-        # Insert structural skeleton for popular tracks
-        header_idx = self.content_layout.indexOf(self.header)
-        sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
-        self._skeleton_songs = _SectionSkeleton('songs', base_color=sk_color)
-        self.content_layout.insertWidget(header_idx + 1, self._skeleton_songs)
+        self._show_section_skeleton()
 
         if not getattr(self, '_header_already_loaded', False):
             sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
@@ -2232,16 +2106,8 @@ class ArtistRichDetailView(QWidget):
         self.live_detail_worker.appears_ready.connect(self._on_appears_ready)
         self.live_detail_worker.start()
 
-    def _show_album_skeleton(self):
-        """Show placeholder skeleton cards while the album data is loading."""
-        sk_color = getattr(getattr(self.window(), 'theme', None), 'skeleton_base', '#282828')
-        skeleton = _AlbumSkeletonRow(base_color=sk_color)
-        skeleton._section_title = "_skeleton"
-        self.sections_layout.insertWidget(0, skeleton)
-
     def _on_albums_ready(self, info, main_albums, singles):
         """Phase 2 handler — fires as soon as get_artist returns. Shows albums immediately."""
-        self._remove_section("_skeleton")
         if info:
             self._artist_liked = bool(info.get('starred'))
             self._update_like_btn()
@@ -2298,6 +2164,11 @@ class ArtistRichDetailView(QWidget):
             if main_albums: self.add_section("Albums",      main_albums, worker, self.pending_items)
             if singles:     self.add_section("Singles & EPs", singles,   worker, self.pending_items)
 
+        # Drop the loading skeleton once we have releases to show — guest artists
+        # (no albums/singles) keep it until _on_appears_ready resolves
+        if total_releases > 0:
+            self._remove_section(self._SKELETON_SECTION_TITLE)
+
         self._try_set_focus()
 
     def _on_top_songs_ready(self, top_songs):
@@ -2306,10 +2177,10 @@ class ArtistRichDetailView(QWidget):
 
     def _on_appears_ready(self, appears_on):
         """Phase 5 handler — fires after search_artist_tracks returns (slowest call)."""
-        self._cleanup_section_skeletons()
         self._loaded_appears_on = appears_on
         worker = getattr(self, 'cover_worker', None)
         self._remove_section("Appears on & Compilations")
+        self._remove_section(self._SKELETON_SECTION_TITLE)
         if appears_on:
             self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
 

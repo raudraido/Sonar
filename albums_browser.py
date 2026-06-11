@@ -194,7 +194,6 @@ class CompilationsWorker(QThread):
             print(f"[CompilationsWorker] Error: {e}")
             self.results_ready.emit([])
 
-
 class ServerCountWorker(QThread):
     count_ready = pyqtSignal(int)
 
@@ -214,7 +213,6 @@ class ServerCountWorker(QThread):
                 self.count_ready.emit(count)
         except Exception as e:
             print(f"[ServerCountWorker] Safely caught error: {e}")
-
 
 # ── AlbumDetail QML support classes ─────────────────────────────────────────
 
@@ -317,7 +315,6 @@ class AlbumDetailTrackModel(QAbstractListModel):
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
                 break
-
 
 class AlbumDetailBridge(QObject):
     # → QML
@@ -496,7 +493,6 @@ class AlbumDetailBridge(QObject):
         from PyQt6.QtCore import QSettings
         QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
 
-
 class _AlbumKeyFilter(SearchKeyFilter):
     """Widget-level key filter — fires regardless of QML focus state.
 
@@ -531,7 +527,6 @@ class _AlbumKeyFilter(SearchKeyFilter):
             b.selectedTrackChanged.emit(-1)
             return True
         return False
-
 
 class AlbumDetailView(QWidget):
     play_clicked = pyqtSignal()
@@ -901,7 +896,6 @@ class AlbumDetailView(QWidget):
             daemon=True).start()
 
     # ─── end of AlbumDetailView ───────────────────────────────────────────────
-
 
 class LibraryGridBrowser(QWidget):
     play_track_signal = pyqtSignal(dict) 
