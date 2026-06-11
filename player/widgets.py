@@ -1358,80 +1358,6 @@ class StatusButton(QPushButton):
 
 
 
-class SquareArtContainer(QWidget):
-    """Paints the album art perfectly 1:1 without triggering any layout loops."""
-    def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumSize(100, 100) # Prevents collapsing to 0
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        
-        side = min(self.width(), self.height())
-        x = (self.width() - side) // 2
-        y = 0  # top-aligned — no empty space above the art
-        
-        rect = QRect(x, y, side, side)
-
-        bg_path = QPainterPath()
-        bg_path.addRoundedRect(QRectF(rect), 5, 5)
-        painter.setClipPath(bg_path)
-        painter.setBrush(QColor("#121212"))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPath(bg_path)
-        painter.setClipping(False)
-        
-        progress = getattr(self.main_window, 'crossfade_progress', 1.0)
-        if not hasattr(self, 'scaled_cache'): self.scaled_cache = {}
-        
-        # 🟢 ULTRA-FAST CACHING PAINTER
-        def draw_art(pix_attr, alpha):
-            pix = getattr(self.main_window, pix_attr, None)
-            if not pix or pix.isNull(): return
-            
-            # Only do the heavy scaling math if the window changed size!
-            if self.scaled_cache.get(pix_attr, {}).get('size') != side:
-                self.scaled_cache[pix_attr] = {
-                    'size': side, 
-                    'pix': pix.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-                }
-            scaled_pix = self.scaled_cache[pix_attr]['pix']
-            
-            painter.save()
-            painter.setOpacity(alpha)
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(rect), 5, 5)
-            painter.setClipPath(path)
-            px_x = x + (side - scaled_pix.width()) // 2
-            px_y = y + (side - scaled_pix.height()) // 2
-            painter.drawPixmap(px_x, px_y, scaled_pix)
-            painter.restore()
-
-        has_drawn_old = False
-        
-        # 1. Draw old art (Uses the pre-decoded 'old_cover_pixmap')
-        if progress < 1.0 and hasattr(self.main_window, 'old_cover_pixmap') and self.main_window.old_cover_pixmap:
-            draw_art('old_cover_pixmap', 1.0)
-            has_drawn_old = True
-            
-        # 2. Draw new art (Uses the pre-decoded 'current_cover_pixmap')
-        if hasattr(self.main_window, 'current_cover_pixmap') and self.main_window.current_cover_pixmap:
-            draw_art('current_cover_pixmap', progress)
-        elif not has_drawn_old:
-            painter.setPen(QColor("#333333"))
-            font = painter.font()
-            font.setPixelSize(max(20, int(side * 0.3)))
-            painter.setFont(font)
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "💿")
-
-
 
 # ── Shared shadow context menu ────────────────────────────────────────────────
 
@@ -1786,6 +1712,55 @@ class AlbumIconProvider(QQuickImageProvider):
         p.end()
         self._cache[cache_key] = result
         return result, result.size()
+
+
+class LeftPanelCoverProvider(QQuickImageProvider):
+    """Serves the left-panel album-art square via
+    `image://leftpanelcover/<current|old>/<token>`.
+
+    Reproduces the old SquareArtContainer paint: a rounded square (radius 5)
+    on a #121212 background, with the source pixmap scaled
+    (KeepAspectRatioByExpanding) and center-cropped to fill it. The actual
+    pixmaps are pushed imperatively via set_current_art/set_old_art — the
+    requested id only selects which of the two to render.
+    """
+
+    SIZE = 400
+
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self._current = None
+        self._old = None
+
+    def set_current_art(self, pixmap):
+        self._current = pixmap
+
+    def set_old_art(self, pixmap):
+        self._old = pixmap
+
+    def requestImage(self, image_id, requestedSize):
+        which = image_id.split("/")[0]
+        src = self._current if which == "current" else self._old
+
+        size = self.SIZE
+        out = QImage(size, size, QImage.Format.Format_ARGB32)
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, size, size), 5, 5)
+        p.setClipPath(path)
+        p.fillRect(out.rect(), QColor("#121212"))
+        if src is not None and not src.isNull():
+            scaled = src.scaled(size, size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation)
+            ox = (scaled.width()  - size) // 2
+            oy = (scaled.height() - size) // 2
+            p.drawPixmap(-ox, -oy, scaled)
+        p.end()
+        return out, out.size()
 
 
 class AlbumDetailCoverProvider(QQuickImageProvider):

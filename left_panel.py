@@ -1,195 +1,55 @@
 """
-left_panel.py — LeftPanel widget for Icosahedron.
+left_panel.py — LeftPanel widget for Icoshahedron.
 
-Contains the visualizer section, album-art section, and the top header that
-mirrors the queue panel header for visual alignment.
+Hosts left_panel.qml (header w/ logo + collapsible album-art section) inside
+a single QQuickWidget, driven by LeftPanelBridge. Native back/forward nav
+buttons are overlaid as small widgets in the header's top-right corner.
 """
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QSizePolicy, QGraphicsOpacityEffect, QLabel,
-)
-from PyQt6.QtCore import (
-    Qt, QSize, QPropertyAnimation, QEasingCurve, QEvent, QTimer,
-)
-from PyQt6.QtGui import QPixmap, QColor, QIcon
-from PyQt6.QtGui import QPainter as _QPainter
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QTimer, QUrl
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtQuickWidgets import QQuickWidget
 
-from player.widgets import SquareArtContainer
+from player.widgets import AlbumIconProvider, LeftPanelCoverProvider
 from player import resource_path
 
 
-class _SectionWidget(QWidget):
-    """Left-panel section — hide/unhide button fades in on hover."""
+class LeftPanelBridge(QObject):
+    """Bridge for left_panel.qml: pushes theme/art state to QML and reports
+    the art-section close-button click back to LeftPanel."""
 
-    def __init__(self, content, key, main_window, parent=None, show_controls=False):
-        super().__init__(parent)
-        self._content = content
-        self._key = key
-        self._main = main_window
-        self._companion_btn = None
+    # → QML
+    panelBgChanged             = pyqtSignal(str)
+    borderColorChanged         = pyqtSignal(str)
+    borderWidthChanged         = pyqtSignal(int)
+    accentColorChanged         = pyqtSignal(str)
+    logoTintColorChanged       = pyqtSignal(str)
+    closeBtnBgChanged          = pyqtSignal(str)
+    closeBtnBgHoverChanged     = pyqtSignal(str)
+    closeBtnBorderChanged      = pyqtSignal(str)
+    closeBtnBorderHoverChanged = pyqtSignal(str)
+    artVisibleChanged          = pyqtSignal(bool)
+    artTargetSizeChanged       = pyqtSignal(int)
+    crossfadeProgressChanged   = pyqtSignal(float)
+    currentArtIdChanged        = pyqtSignal(str)
+    oldArtIdChanged            = pyqtSignal(str)
 
-        lo = QVBoxLayout(self)
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(0)
-        lo.addWidget(content, 1)
+    # → Python
+    closeArtClicked = pyqtSignal()
 
-        self._toggle_opacity = None
-        self._hover_anim = None
+    def __init__(self, panel):
+        super().__init__()
+        self._panel = panel
 
-        if show_controls:
-            self._btn = QPushButton(self)
-            self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self._btn.setIconSize(QSize(16, 16))
-            self._btn.setFixedSize(28, 28)
-            self._btn.clicked.connect(self._toggle)
-            self._btn.installEventFilter(self)
-
-            def _tint(path, color):
-                raw = QPixmap(resource_path(path))
-                if raw.isNull():
-                    return QIcon()
-                out = QPixmap(raw.size())
-                out.fill(Qt.GlobalColor.transparent)
-                p = _QPainter(out)
-                p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-                p.drawPixmap(0, 0, raw)
-                p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
-                p.fillRect(out.rect(), QColor(color))
-                p.end()
-                return QIcon(out)
-
-            self._hide_dim    = _tint("img/hide.png",   "#515151")
-            self._hide_bright = _tint("img/hide.png",   "#ffffff")
-            self._show_dim    = _tint("img/unhide.png", "#515151")
-            self._show_bright = _tint("img/unhide.png", "#ffffff")
-
-            self._btn.setIcon(self._hide_dim)
-            self._btn.setToolTip("Hide")
-            self._init_opacity_effect()
-            self._btn.hide()
-        else:
-            self._btn = None
-
-    def _current_dim(self):
-        return self._hide_dim if self._content.isVisible() else self._show_dim
-
-    def _current_bright(self):
-        return self._hide_bright if self._content.isVisible() else self._show_bright
-
-    def set_master_color(self, mc):
-        if self._btn is None:
-            return
-        r, g, b = QColor(mc).red(), QColor(mc).green(), QColor(mc).blue()
-        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
-        self._btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba({r},{g},{b},0.1);
-                border: 2px solid rgb({dr},{dg},{db});
-                border-radius: 14px; outline: none;
-            }}
-            QPushButton:hover {{
-                background-color: rgba({r},{g},{b},0.4);
-                border: 2px solid rgb({r},{g},{b});
-            }}
-            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
-        """)
-
-    def _init_opacity_effect(self):
-        self._btn.show()
-        self._toggle_opacity = QGraphicsOpacityEffect(self._btn)
-        self._toggle_opacity.setOpacity(0.0)
-        self._btn.setGraphicsEffect(self._toggle_opacity)
-        self._hover_anim = QPropertyAnimation(self._toggle_opacity, b"opacity")
-        self._hover_anim.setDuration(250)
-        self._hover_anim.finished.connect(self._on_anim_finished)
-
-        self._companion_opacity = None
-        self._companion_anim = None
-        if self._companion_btn is not None:
-            self._companion_btn.show()
-            self._companion_opacity = QGraphicsOpacityEffect(self._companion_btn)
-            self._companion_opacity.setOpacity(0.0)
-            self._companion_btn.setGraphicsEffect(self._companion_opacity)
-            self._companion_anim = QPropertyAnimation(self._companion_opacity, b"opacity")
-            self._companion_anim.setDuration(250)
-
-    def _on_anim_finished(self):
-        if self._toggle_opacity and self._toggle_opacity.opacity() == 0.0:
-            self._btn.setGraphicsEffect(None)
-            self._btn.hide()
-            self._toggle_opacity = None
-            self._hover_anim = None
-            if self._companion_btn is not None:
-                self._companion_btn.setGraphicsEffect(None)
-                self._companion_btn.hide()
-                self._companion_opacity = None
-                self._companion_anim = None
-
-    def eventFilter(self, obj, event):
-        if obj is self._btn:
-            if event.type() == QEvent.Type.Enter:
-                self._btn.setIcon(self._current_bright())
-            elif event.type() == QEvent.Type.Leave:
-                self._btn.setIcon(self._current_dim())
-        return super().eventFilter(obj, event)
-
-    def enterEvent(self, event):
-        if self._btn is None:
-            super().enterEvent(event)
-            return
-        if self._toggle_opacity is None:
-            self._init_opacity_effect()
-        self._hover_anim.stop()
-        self._hover_anim.setEndValue(1.0)
-        self._hover_anim.start()
-        if self._companion_anim is not None:
-            self._companion_anim.stop()
-            self._companion_anim.setEndValue(1.0)
-            self._companion_anim.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if self._toggle_opacity is None:
-            super().leaveEvent(event)
-            return
-        self._hover_anim.stop()
-        self._hover_anim.setEndValue(0.0)
-        self._hover_anim.start()
-        if self._companion_anim is not None:
-            self._companion_anim.stop()
-            self._companion_anim.setEndValue(0.0)
-            self._companion_anim.start()
-        super().leaveEvent(event)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._btn is None:
-            return
-        self._btn.move(self.width() - self._btn.width() - 10, 5)
-        if self._companion_btn is not None:
-            self._companion_btn.move(self._btn.x() - self._companion_btn.width() - 8, 5)
-
-    def _toggle(self):
-        vis = not self._content.isVisible()
-        self._content.setVisible(vis)
-        self._btn.setIcon(self._current_dim())
-        self._btn.setToolTip("Hide" if vis else "Unhide")
-        self._main.settings.setValue(f'section_{self._key}_visible', int(vis))
-        if self._key == 'vis':
-            engine = getattr(self._main, 'audio_engine', None)
-            visualizer = getattr(self._main, 'visualizer', None)
-            if engine:
-                engine.set_visualizer_active(vis)
-            if visualizer:
-                visualizer.visualizer_enabled = vis
-                if not vis:
-                    visualizer.vis_data = [0.0] * visualizer.num_bars
-                    visualizer.update()
+    @pyqtSlot()
+    def logoClicked(self):
+        self._panel._on_logo_clicked()
 
 
 class LeftPanel(QWidget):
-    """Left sidebar: fixed-height header + visualizer/art sections."""
+    """Left sidebar: QML header (logo) + collapsible album-art section."""
+
+    HEADER_HEIGHT = 62
 
     def __init__(self, main_window, audio_engine, settings, parent=None):
         super().__init__(parent)
@@ -202,111 +62,77 @@ class LeftPanel(QWidget):
             '#LeftPanel { background: rgba(14,14,14,0.96); border: none; border-radius: 0px; }'
         )
 
-        # Outer layout: header full-width at top, then sections area with margins
-        _left_outer = QVBoxLayout(self)
-        _left_outer.setContentsMargins(0, 0, 0, 0)
-        _left_outer.setSpacing(0)
+        self._art_token = 0
+        self._art_visible = False
+        self._header_widgets = []
 
-        # Header — mirrors the queue panel header for visual alignment
-        self.header = QWidget()
-        self.header.setFixedHeight(62)
-        self.header.setStyleSheet(
-            'QWidget { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.07); }'
+        self._bridge = LeftPanelBridge(self)
+        self._cover_provider = LeftPanelCoverProvider()
+        self._icon_provider = AlbumIconProvider()
+
+        self._qml = QQuickWidget()
+        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # QQuickWidget defaults to a white clear color — match the panel
+        # background to avoid a white flash while the QML loads.
+        self._qml.setClearColor(QColor(14, 14, 14))
+        self._qml.setAutoFillBackground(True)
+        pal = self._qml.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(14, 14, 14))
+        self._qml.setPalette(pal)
+
+        engine = self._qml.engine()
+        engine.addImageProvider("leftpanelcover", self._cover_provider)
+        engine.addImageProvider("albumicons", self._icon_provider)
+
+        ctx = self._qml.rootContext()
+        ctx.setContextProperty("leftPanelBridge", self._bridge)
+        ctx.setContextProperty(
+            "leftPanelLogoBase",
+            QUrl.fromLocalFile(resource_path("img/shahedron2.png")).toString(),
         )
-        self.header_layout = QHBoxLayout(self.header)
-        self.header_layout.setContentsMargins(8, 0, 8, 0)
-        self.header_layout.setSpacing(4)
 
-        _logo_size = 46  # 62px header − 8px top − 8px bottom
-        _logo_ctr = QWidget()
-        _logo_ctr.setFixedSize(_logo_size, _logo_size)
-        _logo_ctr.setStyleSheet("QWidget { border: none; }")
-        _logo_ctr.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._qml.setSource(QUrl.fromLocalFile(resource_path("left_panel.qml")))
 
-        self._logo_base = QLabel(_logo_ctr)
-        self._logo_base.setGeometry(0, 0, _logo_size, _logo_size)
-        _pix_base = QPixmap(resource_path("img/shahedron2.png"))
-        if not _pix_base.isNull():
-            _pix_base = _pix_base.scaled(
-                _logo_size, _logo_size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        self._logo_base.setPixmap(_pix_base)
-        self._logo_base.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._logo_base.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
+        lo.addWidget(self._qml)
 
-        self._logo_tint = QLabel(_logo_ctr)
-        self._logo_tint.setGeometry(0, 0, _logo_size, _logo_size)
-        self._logo_tint.setPixmap(self._tint_logo("#fafafa", _logo_size))
-        self._logo_tint.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._logo_tint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._logo_tint.raise_()
-
-        self._logo_size = _logo_size
+        # Triple-click logo (within 500ms) → Theme Builder
         self._click_count = 0
         self._click_timer = QTimer()
         self._click_timer.setSingleShot(True)
         self._click_timer.setInterval(500)
         self._click_timer.timeout.connect(lambda: setattr(self, '_click_count', 0))
 
-        def _logo_clicked(e):
-            if e.button() == Qt.MouseButton.LeftButton:
-                self._click_count += 1
-                self._click_timer.start()
-                if self._click_count >= 3:
-                    self._click_count = 0
-                    self._click_timer.stop()
-                    self._open_theme_builder()
-        _logo_ctr.mousePressEvent = _logo_clicked
+    # ── Header overlay (back/forward nav buttons) ───────────────────────
+    def add_header_widget(self, widget):
+        widget.setParent(self)
+        widget.show()
+        self._header_widgets.append(widget)
+        self._reposition_header_widgets()
 
-        self.header_layout.addWidget(_logo_ctr)
-        self.header_layout.addStretch()
-        _left_outer.addWidget(self.header)
+    def _reposition_header_widgets(self):
+        x = self.width() - 8
+        for w in reversed(self._header_widgets):
+            x -= w.width()
+            w.setGeometry(x, (self.HEADER_HEIGHT - w.height()) // 2, w.width(), w.height())
+            w.raise_()
+            x -= 4
 
-        # Sections container — keeps 8px margins around art/visualizer
-        _left_sections = QWidget()
-        _left_sections.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        _left_outer.addWidget(_left_sections, 1)
-        _layout = QVBoxLayout(_left_sections)
-        _layout.setContentsMargins(8, 8, 8, 8)
-        _layout.setSpacing(0)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_header_widgets()
 
-        # Album art section — collapsed by default
-        self.art_container = SquareArtContainer(main_window)
-        self.art_section = _SectionWidget(self.art_container, 'art', main_window)
-        self.art_section.setMaximumHeight(0)
-        self.art_section.setMinimumHeight(0)
-
-        # Art slide animation (height) — driven by window._toggle_sidebar_art
-        self.sidebar_art_anim = QPropertyAnimation(self.art_section, b"maximumHeight")
-        self.sidebar_art_anim.setDuration(250)
-        self.sidebar_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self.sidebar_art_anim.valueChanged.connect(
-            lambda v: self.art_section.setMinimumHeight(int(v))
-        )
-
-        # Art sits at the bottom of the left panel
-        _layout.addStretch(1)
-        _layout.addSpacing(8)
-        _layout.addWidget(self.art_section, 0)
-
-    def _tint_logo(self, color: str, size: int | None = None) -> QPixmap:
-        sz = size if size is not None else self._logo_size
-        raw = QPixmap(resource_path("img/shahedron1.png"))
-        if raw.isNull():
-            return QPixmap()
-        raw = raw.scaled(sz, sz, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
-        out = QPixmap(raw.size())
-        out.fill(Qt.GlobalColor.transparent)
-        p = _QPainter(out)
-        p.setRenderHint(_QPainter.RenderHint.Antialiasing)
-        p.drawPixmap(0, 0, raw)
-        p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(out.rect(), QColor(color))
-        p.end()
-        return out
+    # ── Logo / theme builder ─────────────────────────────────────────────
+    def _on_logo_clicked(self):
+        self._click_count += 1
+        self._click_timer.start()
+        if self._click_count >= 3:
+            self._click_count = 0
+            self._click_timer.stop()
+            self._open_theme_builder()
 
     def _open_theme_builder(self):
         import sys, os
@@ -327,5 +153,70 @@ class LeftPanel(QWidget):
         self._theme_builder.destroyed.connect(_on_destroyed)
         self._theme_builder.show()
 
+    # ── Album art section ────────────────────────────────────────────────
+    @property
+    def art_visible(self):
+        return self._art_visible
+
+    def set_art_visible(self, visible: bool):
+        self._art_visible = bool(visible)
+        self._bridge.artVisibleChanged.emit(self._art_visible)
+
+    def set_art_target_size(self, px: int):
+        self._bridge.artTargetSizeChanged.emit(int(px))
+
+    def set_cover_art(self, pixmap):
+        self._cover_provider.set_current_art(pixmap)
+        if pixmap is None or pixmap.isNull():
+            self._bridge.currentArtIdChanged.emit("")
+            return
+        self._art_token += 1
+        self._bridge.currentArtIdChanged.emit(str(self._art_token))
+
+    def set_old_art(self, pixmap):
+        self._cover_provider.set_old_art(pixmap)
+        if pixmap is None or pixmap.isNull():
+            self._bridge.oldArtIdChanged.emit("")
+            return
+        self._art_token += 1
+        self._bridge.oldArtIdChanged.emit(str(self._art_token))
+
+    def clear_old_art(self):
+        self._cover_provider.set_old_art(None)
+        self._bridge.oldArtIdChanged.emit("")
+
+    def set_crossfade_progress(self, value: float):
+        self._bridge.crossfadeProgressChanged.emit(float(value))
+
+    # ── Theme ─────────────────────────────────────────────────────────────
     def set_master_color(self, color: str):
-        self._logo_tint.setPixmap(self._tint_logo(color))
+        self._bridge.logoTintColorChanged.emit(color)
+        self._bridge.accentColorChanged.emit(color)
+
+        c = QColor(color)
+        r, g, b = c.red(), c.green(), c.blue()
+        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
+
+        self._bridge.closeBtnBgChanged.emit(f"#1a{r:02x}{g:02x}{b:02x}")
+        self._bridge.closeBtnBgHoverChanged.emit(f"#66{r:02x}{g:02x}{b:02x}")
+        self._bridge.closeBtnBorderChanged.emit(f"#{dr:02x}{dg:02x}{db:02x}")
+        self._bridge.closeBtnBorderHoverChanged.emit(f"#{r:02x}{g:02x}{b:02x}")
+
+    def apply_theme(self, theme):
+        try:
+            r, g, b = (int(x) for x in theme.left_panel_bg.split(','))
+            panel_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
+        except Exception:
+            panel_hex = '#0e0e0e'
+        self._bridge.panelBgChanged.emit(panel_hex)
+        self._bridge.borderColorChanged.emit(self._border_color_to_hex(theme.border_color))
+        self._bridge.borderWidthChanged.emit(theme.border_width)
+
+    @staticmethod
+    def _border_color_to_hex(color_str: str) -> str:
+        # QML's color property doesn't parse Qt-stylesheet-style
+        # "rgba(r,g,b,a)" with a 0-255 alpha — convert to #AARRGGBB.
+        if color_str.startswith('rgba'):
+            r, g, b, a = (int(float(x)) for x in color_str[color_str.index('(') + 1:-1].split(','))
+            return '#{:02x}{:02x}{:02x}{:02x}'.format(a, r, g, b)
+        return color_str

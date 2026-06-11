@@ -53,7 +53,7 @@ from player.workers import (
 from player.widgets import (
     ElidedLabel, NowPlayingFooterWidget, FooterClickableLabel,
     TriangleTooltip, ClickableSlider,
-    SettingsWindow, StatusButton, SquareArtContainer, PlayButton,
+    SettingsWindow, StatusButton, PlayButton,
 )
 from player import resource_path
 from player.theme import Theme
@@ -732,11 +732,7 @@ class SonarPlayer(
 
         # Keep sidebar art square as left panel is resized
         if getattr(self, '_sidebar_art_visible', False):
-            new_h = max(0, self._left_panel.width() - 16)
-            self._art_section.setMaximumHeight(new_h)
-            self._art_section.setMinimumHeight(new_h)
-            if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
-                self._art_close_btn.move(self._art_section.width() - 28, 4)
+            self._left_panel.set_art_target_size(max(0, self._left_panel.width() - 16))
 
     def _update_tab_mode(self):
         if not hasattr(self, 'main_header'):
@@ -856,9 +852,7 @@ class SonarPlayer(
 
         # --- LEFT PANEL ---
         self._left_panel = LeftPanel(self, self.audio_engine, self.settings)
-        self.art_container = self._left_panel.art_container
-        self._art_section  = self._left_panel.art_section
-        self._sidebar_art_anim = self._left_panel.sidebar_art_anim
+        self._left_panel._bridge.closeArtClicked.connect(self._toggle_sidebar_art)
         self._sidebar_art_visible = False
         self._info_section = None  # removed from left panel
 
@@ -1176,9 +1170,9 @@ class SonarPlayer(
         _mh_layout.addWidget(self.tab_bar)
         _mh_layout.addStretch()
 
-        # Nav buttons go in the left panel header's right corner
-        self._left_panel.header_layout.addWidget(self.btn_back)
-        self._left_panel.header_layout.addWidget(self.btn_fwd)
+        # Nav buttons overlay the left panel header's right corner
+        self._left_panel.add_header_widget(self.btn_back)
+        self._left_panel.add_header_widget(self.btn_fwd)
 
         # Trigger tab mode check whenever the header is resized (e.g. panels dragged)
         class _HRF(_QObject):
@@ -1366,57 +1360,6 @@ class SonarPlayer(
             lambda v: self.now_playing_widget.art_label.setMinimumWidth(int(v))
         )
 
-        # Close button overlaid on the left-panel art (top-right corner, hover-only)
-        self._art_close_btn = QPushButton(self._art_section)
-        self._art_close_btn.setFixedSize(24, 24)
-        self._art_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._art_close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._art_close_btn.setStyleSheet("QPushButton { background: transparent; border: none; }")
-        self._art_close_btn.setIconSize(QSize(16, 16))
-        self._art_close_btn.hide()
-        self._art_close_btn.clicked.connect(self._toggle_sidebar_art)
-        self._art_close_btn.raise_()
-
-        _raw_exp = QPixmap(resource_path("img/expand.png"))
-        if not _raw_exp.isNull():
-            def _mk_icon(pix, color):
-                out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
-                p = QPainter(out); p.drawPixmap(0, 0, pix)
-                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                p.fillRect(out.rect(), QColor(color)); p.end()
-                return QIcon(out)
-            self._close_icon_dim    = _mk_icon(_raw_exp, "#515151")
-            self._close_icon_bright = _mk_icon(_raw_exp, "#ffffff")
-            self._art_close_btn.setIcon(self._close_icon_dim)
-
-        self._art_close_opacity = QGraphicsOpacityEffect(self._art_close_btn)
-        self._art_close_opacity.setOpacity(0.0)
-        self._art_close_btn.setGraphicsEffect(self._art_close_opacity)
-        self._art_close_hover_anim = QPropertyAnimation(self._art_close_opacity, b"opacity")
-        self._art_close_hover_anim.setDuration(180)
-
-        # Dedicated hover filter — not blocked by the keyboard mixin's eventFilter
-        class _ArtHoverFilter(_QObject):
-            def __init__(self_, btn, opacity, anim):
-                super().__init__()
-                self_._btn = btn
-                self_._opacity = opacity
-                self_._anim = anim
-            def eventFilter(self_, _obj, event):
-                if event.type() == _QEvent2.Type.Enter:
-                    self_._anim.stop(); self_._anim.setEndValue(1.0); self_._anim.start()
-                    if hasattr(self, '_close_icon_bright'):
-                        self._art_close_btn.setIcon(self._close_icon_bright)
-                elif event.type() == _QEvent2.Type.Leave:
-                    self_._anim.stop(); self_._anim.setEndValue(0.0); self_._anim.start()
-                    if hasattr(self, '_close_icon_dim'):
-                        self._art_close_btn.setIcon(self._close_icon_dim)
-                return False
-        self._art_hover_filter = _ArtHoverFilter(
-            self._art_close_btn, self._art_close_opacity, self._art_close_hover_anim
-        )
-        self._art_section.installEventFilter(self._art_hover_filter)
-
         left_layout.addWidget(self.now_playing_widget)
         
         footer_center = QWidget()
@@ -1553,63 +1496,22 @@ class SonarPlayer(
         if tetris_active and not self._sidebar_art_visible:
             return  # refuse to expand while playing
         self._sidebar_art_visible = not self._sidebar_art_visible
-        target = self._left_panel.width() - 16
         art_lbl = self.now_playing_widget.art_label
-
-        self._sidebar_art_anim.stop()
         self._footer_art_anim.stop()
 
         if self._sidebar_art_visible:
-            # Left panel: slide open
-            self._sidebar_art_anim.setStartValue(0)
-            self._sidebar_art_anim.setEndValue(target)
-            # Footer art: slide out to the left
+            self._left_panel.set_art_target_size(max(0, self._left_panel.width() - 16))
+            self._left_panel.set_art_visible(True)
             self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
             self._footer_art_anim.setEndValue(0)
             self.now_playing_widget.set_expand_btn_direction(False)
-            # Show close button once animation finishes
-            self._sidebar_art_anim.finished.connect(self._on_sidebar_art_opened)
         else:
-            # Hide close button immediately
-            self._art_close_btn.hide()
-            try: self._sidebar_art_anim.finished.disconnect(self._on_sidebar_art_opened)
-            except: pass
-            # Left panel: slide closed
-            self._sidebar_art_anim.setStartValue(self._art_section.maximumHeight())
-            self._sidebar_art_anim.setEndValue(0)
-            # Footer art: slide back in from the left
+            self._left_panel.set_art_visible(False)
             self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
             self._footer_art_anim.setEndValue(84)
             self.now_playing_widget.set_expand_btn_direction(True)
 
-        self._sidebar_art_anim.start()
         self._footer_art_anim.start()
-
-    def _on_sidebar_art_opened(self):
-        try: self._sidebar_art_anim.finished.disconnect(self._on_sidebar_art_opened)
-        except: pass
-        self._update_art_close_btn_style()
-        self._art_close_btn.move(self._art_section.width() - 28, 4)
-        self._art_close_btn.show()
-        self._art_close_btn.raise_()
-
-    def _update_art_close_btn_style(self):
-        c = QColor(self.theme.accent)
-        r, g, b = c.red(), c.green(), c.blue()
-        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
-        self._art_close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba({r},{g},{b},0.1);
-                border: 2px solid rgb({dr},{dg},{db});
-                border-radius: 12px; outline: none;
-            }}
-            QPushButton:hover {{
-                background-color: rgba({r},{g},{b},0.4);
-                border: 2px solid rgb({r},{g},{b});
-            }}
-            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
-            QPushButton::menu-indicator {{ width: 0; image: none; }}
-        """)
 
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):
@@ -1674,7 +1576,7 @@ class SonarPlayer(
             class _PanelFilter(_QObject):
                 def eventFilter(self_, obj, ev):
                     if ev.type() == QEvent.Type.Resize and self._tetris_widget.isVisible():
-                        hh = self._left_panel.header.height()
+                        hh = self._left_panel.HEADER_HEIGHT
                         self._tetris_widget.setGeometry(
                             0, hh, self._left_panel.width() - 1, self._left_panel.height() - hh)
                     return False
@@ -1696,7 +1598,7 @@ class SonarPlayer(
         self._tetris_widget.set_theme(_bg, _bc, _accent, _fg2, _px2)
 
         # Fill left panel below the header (y=62 = header height)
-        hdr_h = lp.header.height()
+        hdr_h = lp.HEADER_HEIGHT
         self._tetris_widget.setGeometry(0, hdr_h, lp.width() - 1, lp.height() - hdr_h)
         self._tetris_widget.raise_()
         self._tetris_widget.show()

@@ -390,9 +390,11 @@ class VisualsMixin:
         else:
             self.now_playing_widget.set_cover(None)
 
-        if hasattr(self, 'art_container'):
-            self.art_container.scaled_cache = {}
-            self.art_container.update()
+        if hasattr(self, '_left_panel'):
+            self._left_panel.set_old_art(self.old_cover_pixmap)
+            self._left_panel.set_cover_art(
+                self.current_cover_pixmap if not self.current_cover_pixmap.isNull() else None
+            )
 
         import gc; gc.collect()
 
@@ -462,10 +464,12 @@ class VisualsMixin:
    
     def _on_fade_step(self, value):
         self.crossfade_progress = value
-        if hasattr(self, 'art_container'):
-            self.art_container.update()
-       
+        if hasattr(self, '_left_panel'):
+            self._left_panel.set_crossfade_progress(value)
+
     def _on_fade_finished(self):
+        if hasattr(self, '_left_panel'):
+            self._left_panel.clear_old_art()
         self.old_cover_pixmap = None
         import gc; gc.collect()
 
@@ -569,11 +573,7 @@ class VisualsMixin:
         self.now_playing_widget.set_expand_btn_style(mc)
         self.now_playing_widget.apply_theme(self.theme)
         if hasattr(self, '_queue_panel'): self._queue_panel.apply_theme(self.theme)
-        if hasattr(self, '_art_close_btn') and self._art_close_btn.isVisible():
-            self._update_art_close_btn_style()
 
-        for _sec in [getattr(self, '_art_section', None), getattr(self, '_vis_section', None)]:
-            if _sec: _sec.set_master_color(mc)
         if hasattr(self, '_left_panel'): self._left_panel.set_master_color(mc)
         if hasattr(self, '_left_handle'):  self._left_handle.update_color(mc)
         if hasattr(self, '_queue_handle'): self._queue_handle.update_color(mc)
@@ -767,8 +767,9 @@ class VisualsMixin:
         if hasattr(self, '_left_panel'):
             self._left_panel.setStyleSheet(
                 f'#LeftPanel {{ background: rgb({self.theme.left_panel_bg}); border: none; '
-                f'border-right: {bw}px solid {bc}; border-radius: 0px; }}'
+                f'border-radius: 0px; }}'
             )
+            self._left_panel.apply_theme(self.theme)
         bg = self.theme.main_panel_bg
         for _i in range(self.tabs.count()):
             _w = self.tabs.widget(_i)
@@ -786,10 +787,6 @@ class VisualsMixin:
                     )
         if hasattr(self, '_queue_tree_panel') and hasattr(self._queue_tree_panel, 'set_bg_color'):
             self._queue_tree_panel.set_bg_color(bg)
-        if hasattr(self, '_left_panel') and hasattr(self._left_panel, 'header'):
-            self._left_panel.header.setStyleSheet(
-                f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
-            )
         if hasattr(self, '_queue_panel') and hasattr(self._queue_panel, '_panel_header'):
             self._queue_panel._panel_header.setStyleSheet(
                 f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
