@@ -20,7 +20,6 @@ from player.qml_search import SearchController, GridSearchKeyFilter, set_window_
 from player import resource_path
 from player.workers import GridCoverWorker
 
-from tracks_browser import MiddleClickScroller
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
 
 
@@ -112,7 +111,6 @@ class _AlbumSkeletonRow(QWidget):
         self._timer.stop()
         super().hideEvent(event)
 
-
 class _SectionSkeleton(QWidget):
     """Shimmer skeleton for bio or popular-tracks section, shown before data arrives."""
 
@@ -169,7 +167,6 @@ class _SectionSkeleton(QWidget):
     def hideEvent(self, event):
         self._timer.stop()
         super().hideEvent(event)
-
 
 class LiveArtistDetailWorker(QThread):
     # Progressive signals — each fires as soon as its data arrives
@@ -833,7 +830,6 @@ class SectionCoverProvider(QQuickImageProvider):
                 painter.end()
         return img, img.size()
 
-
 class SectionGridBridge(QObject):
     accentColorChanged        = pyqtSignal(str)
     selectIndex               = pyqtSignal(int)
@@ -867,8 +863,6 @@ class SectionGridBridge(QObject):
     @pyqtSlot(float)
     def reportContentHeight(self, h):
         self.contentHeightChanged.emit(max(1, int(h) + 1))
-
-
 
 class QMLAlbumSectionWidget(QWidget):
     """Replaces AlbumRowWidget — uses a QML GridView for buttery-smooth resize."""
@@ -1028,7 +1022,6 @@ class QMLAlbumSectionWidget(QWidget):
         SectionCoverProvider._cache[cover_id] = image_data
         self.album_model.update_cover(cover_id)
 
-
 class _SectionListFacade:
     """Minimal QListWidget-compatible shim so code that checks row.list_widget
     still works without changes (count, setFocus, setCurrentRow, etc.)."""
@@ -1063,7 +1056,6 @@ class _SectionListFacade:
 
     def currentRow(self):
         return self._s.current_index
-
 
 class CircularArtistDelegate(QStyledItemDelegate):
     """Renders artist cards with a circular photo, hover ring + play button, and name below."""
@@ -1322,7 +1314,6 @@ class _ArtistPhotoOverlay(QWidget):
         self.close()
         self.deleteLater()
 
-
 class ArtistDetailCoverProvider(AlbumDetailCoverProvider):
     """Same shadow/halo rendering as AlbumDetailCoverProvider, but with a
     circular shadow + clip to suit the round artist photo."""
@@ -1336,7 +1327,6 @@ class ArtistDetailCoverProvider(AlbumDetailCoverProvider):
         path = QPainterPath()
         path.addEllipse(QRectF(pad, pad, art, art))
         return path
-
 
 class ArtistDetailBridge(QObject):
     # → QML
@@ -1414,7 +1404,6 @@ class ArtistDetailBridge(QObject):
         t.start(120)
         self._tip_hide_timer = t
 
-
 class ArtistRichDetailView(QWidget):
     album_clicked = pyqtSignal(dict)
     play_album = pyqtSignal(dict)
@@ -1445,7 +1434,6 @@ class ArtistRichDetailView(QWidget):
         self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.omni_scroller = MiddleClickScroller(self.scroll)
 
         self.content_widget = QWidget()
         self.content_widget.setObjectName('_ac')
