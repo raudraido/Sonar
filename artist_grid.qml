@@ -47,7 +47,6 @@ Rectangle {
         function onFontColorPrimaryChanged(color)  { root.fontColorPrimary = color }
         function onFontColorSecondaryChanged(color){ root.fontColorSecondary = color }
         function onSkeletonBaseColorChanged(color) { root.skeletonBaseColor = color }
-        function onInfoLineCountChanged(count)     { root.infoLineCount = count }
         function onHoverColorChanged(color)        { root.hoverColor = color }
         function onPanelBgChanged(color)           { root.panelBgColor = color }
         function onCardBorderChanged(color)        { root.cardBorderColor = color }
