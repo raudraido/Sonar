@@ -7,16 +7,15 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QListWidgetItem, QStackedWidget,
                              QLabel, QScrollArea,
                              QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView,
-                             QStyledItemDelegate, QStyle,
-                             QGraphicsDropShadowEffect)
+                             QStyledItemDelegate, QStyle)
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QPropertyAnimation, QEasingCurve, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QBrush, QPainterPath, QPen, QFontMetrics, QPolygon
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QBrush, QPainterPath, QPen, QFontMetrics, QPolygon
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
 from albums_browser import AlbumDetailView
-from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider, AlbumDetailCoverProvider
+from player.widgets import CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider, AlbumDetailCoverProvider
 from player.qml_search import SearchController, GridSearchKeyFilter, set_window_shortcuts_enabled
 from player import resource_path
 from player.workers import GridCoverWorker
@@ -879,7 +878,6 @@ class QMLAlbumSectionWidget(QWidget):
 
     def __init__(self, title, count, albums):
         super().__init__()
-        self.is_qml_section = True  # flag used by check_viewport to skip this widget
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 5, 0, 10)
@@ -1066,183 +1064,6 @@ class _SectionListFacade:
     def currentRow(self):
         return self._s.current_index
 
-
-class AlbumRowWidget(QWidget):
-    album_clicked = pyqtSignal(dict)
-    play_album = pyqtSignal(dict)
-
-    def __init__(self, title, count, albums, lazy_load=False):
-        super().__init__()
-        self.lazy_load = lazy_load
-        self._recalc_in_progress = False
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 5, 0, 10)
-        self.layout.setSpacing(5)
-
-        title_container = QWidget()
-        self.title_layout = QHBoxLayout(title_container)
-        self.title_layout.setContentsMargins(10, 0, 10, 0)
-        self.title_layout.setSpacing(10)
-        self.title_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-
-        self.lbl_count = QLabel(str(count))
-        self.lbl_count.setFixedHeight(22)
-        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_count.setStyleSheet("color: #aaa; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-
-        self.title_layout.addWidget(self.lbl_title)
-        self.title_layout.addWidget(self.lbl_count)
-        self.title_layout.addStretch()
-        self.layout.addWidget(title_container)
-
-        self.list_widget = QListWidget()
-        self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-        self.list_widget.setMovement(QListWidget.Movement.Static)
-        self.list_widget.setResizeMode(QListWidget.ResizeMode.Fixed)
-        self.list_widget.setWrapping(True)
-        
-        self.list_widget.setMouseTracking(True)
-        self.list_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        self.delegate = GridItemDelegate()
-        self.list_widget.setItemDelegate(self.delegate)
-        self.set_accent_color("#888888")
-
-        self.list_widget.itemClicked.connect(self.on_item_clicked)
-        self.layout.addWidget(self.list_widget)
-        self.populate(albums)
-
-        from PyQt6.QtCore import QTimer as _QTimer
-        def _apply_title_color():
-            theme = getattr(self.window(), 'theme', None)
-            if theme:
-                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-        _QTimer.singleShot(0, _apply_title_color)
-
-    def add_action_widget(self, widget):
-        self.title_layout.insertWidget(2, widget)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if event.size().width() != event.oldSize().width():
-            self.recalc_layout()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        QTimer.singleShot(150, self.recalc_layout)
-
-    def recalc_layout(self):
-        if self._recalc_in_progress:
-            return
-        self._recalc_in_progress = True
-        try:
-            self._do_recalc_layout()
-        finally:
-            self._recalc_in_progress = False
-
-    def _do_recalc_layout(self):
-        # Use widget width directly — viewport().width() lags behind layout propagation
-        w = self.width()
-        if w <= 0:
-            QTimer.singleShot(100, self.recalc_layout)
-            return
-
-        min_w = 210
-        gap = 10
-
-        n_cols = max(1, (w + gap) // (min_w + gap))
-        cell_w = w // n_cols
-        cell_h = cell_w + 70
-
-        n_cols_changed = getattr(self, '_last_n_cols', None) != n_cols
-        self._last_n_cols = n_cols
-
-        self.list_widget.setIconSize(QSize(cell_w, cell_w))
-        self.list_widget.setGridSize(QSize(cell_w, cell_h))
-
-        hint = QSize(cell_w, cell_h)
-        for i in range(self.list_widget.count()):
-            self.list_widget.item(i).setSizeHint(hint)
-
-        if n_cols_changed:
-            self.list_widget.setViewportMargins(0, gap, 0, gap)
-            self.list_widget.setSpacing(0)
-            self.list_widget.doItemsLayout()
-
-        count = self.list_widget.count()
-        if count == 0:
-            self.list_widget.setFixedHeight(0)
-            return
-
-        rows = math.ceil(count / n_cols)
-        total_height = (rows * cell_h) + (gap * 2)
-        self.list_widget.setFixedHeight(total_height)
-    
-    def set_accent_color(self, color):
-
-        self.list_widget.setStyleSheet("""
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item { border-radius: 8px; }
-            QListWidget::item:hover { background: #222; }
-            QListWidget::item:selected { background: transparent; border: none; outline: none; }
-        """)
-
-        if hasattr(self, 'delegate'):
-            self.delegate.set_master_color(color)
-        theme = getattr(self.window(), 'theme', None)
-        if theme:
-            if hasattr(self, 'lbl_title'):
-                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-            if hasattr(self, 'lbl_count'):
-                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-
-    def populate(self, albums):
-        self.full_albums = albums  
-        self.list_widget.clear()
-        placeholder = self.get_placeholder_icon()
-        
-        for album in albums:
-            item = QListWidgetItem()
-            item.setIcon(placeholder)
-            
-            
-            if getattr(self, 'lazy_load', False):
-                item.setData(Qt.ItemDataRole.UserRole, dict(album, type='placeholder'))
-            else:
-                item.setData(Qt.ItemDataRole.UserRole, album)
-                
-            self.list_widget.addItem(item)
-            
-        self.recalc_layout()
-
-    def on_item_clicked(self, item):
-        data = item.data(Qt.ItemDataRole.UserRole)
-        if not data or data.get('type') == 'placeholder': return
-
-        visual_rect = self.list_widget.visualItemRect(item)
-        mouse_pos = self.list_widget.mapFromGlobal(QCursor.pos())
-        rect = visual_rect
-        icon_width = rect.width() - 20 
-        center_x = rect.x() + 10 + (icon_width // 2)
-        center_y = rect.y() + 10 + (icon_width // 2)
-        play_radius = min(60, icon_width // 2) // 2 
-        dist = ((mouse_pos.x() - center_x)**2 + (mouse_pos.y() - center_y)**2) ** 0.5
-        
-        if dist <= play_radius:
-            self.play_album.emit(data)
-        else:
-            self.album_clicked.emit(data)
-
-    def get_placeholder_icon(self):
-        pix = QPixmap(200, 200); pix.fill(QColor("#222"))
-        return QIcon(pix)
 
 class CircularArtistDelegate(QStyledItemDelegate):
     """Renders artist cards with a circular photo, hover ring + play button, and name below."""
@@ -1594,91 +1415,6 @@ class ArtistDetailBridge(QObject):
         self._tip_hide_timer = t
 
 
-class _ArtistPhotoWidget(QWidget):
-    """Circular artist photo with hover-zoom and click-to-expand."""
-    def __init__(self, size=286, parent=None):
-        super().__init__(parent)
-        self._pix  = None
-        self._zoom = 1.0
-        self.setFixedSize(size, size)
-
-        try:
-            cur_pix = QPixmap(resource_path('img/search.png')).scaled(
-                24, 24, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            self.setCursor(QCursor(cur_pix, 12, 12))
-        except Exception:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self._glow = QGraphicsDropShadowEffect(self)
-        self._glow.setOffset(0, 10)
-        self._glow.setBlurRadius(38)
-        self._glow.setColor(QColor(0, 0, 0, 0))
-        self.setGraphicsEffect(self._glow)
-
-        self._anim = QPropertyAnimation(self, b'zoom_prop')
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-    @pyqtProperty(float)
-    def zoom_prop(self):
-        return self._zoom
-
-    @zoom_prop.setter
-    def zoom_prop(self, v):
-        self._zoom = v
-        self.update()
-
-    def set_pixmap(self, pix):
-        self._pix = pix if (pix and not pix.isNull()) else None
-        if self._pix:
-            from now_playing_info import _extract_vibrant_color
-            c = _extract_vibrant_color(self._pix)
-            self._glow.setColor(QColor(c.red() // 3, c.green() // 3, c.blue() // 3, 210))
-        else:
-            self._glow.setColor(QColor(0, 0, 0, 0))
-        self.update()
-
-    def enterEvent(self, event):
-        self._anim.stop()
-        self._anim.setStartValue(self._zoom)
-        self._anim.setEndValue(1.12)
-        self._anim.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._anim.stop()
-        self._anim.setStartValue(self._zoom)
-        self._anim.setEndValue(1.0)
-        self._anim.start()
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._pix:
-            _ArtistPhotoOverlay(self._pix, self.window())
-        super().mousePressEvent(event)
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        r = self.rect()
-        path = QPainterPath()
-        path.addEllipse(QRectF(r))
-        p.setClipPath(path)
-        if self._pix:
-            zs = int(r.width() * self._zoom)
-            scaled = self._pix.scaled(QSize(zs, zs),
-                                      Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                      Qt.TransformationMode.SmoothTransformation)
-            ox = (scaled.width() - r.width()) // 2
-            oy = (scaled.height() - r.height()) // 2
-            p.drawPixmap(0, 0, scaled, ox, oy, r.width(), r.height())
-        else:
-            p.fillRect(r, QColor(45, 45, 45))
-        p.end()
-
-
 class ArtistRichDetailView(QWidget):
     album_clicked = pyqtSignal(dict)
     play_album = pyqtSignal(dict)
@@ -1722,7 +1458,6 @@ class ArtistRichDetailView(QWidget):
         # HEADER + ABOUT — full QML (artist_detail.qml)
         self._artist_liked = False
         self._artist_stats_text = "Loading..."
-        self._bio_full_text = ""
         self._cur_photo_pixmap = None
         self.current_header_cover_id = None
 
@@ -1783,7 +1518,6 @@ class ArtistRichDetailView(QWidget):
         
         self.scroll.setWidget(self.content_widget)
         self.layout.addWidget(self.scroll)
-        self.scroll.verticalScrollBar().valueChanged.connect(self.on_scroll)
         SmoothScroller(self.scroll)
 
 
@@ -1791,82 +1525,6 @@ class ArtistRichDetailView(QWidget):
         # widget steals keyboard events. We can simply override keyPressEvent
         # on this widget itself — but we also need it to be able to receive focus.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def on_scroll(self, value):
-        if not hasattr(self, 'scroll_timer'):
-            from PyQt6.QtCore import QTimer
-            self.scroll_timer = QTimer()
-            self.scroll_timer.setSingleShot(True)
-            self.scroll_timer.timeout.connect(self.check_viewport)
-        self.scroll_timer.start(150)
-
-    def check_viewport(self):
-        
-        if not hasattr(self, 'scroll'): return
-        
-        scroll_y = self.scroll.verticalScrollBar().value()
-        viewport_h = self.scroll.viewport().height()
-        
-        # Buffer to load rows just before they appear
-        buffer = 800 
-        safe_top = scroll_y - buffer
-        safe_bottom = scroll_y + viewport_h + buffer
-
-        for i in range(self.sections_layout.count()):
-            row = self.sections_layout.itemAt(i).widget()
-            if not row or not hasattr(row, 'list_widget'): continue
-            if getattr(row, 'is_qml_section', False): continue
-
-            lw = row.list_widget
-            try:
-                # Get Y pos of this list_widget relative to the scrolling content
-                lw_y = lw.mapTo(self.content_widget, QPoint(0,0)).y()
-            except Exception:
-                continue
-            
-            # If the entire row is way out of bounds, mass unload it
-            if lw_y > safe_bottom + 2000 or lw_y + lw.height() < safe_top - 2000:
-                for idx in range(lw.count()):
-                    item = lw.item(idx)
-                    data = item.data(Qt.ItemDataRole.UserRole)
-                    if data and data.get('type') != 'placeholder':
-                        item.setIcon(row.get_placeholder_icon())
-                        evicted = dict(row.full_albums[idx]) if idx < len(row.full_albums) else dict(data)
-                        evicted['type'] = 'placeholder'
-                        item.setData(Qt.ItemDataRole.UserRole, evicted)
-                continue
-
-            for idx in range(lw.count()):
-                item = lw.item(idx)
-                item_rect = lw.visualItemRect(item)
-                item_global_y = lw_y + item_rect.y()
-                item_global_bottom = item_global_y + item_rect.height()
-
-                # Inside safe zone? LOAD IT
-                if item_global_bottom >= safe_top and item_global_y <= safe_bottom:
-                    data = item.data(Qt.ItemDataRole.UserRole)
-                    if data and data.get('type') == 'placeholder':
-                        real_data = row.full_albums[idx]
-                        item.setData(Qt.ItemDataRole.UserRole, real_data)
-                        
-                        cid = real_data.get('cover_id') or real_data.get('coverArt') or real_data.get('albumId')
-                        if cid:
-                            real_data['cover_id'] = cid
-                            if not hasattr(self, 'pending_items'): self.pending_items = {}
-                            if cid not in self.pending_items:
-                                self.pending_items[cid] = []
-                            self.pending_items[cid].append(item)
-                            
-                            if getattr(self, 'cover_worker', None):
-                                self.cover_worker.queue_cover(cid, priority=True)
-                else:
-                    # Outside safe zone? UNLOAD IT
-                    data = item.data(Qt.ItemDataRole.UserRole)
-                    if data and data.get('type') != 'placeholder':
-                        item.setIcon(row.get_placeholder_icon())
-                        evicted = dict(row.full_albums[idx]) if idx < len(row.full_albums) else dict(data)
-                        evicted['type'] = 'placeholder'
-                        item.setData(Qt.ItemDataRole.UserRole, evicted)
 
     def _on_popular_album_clicked(self, data):
         
@@ -2251,10 +1909,8 @@ class ArtistRichDetailView(QWidget):
             clean = _re.sub(r'<[^>]+>', '', text).strip()
             clean = _re.sub(r'\s*Read more on Last\.fm\.?\s*$', '', clean, flags=_re.IGNORECASE).strip()
             if clean:
-                self._bio_full_text = clean
                 self._artist_bridge.bioChanged.emit(clean)
                 return
-        self._bio_full_text = ""
         self._artist_bridge.bioChanged.emit("")
 
     def _show_photo_zoom(self):
@@ -2654,7 +2310,6 @@ class ArtistRichDetailView(QWidget):
             if main_albums: self.add_section("Albums",      main_albums, worker, self.pending_items)
             if singles:     self.add_section("Singles & EPs", singles,   worker, self.pending_items)
 
-        QTimer.singleShot(100, self.check_viewport)
         self._try_set_focus()
 
     def _on_top_songs_ready(self, top_songs):
@@ -2680,8 +2335,6 @@ class ArtistRichDetailView(QWidget):
         else:
             suffix = f" • {appears_count} appearances" if appears_count else ""
             self._set_stats(f"{total_releases} releases{suffix}")
-
-        QTimer.singleShot(100, self.check_viewport)
 
     def _remove_section(self, title):
         """Remove all section widgets with the given title from sections_layout."""
@@ -2883,7 +2536,6 @@ class ArtistGridBridge(QObject):
     fontColorPrimaryChanged   = pyqtSignal(str)
     fontColorSecondaryChanged = pyqtSignal(str)
     skeletonBaseColorChanged  = pyqtSignal(str)
-    infoLineCountChanged      = pyqtSignal(int)
     hoverColorChanged         = pyqtSignal(str)
     panelBgChanged            = pyqtSignal(str)
     cardBorderChanged         = pyqtSignal(str)
@@ -3126,20 +2778,6 @@ class ArtistGridBrowser(QWidget):
                 
         try: worker.finished.connect(remove_from_grave)
         except: pass
-
-    def on_scroll(self, value):
-        if not hasattr(self, 'scroll_timer'):
-            from PyQt6.QtCore import QTimer
-            self.scroll_timer = QTimer()
-            self.scroll_timer.setSingleShot(True)
-            self.scroll_timer.timeout.connect(self.check_viewport)
-            
-        
-        if not self.scroll_timer.isActive():
-            self.scroll_timer.start(150)
-
-    def check_viewport(self): 
-        pass
 
     def check_viewport_qml(self, start_idx, end_idx):
         if len(self.artist_model.artists) == 0: return
@@ -3800,17 +3438,6 @@ class ArtistGridBrowser(QWidget):
             
         self.detail_view.model.set_items(model_items)
 
-    def on_track_clicked(self, index):
-        user_data = index.data(Qt.ItemDataRole.UserRole)
-        if user_data and user_data.get('type') == 'track':
-            if index.column() == 2: 
-                track = user_data['data']
-                aid = track.get('artistId') or track.get('artist_id')
-                name = track.get('artist')
-                if aid: self.show_artist_details({'id': aid, 'name': name})
-                return
-            self.play_track_signal.emit(user_data['data'])
-
     def on_play_all_clicked(self):
         if hasattr(self, 'full_track_context'): self.play_album_signal.emit(self.full_track_context)
     
@@ -3830,23 +3457,6 @@ class ArtistGridBrowser(QWidget):
                 daemon=True,
             ).start()
     
-    def on_track_single_clicked(self, index):
-        if index.column() == 3: 
-            user_data = index.data(Qt.ItemDataRole.UserRole)
-            if not user_data or user_data.get('type') != 'track': return
-            
-            track_data = user_data['data']
-            new_state = not track_data.get('starred', False)
-            track_data['starred'] = new_state
-            track_data['_display_fav'] = "♥" if new_state else "♡"
-            track_data['_fav_color'] = "#E91E63" if new_state else "#555"
-            
-            user_data['data'] = track_data
-            self.detail_view.model.setData(index, user_data, Qt.ItemDataRole.UserRole)
-            self.detail_view.tree.update(index)
-
-            if self.client: self.client.set_favorite(track_data.get('id'), new_state)
-
     def add_to_history(self, state):
         if self.nav_index < len(self.nav_history) - 1: self.nav_history = self.nav_history[:self.nav_index + 1]
         self.nav_history.append(state); self.nav_index += 1
