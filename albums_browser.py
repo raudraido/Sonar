@@ -4,18 +4,17 @@ import json
 
 
 from PyQt6.QtQuickWidgets import QQuickWidget
-from PyQt6.QtQuick import QQuickImageProvider
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout,
                              QStackedWidget)
 
-from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer, QRectF,
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer,
                           QAbstractListModel, QModelIndex, pyqtSlot, pyqtProperty, QObject, QUrl, Qt)
 from player.qml_search import SearchController, SearchKeyFilter, GridSearchKeyFilter, set_window_shortcuts_enabled
-from PyQt6.QtGui import (QPainter, QColor, QPainterPath, QImage)
+from PyQt6.QtGui import QColor
 
 from player import resource_path
 from player.workers import GridCoverWorker
-from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, QMLGridWrapper, QMLMiddleClickScroller
+from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider, QMLGridWrapper, QMLMiddleClickScroller
 
 
 class GridBridge(QObject):
@@ -318,185 +317,6 @@ class AlbumDetailTrackModel(QAbstractListModel):
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
                 break
-
-
-class AlbumDetailCoverProvider(QQuickImageProvider):
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self.cache = {}
-
-    ART   = 264  # visible art pixels — matches _RoundedPixmapLabel(264, 264)
-    PAD   = 30   # transparent shadow bleed — enough for blurRadius=38 + offset=10
-    TOTAL = ART + PAD * 2  # 324
-
-    BTN_D   = 58   # play button diameter — matches footer PlayButton
-    BTN_PAD = 20   # shadow bleed around button
-    BTN_TOT = BTN_D + BTN_PAD * 2   # 98
-
-    def _btn_shadow(self, hex_color: str):
-        import numpy as _np
-        from scipy.ndimage import gaussian_filter as _gf
-        d, pad, total = self.BTN_D, self.BTN_PAD, self.BTN_TOT
-        SIGMA = 7.0   # fades to <1% at BTN_PAD boundary
-        SA    = 180
-        OY    = 3     # subtle downward offset
-
-        base = QColor("#" + hex_color) if QColor("#" + hex_color).isValid() else QColor(136, 136, 136)
-        sr, sg, sb = base.red(), base.green(), base.blue()
-
-        # Rasterise circle at offset position
-        mask_img = QImage(total, total, QImage.Format.Format_ARGB32)
-        mask_img.fill(Qt.GlobalColor.transparent)
-        mp = QPainter(mask_img)
-        mp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addEllipse(QRectF(pad, pad + OY, d, d))
-        mp.fillPath(path, QColor(255, 255, 255, 255))
-        mp.end()
-
-        ptr = mask_img.bits(); ptr.setsize(total * total * 4)
-        alpha_f = _np.frombuffer(ptr, dtype=_np.uint8).reshape((total, total, 4))[:, :, 3].astype(_np.float32) / 255.0
-        blurred = _gf(alpha_f, sigma=SIGMA)
-        shad_a  = (blurred * SA).clip(0, 255).astype(_np.uint8)
-
-        shad_arr = _np.zeros((total, total, 4), dtype=_np.uint8)
-        shad_arr[:, :, 0] = sb
-        shad_arr[:, :, 1] = sg
-        shad_arr[:, :, 2] = sr
-        shad_arr[:, :, 3] = shad_a
-        shad_bytes = bytes(shad_arr)
-        shad_qimg  = QImage(shad_bytes, total, total, total * 4, QImage.Format.Format_ARGB32)
-
-        img = QImage(total, total, QImage.Format.Format_ARGB32)
-        img.fill(Qt.GlobalColor.transparent)
-        p = QPainter(img); p.drawImage(0, 0, shad_qimg); p.end()
-        return img, img.size()
-
-    def requestImage(self, cov_id, requestedSize):
-        # "btn/<hexcolor>" → circular Gaussian shadow for play button
-        if cov_id.startswith("btn/"):
-            return self._btn_shadow(cov_id[4:])
-
-        # "art/<id>" prefix → return just the 260×260 rounded art (no shadow)
-        art_only = cov_id.startswith("art/")
-        if art_only:
-            cov_id = cov_id[4:]
-        real_id = cov_id.split("?t=")[0]
-        data    = self.cache.get(real_id)
-        art, pad, total, r = self.ART, self.PAD, self.TOTAL, 10
-
-        # Decode + crop source once regardless of mode
-        source = None
-        if data:
-            src = QImage()
-            src.loadFromData(data)
-            if not src.isNull():
-                src = src.scaled(art, art,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation)
-                ox = (src.width()  - art) // 2
-                oy = (src.height() - art) // 2
-                source = src.copy(ox, oy, art, art)
-
-        if art_only:
-            # Return 2× resolution so the Canvas always downscales (crisp at zoom 1.08×)
-            art2 = art * 2   # 528
-            img  = QImage(art2, art2, QImage.Format.Format_ARGB32)
-            img.fill(Qt.GlobalColor.transparent)
-            if not data:
-                return img, img.size()
-            src2 = QImage(); src2.loadFromData(data)
-            if src2.isNull():
-                return img, img.size()
-            src2 = src2.scaled(art2, art2,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation)
-            ox2 = (src2.width()  - art2) // 2
-            oy2 = (src2.height() - art2) // 2
-            src2 = src2.copy(ox2, oy2, art2, art2)
-            painter = QPainter(img)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.drawImage(0, 0, src2)
-            painter.end()
-            return img, img.size()
-
-        # Full shadow + art image
-        img = QImage(total, total, QImage.Format.Format_ARGB32)
-        img.fill(Qt.GlobalColor.transparent)
-        if source is None:
-            return img, img.size()
-
-        # Extract vibrant shadow colour — same logic as _extract_vibrant_color()
-        # in now_playing_info.py: most-saturated pixel of an 8×8 sample, HSL L in (0.1,0.9)
-        small  = source.scaled(8, 8, Qt.AspectRatioMode.IgnoreAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
-        best_sat = -1.0
-        best_col = QColor(60, 60, 60)
-        for sy in range(8):
-            for sx in range(8):
-                c = QColor(small.pixel(sx, sy))
-                _, s, lv, _ = c.getHslF()
-                if s > best_sat and 0.1 < lv < 0.9:
-                    best_sat = s
-                    best_col = c
-        sr = best_col.red()   // 3
-        sg = best_col.green() // 3
-        sb = best_col.blue()  // 3
-        SA = 210   # same as now-playing QGraphicsDropShadowEffect alpha
-        OY = 10    # same as QGraphicsDropShadowEffect offset(0, 10)
-
-        painter = QPainter(img)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        # Real Gaussian blur shadow — matches QGraphicsDropShadowEffect(blurRadius=38, offset=(0,10))
-        # Step 1: rasterise shadow shape (rounded rect shifted down by OY) into an alpha mask
-        import numpy as _np
-        from scipy.ndimage import gaussian_filter as _gf
-        SIGMA = 10.0   # tighter shadow: fades to ~1% at PAD=30px boundary
-
-        mask_img = QImage(total, total, QImage.Format.Format_ARGB32)
-        mask_img.fill(Qt.GlobalColor.transparent)
-        mp = QPainter(mask_img)
-        mp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        mp.fillPath(self._shadow_shape(pad, OY, art, r), QColor(255, 255, 255, 255))
-        mp.end()
-
-        # Step 2: extract alpha, apply Gaussian blur
-        ptr = mask_img.bits(); ptr.setsize(total * total * 4)
-        mask_arr = _np.frombuffer(ptr, dtype=_np.uint8).reshape((total, total, 4))
-        alpha_f  = mask_arr[:, :, 3].astype(_np.float32) / 255.0   # copy → safe to blur
-        blurred  = _gf(alpha_f, sigma=SIGMA)
-        shad_a   = (blurred * SA).clip(0, 255).astype(_np.uint8)
-
-        # Step 3: build BGRA shadow image (Format_ARGB32 on LE = B,G,R,A in bytes)
-        shad_arr = _np.zeros((total, total, 4), dtype=_np.uint8)
-        shad_arr[:, :, 0] = sb
-        shad_arr[:, :, 1] = sg
-        shad_arr[:, :, 2] = sr
-        shad_arr[:, :, 3] = shad_a
-        shad_bytes = bytes(shad_arr)          # keep alive through drawImage
-        shad_qimg  = QImage(shad_bytes, total, total, total * 4,
-                            QImage.Format.Format_ARGB32)
-
-        # Step 4: composite shadow then art
-        painter.drawImage(0, 0, shad_qimg)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        painter.setClipPath(self._art_clip(pad, art, r))
-        painter.drawImage(pad, pad, source)
-        painter.end()
-
-        return img, img.size()
-
-    def _shadow_shape(self, pad, oy, art, r):
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(pad, pad + oy, art, art), r, r)
-        return path
-
-    def _art_clip(self, pad, art, r):
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(pad, pad, art, art), r, r)
-        return path
 
 
 class AlbumDetailBridge(QObject):

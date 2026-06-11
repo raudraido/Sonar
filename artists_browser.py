@@ -4,7 +4,7 @@ import re
 from collections import OrderedDict
 import time
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-                             QListWidgetItem, QPushButton, QStackedWidget,
+                             QListWidgetItem, QStackedWidget,
                              QLabel, QScrollArea,
                              QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView,
                              QStyledItemDelegate, QStyle,
@@ -15,8 +15,8 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QCursor, QPainter, QFont, QBrush
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from albums_browser import AlbumDetailView, AlbumDetailCoverProvider
-from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider
+from albums_browser import AlbumDetailView
+from player.widgets import GridItemDelegate, CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider, AlbumDetailCoverProvider
 from player.qml_search import SearchController, GridSearchKeyFilter, set_window_shortcuts_enabled
 from player import resource_path
 from player.workers import GridCoverWorker
@@ -1720,8 +1720,6 @@ class ArtistRichDetailView(QWidget):
         self.content_layout.setSpacing(10)
 
         # HEADER + ABOUT — full QML (artist_detail.qml)
-        from player import resource_path
-
         self._artist_liked = False
         self._artist_stats_text = "Loading..."
         self._bio_full_text = ""
@@ -2230,7 +2228,6 @@ class ArtistRichDetailView(QWidget):
         self.song_list.update_style(color)
 
     def set_header_image(self, pixmap):
-        from PyQt6.QtGui import QPixmap as _QPixmap
         from PyQt6.QtCore import QBuffer, QByteArray
         import time as _time
 
