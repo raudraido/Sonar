@@ -10,8 +10,19 @@ import json
 import keyring
 import ctypes
 import platform
+import tempfile
 import threading
 import faulthandler
+
+# PyInstaller's --windowed/--noconsole build leaves sys.stdout/sys.stderr as
+# None (no console attached), which crashes faulthandler.enable() and any
+# code that does print(..., file=sys.stderr). Redirect both to a log file in
+# that case so crash tracebacks are still captured somewhere.
+if sys.stderr is None or sys.stdout is None:
+    _log_file = open(os.path.join(tempfile.gettempdir(), 'icosahedron.log'), 'w', encoding='utf-8', buffering=1)
+    sys.stdout = sys.stdout or _log_file
+    sys.stderr = sys.stderr or _log_file
+
 faulthandler.enable()
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
