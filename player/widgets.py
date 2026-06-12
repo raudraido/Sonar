@@ -118,7 +118,6 @@ class PlayButton(QPushButton):
             p.drawPixmap(x, y, pix)
         p.end()
 
-
 def tint_icon(path: str, color: str) -> 'QIcon':
     """Return a QIcon with the PNG at *path* tinted to *color*."""
     from player import resource_path as _rp
@@ -136,7 +135,6 @@ def tint_icon(path: str, color: str) -> 'QIcon':
     p.end()
     return QIcon(out)
 
-
 def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
     if pix.isNull():
         return pix
@@ -150,7 +148,6 @@ def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
     p.drawPixmap(0, 0, pix)
     p.end()
     return out
-
 
 class ElidedLabel(QLabel):
     clicked = pyqtSignal()
@@ -206,8 +203,6 @@ class ElidedLabel(QLabel):
             self.clicked.emit()
         super().mousePressEvent(event)
 
-
-
 class _ArtLabel(QLabel):
     clicked = pyqtSignal()
     right_clicked = pyqtSignal()
@@ -242,7 +237,6 @@ class _ArtLabel(QLabel):
         if event.button() == Qt.MouseButton.RightButton:
             self.right_clicked.emit()
         super().mousePressEvent(event)
-
 
 class NowPlayingFooterWidget(QWidget):
     artist_clicked = pyqtSignal(str)
@@ -518,8 +512,6 @@ class NowPlayingFooterWidget(QWidget):
                             callback=lambda v=new_val: self.bpm_adjusted.emit(v))
         menu.exec_at(QCursor.pos(), window=win)
 
-
-
 class FooterClickableLabel(QLabel):
     clicked = pyqtSignal(str)
 
@@ -571,8 +563,6 @@ class FooterClickableLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and event.pos().x() <= self._text_w():
             self.clicked.emit(self.text())
-
-
 
 class TriangleTooltip(QWidget):
     """Tooltip — transparent outer window + styled inner label + drop shadow."""
@@ -646,8 +636,6 @@ class TriangleTooltip(QWidget):
         super().show()
         self.raise_()
 
-
-
 class ClickableSlider(QSlider):
     def __init__(self, orientation, parent=None, is_volume=False):
         super().__init__(orientation, parent)
@@ -712,16 +700,12 @@ class ClickableSlider(QSlider):
         self.custom_tip.hide()
         super().leaveEvent(event)
 
-
-
 class ClickableLabel(QLabel):
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent); self.main_window = main_window; self.setMouseTracking(True) 
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.main_window: self.main_window.toggle_mute()
-
-
 
 class KeyCaptureButton(QPushButton):
     """A button that captures the next keypress and emits it as a string."""
@@ -790,7 +774,6 @@ class KeyCaptureButton(QPushButton):
             self._apply_style(False)
         super().focusOutEvent(event)
 
-
 class _DimOverlay(QWidget):
     """Full-window semi-transparent tint overlay, same animation as spotlight search."""
     _TARGET_ALPHA = 200
@@ -843,7 +826,6 @@ class _DimOverlay(QWidget):
         if p:
             win = p if p.isWindow() else p.window()
             self.setGeometry(win.geometry())
-
 
 class SettingsWindow(QDialog):
     def __init__(self, parent):
@@ -1339,8 +1321,6 @@ class SettingsWindow(QDialog):
             QProcess.startDetached(sys.executable, sys.argv)
             QApplication.quit()
 
-
-
 class StatusButton(QPushButton):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1355,11 +1335,6 @@ class StatusButton(QPushButton):
             painter.setPen(Qt.PenStyle.NoPen)
             dot_size = 5; x = (self.width() - dot_size) // 2; y = 2 
             painter.drawEllipse(x, y, dot_size, dot_size); painter.end()
-
-
-
-
-# ── Shared shadow context menu ────────────────────────────────────────────────
 
 class ShadowContextMenu(QFrame):
     """Universal shadow context menu — psysonic style: 0 12px 32px rgba(0,0,0,0.6)."""
@@ -1541,7 +1516,6 @@ class ShadowContextMenu(QFrame):
         p.setPen(self._bc); p.setBrush(self._bg)
         p.drawRoundedRect(content, 10, 10); p.end()
 
-
 def themed_shadow_menu(parent, bg: str = None) -> ShadowContextMenu:
     """Create a ShadowContextMenu pre-configured with the window's current theme.
 
@@ -1564,12 +1538,10 @@ def themed_shadow_menu(parent, bg: str = None) -> ShadowContextMenu:
     menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
     return menu
 
-
 def popup_menu_at_global(menu: ShadowContextMenu, global_x: float, global_y: float, window=None):
     """Show `menu` so its padded edge aligns with the given global (x, y)."""
     gp = QPoint(int(global_x), int(global_y))
     menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=window)
-
 
 class CoverImageProvider(QQuickImageProvider):
     def __init__(self):
@@ -1607,7 +1579,6 @@ class CoverImageProvider(QQuickImageProvider):
                 painter.end()
 
         return img, img.size()
-
 
 class AlbumModel(QAbstractListModel):
     TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -1677,7 +1648,6 @@ class AlbumModel(QAbstractListModel):
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
 
-
 class AlbumIconProvider(QQuickImageProvider):
     """QML image provider serving `img/{name}.png`, optionally tinted with a
     `_rrggbb` suffix (e.g. `image://albumicons/sort-random-a_ffffff`)."""
@@ -1712,7 +1682,6 @@ class AlbumIconProvider(QQuickImageProvider):
         p.end()
         self._cache[cache_key] = result
         return result, result.size()
-
 
 class LeftPanelCoverProvider(QQuickImageProvider):
     """Serves the left-panel album-art square via
@@ -1761,7 +1730,6 @@ class LeftPanelCoverProvider(QQuickImageProvider):
             p.drawPixmap(-ox, -oy, scaled)
         p.end()
         return out, out.size()
-
 
 class AlbumDetailCoverProvider(QQuickImageProvider):
     def __init__(self):
@@ -1941,13 +1909,11 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
         path.addRoundedRect(QRectF(pad, pad, art, art), r, r)
         return path
 
-
 class DummyScrollBar:
     def value(self): return 0
     def setValue(self, val): pass
     def setStyleSheet(self, style): pass
     def setSingleStep(self, step): pass
-
 
 class QMLGridWrapper(QQuickWidget):
     def __init__(self, *args, **kwargs):
@@ -1997,7 +1963,6 @@ class QMLGridWrapper(QQuickWidget):
         from PyQt6.QtQuickWidgets import QQuickWidget
         if isinstance(mode, QQuickWidget.ResizeMode):
             super().setResizeMode(mode)
-
 
 class QMLMiddleClickScroller(QObject):
     """
@@ -2077,7 +2042,6 @@ class QMLMiddleClickScroller(QObject):
         direction = 1 if delta > 0 else -1
         self.bridge.scrollBy.emit(speed * direction)
 
-
 class ArrowButton(QAbstractButton):
     """Small left/right chevron button with a themed hover highlight."""
 
@@ -2114,7 +2078,6 @@ class ArrowButton(QAbstractButton):
             p.drawLine(int(cx + o), int(cy - s), int(cx - o), int(cy))
             p.drawLine(int(cx - o), int(cy), int(cx + o), int(cy + s))
         p.end()
-
 
 class GridItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):

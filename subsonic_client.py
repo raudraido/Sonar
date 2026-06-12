@@ -93,9 +93,8 @@ class SubsonicClient:
         """
         Tests the connection and returns a tuple: (success: bool, error_message: str)
         """
-        import requests
         try:
-            r = requests.get(f"{self.base_url}/rest/ping", params=self._get_auth_params(), timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/ping", params=self._get_auth_params(), timeout=5)
             
             # The server was reached successfully
             if r.status_code == 200:
@@ -186,8 +185,7 @@ class SubsonicClient:
                 
             print("\n[DEBUG API] Attempting to fetch Navidrome Native JWT token...")
             try:
-                import requests
-                r = requests.post(f"{self.base_url}/auth/login", json={
+                r = self.session.post(f"{self.base_url}/auth/login", json={
                     "username": self.username,
                     "password": self.password
                 }, timeout=5)
@@ -208,7 +206,7 @@ class SubsonicClient:
         """Fetches all playlists using standard requests.get"""
         try:
             params = self._get_auth_params()
-            r = requests.get(f"{self.base_url}/rest/getPlaylists", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/getPlaylists", params=params, timeout=10)
             data = r.json()
             
             if 'subsonic-response' in data and 'playlists' in data['subsonic-response']:
@@ -223,7 +221,7 @@ class SubsonicClient:
         try:
             params = self._get_auth_params()
             params['id'] = playlist_id
-            r = requests.get(f"{self.base_url}/rest/getPlaylist", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/getPlaylist", params=params, timeout=10)
             data = r.json()
             
             if 'subsonic-response' in data and 'playlist' in data['subsonic-response']:
@@ -246,7 +244,7 @@ class SubsonicClient:
         
         try:
             # 1. Create the base playlist
-            r = requests.get(f"{self.base_url}/rest/createPlaylist", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/createPlaylist", params=params, timeout=10)
             data = r.json()
             
             # Extract the newly created Playlist ID from Navidrome
@@ -266,7 +264,7 @@ class SubsonicClient:
                     update_params['public'] = 'true'
                     
                     # Force the public flag update AFTER the playlist is populated
-                    requests.get(f"{self.base_url}/rest/updatePlaylist", params=update_params, timeout=10)
+                    self.session.get(f"{self.base_url}/rest/updatePlaylist", params=update_params, timeout=10)
                 
                 # Spin up a tiny background thread so your UI doesn't freeze while waiting
                 import threading
@@ -290,7 +288,7 @@ class SubsonicClient:
         for tid in track_ids:
             query_items.append(('songIdToAdd', str(tid)))
 
-        r = requests.post(f"{self.base_url}/rest/updatePlaylist",
+        r = self.session.post(f"{self.base_url}/rest/updatePlaylist",
                           data=query_items, timeout=15)
         r.raise_for_status()
 
@@ -309,7 +307,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         params['id'] = playlist_id
         
-        r = requests.get(f"{self.base_url}/rest/deletePlaylist", params=params, timeout=10)
+        r = self.session.get(f"{self.base_url}/rest/deletePlaylist", params=params, timeout=10)
         r.raise_for_status()
         
         response = r.json().get('subsonic-response', {})
@@ -323,7 +321,7 @@ class SubsonicClient:
         params['playlistId'] = playlist_id  # Note: updatePlaylist uses 'playlistId', not 'id'
         params['name'] = new_name
         
-        r = requests.get(f"{self.base_url}/rest/updatePlaylist", params=params, timeout=10)
+        r = self.session.get(f"{self.base_url}/rest/updatePlaylist", params=params, timeout=10)
         r.raise_for_status()
         
         response = r.json().get('subsonic-response', {})
@@ -347,7 +345,7 @@ class SubsonicClient:
             query_items.append(('songIdToAdd', str(tid)))
             
         # Use POST for the data payload to avoid URL length limits on massive playlists
-        r = requests.post(f"{self.base_url}/rest/updatePlaylist", data=query_items, timeout=15)
+        r = self.session.post(f"{self.base_url}/rest/updatePlaylist", data=query_items, timeout=15)
         r.raise_for_status()
         
         response = r.json().get('subsonic-response', {})
@@ -357,7 +355,6 @@ class SubsonicClient:
     
     def get_artists_native_page(self, sort_by="name", order="ASC", start=0, end=50, query=""):
         """Fetches a specific page of artists using Navidrome's native API."""
-        import requests
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
             
@@ -380,14 +377,14 @@ class SubsonicClient:
         print(f"[DEBUG API] PARAMS: {params}")
             
         try:
-            r = requests.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
+            r = self.session.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
             
             # If still 401, token might be stale; refresh and try one more time
             if r.status_code == 401: 
                 print("[DEBUG API] 401 Error - Refreshing token...")
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
+                    r = self.session.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
             
            
             data = r.json()
@@ -447,12 +444,12 @@ class SubsonicClient:
             self.authenticate_native()
         headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
         try:
-            r = requests.get(f"{self.base_url}/api/artist/{artist_id}",
+            r = self.session.get(f"{self.base_url}/api/artist/{artist_id}",
                              headers=headers, timeout=8)
             if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/artist/{artist_id}",
+                    r = self.session.get(f"{self.base_url}/api/artist/{artist_id}",
                                      headers=headers, timeout=8)
             if r.status_code != 200:
                 return {}
@@ -547,20 +544,19 @@ class SubsonicClient:
 
     def get_genres_native(self):
         """Fetches all genres from Navidrome native API. Returns {name: id} dict. Cached."""
-        import requests
         if hasattr(self, '_genre_map_cache') and self._genre_map_cache:
             return self._genre_map_cache
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
         headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
         try:
-            r = requests.get(f"{self.base_url}/api/genre",
+            r = self.session.get(f"{self.base_url}/api/genre",
                              params={"_start": 0, "_end": 5000},
                              headers=headers, timeout=10)
             if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/genre",
+                    r = self.session.get(f"{self.base_url}/api/genre",
                                      params={"_start": 0, "_end": 5000},
                                      headers=headers, timeout=10)
             data = r.json()
@@ -574,7 +570,6 @@ class SubsonicClient:
 
     def get_tracks_native_page(self, sort_by="title", order="ASC", start=0, end=50, query="", server_filters=None):
         """Fetches a specific page of tracks using Navidrome's native API for true server-side sorting."""
-        import requests
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
 
@@ -604,12 +599,12 @@ class SubsonicClient:
             if cached and now - cached[0] < self._PAGE_CACHE_TTL:
                 return cached[1], cached[2]
 
-            r = requests.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
+            r = self.session.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
 
             if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
+                    r = self.session.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
 
             data = r.json()
             if not isinstance(data, list):
@@ -635,20 +630,19 @@ class SubsonicClient:
        
     def get_all_artists_native(self):
         """Returns all artists as {name: id} dict via /api/artist. Cached per session."""
-        import requests
         if hasattr(self, '_artist_map_cache') and self._artist_map_cache:
             return self._artist_map_cache
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
         headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
         try:
-            r = requests.get(f"{self.base_url}/api/artist",
+            r = self.session.get(f"{self.base_url}/api/artist",
                              params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
                              headers=headers, timeout=15)
             if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/artist",
+                    r = self.session.get(f"{self.base_url}/api/artist",
                                      params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
                                      headers=headers, timeout=15)
             data = r.json()
@@ -662,20 +656,19 @@ class SubsonicClient:
 
     def get_all_albums_native(self):
         """Returns all albums as {name: id} dict via /api/album. Cached per session."""
-        import requests
         if hasattr(self, '_album_map_cache') and self._album_map_cache:
             return self._album_map_cache
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             self.authenticate_native()
         headers = {"x-nd-authorization": f"Bearer {self.native_jwt}"}
         try:
-            r = requests.get(f"{self.base_url}/api/album",
+            r = self.session.get(f"{self.base_url}/api/album",
                              params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
                              headers=headers, timeout=15)
             if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/album",
+                    r = self.session.get(f"{self.base_url}/api/album",
                                      params={"_start": 0, "_end": 100000, "_sort": "name", "_order": "ASC"},
                                      headers=headers, timeout=15)
             data = r.json()
@@ -689,7 +682,6 @@ class SubsonicClient:
 
     def get_albums_native_page(self, sort_by="name", order="ASC", start=0, end=50, query=""):
         """Fetches a specific page of albums using Navidrome's native API for true server-side sorting."""
-        import requests
         if not hasattr(self, 'native_jwt') or not self.native_jwt:
             if not self.authenticate_native():
                 return [], 0
@@ -708,12 +700,12 @@ class SubsonicClient:
             params["_q"] = query 
             
         try:
-            r = requests.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
+            r = self.session.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
             
             if r.status_code == 401: 
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
-                    r = requests.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
+                    r = self.session.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
             
             data = r.json()
             if not isinstance(data, list):
@@ -751,7 +743,7 @@ class SubsonicClient:
         })
         clean_artists = []
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
             data = r.json()
             if 'subsonic-response' in data and 'searchResult3' in data['subsonic-response']:
                 raw_artists = data['subsonic-response']['searchResult3'].get('artist', [])
@@ -798,7 +790,7 @@ class SubsonicClient:
         })
         
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params, timeout=5)
             data = r.json()
             
             raw_tracks = data.get('subsonic-response', {}).get('searchResult3', {}).get('song', [])
@@ -831,7 +823,7 @@ class SubsonicClient:
         params.update({'type': sort_type, 'size': size, 'offset': offset})
         
         try:
-            r = requests.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
             data = r.json()
             
             # Extract albums and normalize to a list
@@ -862,7 +854,7 @@ class SubsonicClient:
         params['offset'] = 0
         
         try:
-            r = requests.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
             
             # Extract the magic header (requests headers are case-insensitive)
             header_count = r.headers.get('X-Total-Count')
@@ -892,7 +884,7 @@ class SubsonicClient:
         """Fetches the exact total number of tracks from the server's database."""
         try:
             params = self._get_auth_params()
-            r = requests.get(f"{self.base_url}/rest/getScanStatus", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getScanStatus", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'scanStatus' in data['subsonic-response']:
                 return int(data['subsonic-response']['scanStatus'].get('count', 0))
@@ -906,7 +898,7 @@ class SubsonicClient:
             params = self._get_auth_params()
             params['id'] = track_id
             params['submission'] = 'true' if submission else 'false'
-            requests.get(f"{self.base_url}/rest/scrobble", params=params, timeout=5)
+            self.session.get(f"{self.base_url}/rest/scrobble", params=params, timeout=5)
         except Exception:
             pass
 
@@ -914,7 +906,7 @@ class SubsonicClient:
         """Trigger a library scan on the server."""
         try:
             params = self._get_auth_params()
-            r = requests.get(f"{self.base_url}/rest/startScan", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/startScan", params=params, timeout=10)
             return r.status_code == 200
         except Exception as e:
             print(f"[Client] startScan failed: {e}")
@@ -924,7 +916,7 @@ class SubsonicClient:
         """Return True if a library scan is currently in progress."""
         try:
             params = self._get_auth_params()
-            r = requests.get(f"{self.base_url}/rest/getScanStatus", params=params, timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/getScanStatus", params=params, timeout=5)
             data = r.json()
             status = data.get('subsonic-response', {}).get('scanStatus', {})
             return bool(status.get('scanning', False))
@@ -934,7 +926,7 @@ class SubsonicClient:
 
     def ping(self):
         try:
-            r = requests.get(f"{self.base_url}/rest/ping", params=self._get_auth_params(), timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/ping", params=self._get_auth_params(), timeout=5)
             return r.status_code == 200 and r.json()['subsonic-response']['status'] == 'ok'
         except:
             return False
@@ -949,7 +941,7 @@ class SubsonicClient:
         print(f"[Client] Attempting to {endpoint} item: {item_id}")
         
         try:
-            r = requests.get(f"{self.base_url}/rest/{endpoint}", params=params)
+            r = self.session.get(f"{self.base_url}/rest/{endpoint}", params=params)
             r.raise_for_status() # Raise error for 404/500
             
             data = r.json()
@@ -971,7 +963,7 @@ class SubsonicClient:
         """Standardized helper to get scan status as an integer timestamp."""
         try:
             params = self._get_auth_params()
-            r = requests.get(f"{self.base_url}/rest/getScanStatus", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getScanStatus", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'scanStatus' in data['subsonic-response']:
                 status = data['subsonic-response']['scanStatus']
@@ -1003,7 +995,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         params['size'] = count
         try:
-            r = requests.get(f"{self.base_url}/rest/getRandomSongs", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getRandomSongs", params=params)
             data = r.json()
             songs = data['subsonic-response']['randomSongs'].get('song', [])
             if isinstance(songs, dict): songs = [songs]
@@ -1112,7 +1104,7 @@ class SubsonicClient:
 
     def get_artists(self):
         try:
-            r = requests.get(f"{self.base_url}/rest/getArtists", params=self._get_auth_params())
+            r = self.session.get(f"{self.base_url}/rest/getArtists", params=self._get_auth_params())
             data = r.json()
             if 'subsonic-response' in data and 'artists' in data['subsonic-response']:
                 artists = []
@@ -1142,7 +1134,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         params['id'] = artist_id
         try:
-            r = requests.get(f"{self.base_url}/rest/getArtist", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getArtist", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'artist' in data['subsonic-response']:
                 result = data['subsonic-response']['artist']
@@ -1169,7 +1161,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         params['id'] = artist_id
         try:
-            r = requests.get(f"{self.base_url}/rest/getArtistInfo2", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getArtistInfo2", params=params)
             data = r.json()
             sr = data.get('subsonic-response', {})
             info = sr.get('artistInfo2') or sr.get('artistInfo') or {}
@@ -1193,7 +1185,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         params['id'] = album_id
         try:
-            r = requests.get(f"{self.base_url}/rest/getAlbum", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getAlbum", params=params)
             data = r.json()
             tracks = []
             if 'album' not in data['subsonic-response']: return []
@@ -1224,7 +1216,7 @@ class SubsonicClient:
         params['size'] = size
         params['offset'] = offset
         try:
-            r = requests.get(f"{self.base_url}/rest/getAlbumList2", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getAlbumList2", params=params)
             data = r.json()
             albums = []
             if 'subsonic-response' in data and 'albumList2' in data['subsonic-response']:
@@ -1258,7 +1250,7 @@ class SubsonicClient:
         params['albumCount'] = 0
         params['songCount'] = 0
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'searchResult3' in data['subsonic-response']:
                 raw_artists = data['subsonic-response']['searchResult3'].get('artist', [])
@@ -1309,7 +1301,7 @@ class SubsonicClient:
         clean_artists = []
         
         try:
-            r = requests.get(f"{self.base_url}/rest/getArtists", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getArtists", params=params)
             data = r.json()
             
             if 'subsonic-response' in data and 'artists' in data['subsonic-response']:
@@ -1359,7 +1351,7 @@ class SubsonicClient:
         params['albumCount'] = album_count
         
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
             data = r.json()
             
             if 'subsonic-response' in data and 'searchResult3' in data['subsonic-response']:
@@ -1399,7 +1391,7 @@ class SubsonicClient:
         params['songCount'] = 0
         params['artistCount'] = 0
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params, timeout=10)
             data = r.json()
             raw = data.get('subsonic-response', {}).get('searchResult3', {}).get('album', [])
             if isinstance(raw, dict): raw = [raw]
@@ -1425,7 +1417,7 @@ class SubsonicClient:
         print("[Client] Fetching starred songs...")
         params = self._get_auth_params()
         try:
-            r = requests.get(f"{self.base_url}/rest/getStarred", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getStarred", params=params)
             data = r.json()
             
             parsed_songs = []
@@ -1456,7 +1448,7 @@ class SubsonicClient:
         """Return {'songs': [...], 'albums': [...], 'artists': [...]} from getStarred."""
         params = self._get_auth_params()
         try:
-            r = requests.get(f"{self.base_url}/rest/getStarred2", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getStarred2", params=params)
             data = r.json()
             starred = data.get('subsonic-response', {}).get('starred2', {})
         except Exception:
@@ -1486,7 +1478,7 @@ class SubsonicClient:
         params = self._get_auth_params()
         try:
             print("[Client] Fetching starred items list...")
-            r = requests.get(f"{self.base_url}/rest/getStarred", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getStarred", params=params)
             data = r.json()
             ids = []
             
@@ -1514,7 +1506,7 @@ class SubsonicClient:
         params['artist'] = artist_name
         params['count'] = count
         try:
-            r = requests.get(f"{self.base_url}/rest/getTopSongs", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getTopSongs", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'topSongs' in data['subsonic-response']:
                 raw_songs = data['subsonic-response']['topSongs'].get('song', [])
@@ -1532,7 +1524,7 @@ class SubsonicClient:
         params['id'] = artist_id
         params['count'] = count
         try:
-            r = requests.get(f"{self.base_url}/rest/getSimilarSongs2", params=params, timeout=15)
+            r = self.session.get(f"{self.base_url}/rest/getSimilarSongs2", params=params, timeout=15)
             data = r.json()
             sr = data.get('subsonic-response', {})
             if sr.get('status') == 'ok' and 'similarSongs2' in sr:
@@ -1555,7 +1547,7 @@ class SubsonicClient:
         params['albumCount'] = 0
         params['artistCount'] = 0
         try:
-            r = requests.get(f"{self.base_url}/rest/search3", params=params, timeout=15)
+            r = self.session.get(f"{self.base_url}/rest/search3", params=params, timeout=15)
             data = r.json()
             if 'subsonic-response' in data and 'searchResult3' in data['subsonic-response']:
                 raw_songs = data['subsonic-response']['searchResult3'].get('song', [])
@@ -1619,7 +1611,7 @@ class SubsonicClient:
         """Returns the server's last scan revision/timestamp as an integer."""
         params = self._get_auth_params()
         try:
-            r = requests.get(f"{self.base_url}/rest/getScanStatus", params=params)
+            r = self.session.get(f"{self.base_url}/rest/getScanStatus", params=params)
             data = r.json()
             if 'subsonic-response' in data and 'scanStatus' in data['subsonic-response']:
                 status = data['subsonic-response']['scanStatus']
@@ -1659,7 +1651,7 @@ def get_fast_album_count(self):
         params['offset'] = 0
         
         try:
-            r = requests.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
+            r = self.session.get(f"{self.base_url}/rest/getAlbumList2", params=params, timeout=5)
             
             
             header_count = r.headers.get('X-Total-Count')

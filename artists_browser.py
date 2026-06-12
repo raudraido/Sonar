@@ -54,10 +54,8 @@ class ArtistPlayWorker(QThread): # Fetches all tracks matching an artist (incl. 
             print(f"Error: {e}")
             self.tracks_ready.emit([])
 
-class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's detail page (albums, top songs, bio/similar artists, appears-on) via parallel network calls, streaming albums_ready/top_songs_ready/appears_ready as each piece arrives.
-    albums_ready    = pyqtSignal(dict, list, list)   # info, main_albums, singles
-    top_songs_ready = pyqtSignal(list)               # top_songs
-    appears_ready   = pyqtSignal(list)               # appears_on
+class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's detail page (albums, top songs, bio/similar artists, appears-on) via parallel network calls, then emits it all at once via content_ready so the page can be built in its final shape in a single pass.
+    content_ready = pyqtSignal(dict, list, list, list, list)  # info, main_albums, singles, top_songs, appears_on
 
     def __init__(self, client, artist_id, artist_name):
         super().__init__()
@@ -157,9 +155,15 @@ class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's det
                     except Exception as e:
                         print(f"[TIMING]   get_artist_info_native FAILED: {e}")
 
-                # Always wait for subsonic so we can merge similar artists
-                sub_done.wait()
-                sub = sub_result[0]
+                # If native already has the bio (it normally returns similar artists in
+                # the same response too), don't block on subsonic's getArtistInfo2 —
+                # that call can trigger a slow live Last.fm round-trip on a cache miss.
+                # Only wait for it as a fallback when native came back empty.
+                if native_result.get('biography'):
+                    sub = {}
+                else:
+                    sub_done.wait()
+                    sub = sub_result[0]
 
                 # Merge: prefer native for bio (faster), prefer whichever has similar artists
                 merged = {}
@@ -172,14 +176,13 @@ class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's det
                 return merged
 
             _t_parallel = time.time()
-            with ThreadPoolExecutor(max_workers=3) as pool:
+            with ThreadPoolExecutor(max_workers=4) as pool:
                 f_artist = pool.submit(_fetch_artist)
                 f_songs  = pool.submit(_fetch_top_songs)
                 f_info2  = pool.submit(_fetch_info2)
 
-                # Albums: unblock as soon as get_artist returns
                 info = f_artist.result() or {}
-                print(f"[TIMING]   → albums_ready emit 1 at {_ms(_t0)} (parallel started {_ms(_t_parallel)} ago)")
+                print(f"[TIMING]   get_artist done at {_ms(_t0)} (parallel started {_ms(_t_parallel)} ago)")
                 if not info:
                     info = {'name': self.artist_name or "Unknown"}
 
@@ -204,10 +207,8 @@ class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's det
                 main_albums.sort(key=sort_by_year, reverse=True)
                 singles.sort(key=sort_by_year, reverse=True)
 
-                # Emit albums immediately — UI shows real content, skeleton is replaced
-                self.albums_ready.emit(info, main_albums, singles)
-
-                # Start appears_on search now that we have own_album_ids
+                # Start appears_on search now that we have own_album_ids — runs in the
+                # background while we wait for top songs / bio below.
                 def _fetch_appears():
                     _t = time.time()
                     result = []
@@ -244,42 +245,32 @@ class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's det
 
                 f_appears = pool.submit(_fetch_appears)
 
-                # Emit top_songs and bio each as soon as ready — whichever finishes first
-                from concurrent.futures import wait as _wait, FIRST_COMPLETED
-                pending = {f_songs, f_info2}
-                top_songs = []
-                while pending:
-                    done, pending = _wait(pending, return_when=FIRST_COMPLETED)
-                    for f in done:
-                        if f is f_songs:
-                            top_songs = f.result() or []
-                            print(f"[TIMING]   → top_songs_ready emit at {_ms(_t0)}  count={len(top_songs)}")
-                            self.top_songs_ready.emit(top_songs)
-                        else:
-                            extra = f.result() or {}
-                            bio = extra.get('biography') or extra.get('bio') or ''
-                            if bio:
-                                info['biography'] = bio
-                            similar = extra.get('similarArtist') or []
-                            if isinstance(similar, dict):
-                                similar = [similar]
-                            if similar:
-                                info['similar_artists'] = similar
-                            img_url = (extra.get('largeImageUrl') or
-                                       extra.get('mediumImageUrl') or
-                                       extra.get('smallImageUrl') or '')
-                            if img_url:
-                                info['artistImageUrl'] = img_url
-                            if bio or similar or img_url:
-                                print(f"[TIMING]   → albums_ready emit 2 (bio/similar/img) at {_ms(_t0)}  has_bio={bool(bio)}  similar={len(similar)}  has_img={bool(img_url)}")
-                                self.albums_ready.emit(info, main_albums, singles)
-                            else:
-                                print(f"[TIMING]   → no bio/similar/img at {_ms(_t0)}")
+                # Wait for everything — top songs, bio/similar, and appears-on —
+                # then build the whole page in one shot. No sections popping in,
+                # reordering, or stat changes after first paint.
+                top_songs = f_songs.result() or []
 
-                # Appears on — slowest, emit last
+                extra = f_info2.result() or {}
+                bio = extra.get('biography') or extra.get('bio') or ''
+                if bio:
+                    info['biography'] = bio
+                similar = extra.get('similarArtist') or []
+                if isinstance(similar, dict):
+                    similar = [similar]
+                if similar:
+                    info['similar_artists'] = similar
+                img_url = (extra.get('largeImageUrl') or
+                           extra.get('mediumImageUrl') or
+                           extra.get('smallImageUrl') or '')
+                if img_url:
+                    info['artistImageUrl'] = img_url
+
                 appears_on = f_appears.result() or []
-                print(f"[TIMING]   → appears_ready emit at {_ms(_t0)}  count={len(appears_on)}")
-                self.appears_ready.emit(appears_on)
+
+                print(f"[TIMING]   → content_ready emit at {_ms(_t0)}  "
+                      f"top_songs={len(top_songs)}  has_bio={bool(bio)}  similar={len(similar)}  "
+                      f"appears={len(appears_on)}")
+                self.content_ready.emit(info, main_albums, singles, top_songs, appears_on)
 
             print(f"[TIMING] {self.artist_name!r} — worker DONE at {_ms(_t0)}")
 
@@ -1398,11 +1389,40 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self.layout.addWidget(self.scroll)
         self._smooth_scroller = SmoothScroller(self.scroll)
 
+        # Opaque overlay + centered spinner shown while the page is loading.
+        # Everything underneath (header, bio/about, sections) gets built and
+        # settles to its final size while hidden behind this overlay, so the
+        # user only ever sees "empty page + spinner" -> "finished page", never
+        # a half-built/misaligned intermediate state.
+        self._loading_overlay = QWidget(self)
+        self._loading_overlay.setObjectName('_LoadingOverlay')
+        self._loading_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._loading_overlay.setStyleSheet(
+            f"#_LoadingOverlay {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); }}")
+        self._loading_overlay.hide()
+
+        from queue_panel import _SpinnerRing
+        self._loading_spinner = _SpinnerRing(self)
+        self._spinner_pending = False
+        self._pending_reveal = []
+        self._reveal_waiting = set()
 
         # For the artist view, song_list has FocusPolicy.NoFocus so no child
         # widget steals keyboard events. We can simply override keyPressEvent
         # on this widget itself — but we also need it to be able to receive focus.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._loading_overlay.setGeometry(self.rect())
+        if self._loading_spinner.isVisible():
+            self._center_loading_spinner()
+
+    def _center_loading_spinner(self):
+        s = self._loading_spinner._SIZE
+        cx = self.width() // 2
+        cy = self.height() // 2
+        self._loading_spinner.move(cx - s // 2, cy - s // 2)
 
     def _on_popular_album_clicked(self, data):
         
@@ -1750,6 +1770,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                 panel_hex = '#0e0e0e'
             self._artist_bridge.panelBgChanged.emit(panel_hex)
             self._set_header_qml_color(QColor(r, g, b))
+            self._loading_overlay.setStyleSheet(
+                f"#_LoadingOverlay {{ background-color: rgb({r},{g},{b}); }}")
 
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
@@ -1758,6 +1780,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
         if hasattr(self, 'lbl_top_tracks'):
             self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
+        if hasattr(self, '_loading_spinner'):
+            self._loading_spinner.set_color(color)
 
         for i in range(self.sections_layout.count()):
             row = self.sections_layout.itemAt(i).widget()
@@ -1799,7 +1823,23 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             _ArtistPhotoOverlay(pix, self.window())
 
     def _on_qml_height_changed(self, h):
+        print(f"[REVEAL] _on_qml_height_changed({h!r}) at {time.time():.3f}  "
+              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
+              f"waiting={getattr(self, '_reveal_waiting', None)!r}")
         self._qml.setFixedHeight(max(1, round(h)))
+        self._last_header_height = h
+        if getattr(self, '_spinner_pending', False) and 'bio' in getattr(self, '_reveal_waiting', set()):
+            # The bio's height-report can fire more than once in quick succession
+            # (the "Show more" truncation check forces a second layout pass), so
+            # don't trust the first report — wait until the height hasn't changed
+            # again for a short moment before treating the header as settled.
+            QTimer.singleShot(150, lambda hh=h: self._check_bio_height_settled(hh))
+
+    def _check_bio_height_settled(self, h):
+        print(f"[REVEAL] _check_bio_height_settled({h!r}) at {time.time():.3f}  "
+              f"last_header_height={getattr(self, '_last_header_height', None)!r}")
+        if getattr(self, '_last_header_height', None) == h:
+            self._mark_reveal_ready('bio')
 
     def _set_header_qml_color(self, color: QColor):
         self._qml.setClearColor(color)
@@ -1907,25 +1947,11 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                     w._timer.stop()
                 w.deleteLater()
 
-    # Sentinel title used to identify the loading-skeleton section
-    _SKELETON_SECTION_TITLE = "_skeleton"
-
-    def _show_section_skeleton(self, count=10):
-        """Instant visual feedback — animated skeleton cards (matches albums grid)."""
-        placeholders = [{'type': 'placeholder', 'title': '', 'cover_id': ''} for _ in range(count)]
-        row = QMLAlbumSectionWidget("", 0, placeholders)
-        row._section_title = self._SKELETON_SECTION_TITLE
-        if hasattr(self, '_bg_color'):
-            row.set_bg_color(self._bg_color)
-        row.set_accent_color(self.current_accent)
-        row.qml_widget.installEventFilter(self)
-        self.sections_layout.addWidget(row)
-
     # Max albums per QML widget — keeps each texture well under GPU limits
     _QML_CHUNK = 80
 
     def add_section(self, title, albums, cover_worker, pending_items):
-        if not albums: return
+        if not albums: return []
 
         sorted_albums = sorted(albums, key=lambda x: (int(x.get('playCount', 0)), str(x.get('year', '0000'))), reverse=True)
 
@@ -1933,13 +1959,18 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         chunk_size = self._QML_CHUNK
         chunks = [sorted_albums[i:i + chunk_size] for i in range(0, len(sorted_albums), chunk_size)]
 
+        # Precompute each row's height now (using the scroll viewport's known
+        # width) so it's correctly sized the moment it's added — no separate
+        # async resize-driven height pop after the fact.
+        content_w = self.scroll.viewport().width()
+
+        rows = []
         for chunk_idx, chunk in enumerate(chunks):
             # Only first chunk gets the section title + total count badge
             chunk_title = title if chunk_idx == 0 else ""
             chunk_count = len(sorted_albums) if chunk_idx == 0 else 0
 
             row = QMLAlbumSectionWidget(chunk_title, chunk_count, chunk)
-            row._section_title = title  # used by _remove_section to identify this block
             if hasattr(self, '_bg_color'):
                 row.set_bg_color(self._bg_color)
             row.set_accent_color(self.current_accent)
@@ -1947,7 +1978,10 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             row.play_album.connect(self.play_album.emit)
             row.artist_name_clicked.connect(lambda name, aid: self.artist_clicked.emit({'name': name, 'id': aid or None}))
             row.qml_widget.installEventFilter(self)
+            if content_w > 0:
+                row._set_height(w=content_w)
             self.sections_layout.addWidget(row)
+            rows.append(row)
 
             # Queue covers and track which section owns them
             for album in row.album_model.albums:
@@ -1959,6 +1993,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
         if self.sections_layout.count() <= len(chunks):
             QTimer.singleShot(100, self.auto_focus)
+
+        return rows
         
     def _get_qml_sections(self):
         sections = []
@@ -2086,13 +2122,22 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self.current_artist_id = artist_data.get('id')
         self._artist_liked = bool(artist_data.get('starred'))
 
-        # 1. INSTANT VISUALS
+        # 1. EMPTY PAGE + SPINNER — an opaque overlay covers the whole page first,
+        # so nothing (old content, half-built new content, mid-resize header)
+        # is visible while everything settles. _reveal_content hides it once
+        # the header/bio/sections have all reached their final size at once.
+        print(f"[TIMING-UI] load_artist({self.current_artist_name!r}, id={self.current_artist_id}) at {time.time():.3f}")
         self._set_stats("Loading...")
         self.set_bio("")
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
-        self._show_section_skeleton()
+        self._spinner_pending = False
+        self._loading_overlay.setGeometry(self.rect())
+        self._loading_overlay.show()
+        self._loading_overlay.raise_()
+        self._center_loading_spinner()
+        self._loading_spinner.start()
 
         if not getattr(self, '_header_already_loaded', False):
             self.set_header_image(None)
@@ -2107,31 +2152,35 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
         
         if getattr(self, 'live_detail_worker', None) and self.live_detail_worker.isRunning():
-            for sig in ('albums_ready', 'top_songs_ready', 'appears_ready'):
-                try: getattr(self.live_detail_worker, sig).disconnect()
-                except: pass
+            try: self.live_detail_worker.content_ready.disconnect()
+            except: pass
             self._safe_discard_worker(self.live_detail_worker)
-
-        self._loaded_appears_on  = []
-        self._loaded_album_counts = (-1, -1)
 
         self.live_detail_worker = LiveArtistDetailWorker(
             self.client,
             self.current_artist_id,
             self.current_artist_name
         )
-        self.live_detail_worker.albums_ready.connect(self._on_albums_ready)
-        self.live_detail_worker.top_songs_ready.connect(self._on_top_songs_ready)
-        self.live_detail_worker.appears_ready.connect(self._on_appears_ready)
+        self.live_detail_worker.content_ready.connect(self._on_content_ready)
         self.live_detail_worker.start()
 
-    def _on_albums_ready(self, info, main_albums, singles):
-        """Phase 2 handler — fires as soon as get_artist returns. Shows albums immediately."""
+    def _on_content_ready(self, info, main_albums, singles, top_songs, appears_on):
+        """Fires once everything for the page — albums, top songs, bio/similar,
+        and appears-on — has arrived. Builds the whole body in its final shape
+        in one pass: no sections popping in or stats changing afterward."""
+        print(f"[TIMING-UI] _on_content_ready({self.current_artist_name!r}) at {time.time():.3f}  "
+              f"main_albums={len(main_albums)}  singles={len(singles)}  top_songs={len(top_songs)}  "
+              f"appears={len(appears_on)}  has_bio={'biography' in info}")
+
+        # Pieces of the page that finish asynchronously (header photo fetch,
+        # QML reporting its new height for the bio) — the reveal waits until
+        # every one of these has reported in, instead of guessing at timing.
+        self._reveal_waiting = set()
+
         if info:
             self._artist_liked = bool(info.get('starred'))
             self._update_like_btn()
-        # Cover image
-        if info:
+
             # Prefer high-res Last.fm/MusicBrainz URL from getArtistInfo2 over getCoverArt thumb
             artist_img_url = info.get('artistImageUrl', '')
             if artist_img_url:
@@ -2141,8 +2190,10 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                 if prev and prev.isRunning():
                     try: prev.done.disconnect()
                     except: pass
+                self._reveal_waiting.add('image')
                 self._header_img_worker = _ImageWorker(artist_img_url)
                 self._header_img_worker.done.connect(self.set_header_image)
+                self._header_img_worker.done.connect(lambda *_: self._mark_reveal_ready('image'))
                 self._header_img_worker.start()
 
             cover_src = info.get('coverArt') or info.get('id')
@@ -2152,60 +2203,16 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                     self.cover_worker.queue_cover(cover_src, priority=True)
                 self._exact_artist_image = False
 
-            # Bio may arrive here on first emit (if already cached) or on second emit after Last.fm
+            if info.get('biography'):
+                self._reveal_waiting.add('bio')
             if 'biography' in info:
                 self.set_bio(info['biography'])
 
-            # Related artists — may be present on second emit after Last.fm
             self.set_related_artists(info.get('similar_artists', []))
 
         total_releases = len(main_albums) + len(singles)
-        appears_count  = len(getattr(self, '_loaded_appears_on', []))
-
-        if total_releases == 0 and appears_count == 0:
-            self._set_stats("Loading...")
-        elif total_releases == 0:
-            self._set_stats(f"Guest Artist • {appears_count} appearances")
-        else:
-            suffix = f" • {appears_count} appearances" if appears_count else ""
-            self._set_stats(f"{total_releases} releases{suffix}")
-
-        # Rebuild album sections (clear old ones first to avoid duplicates on second emit)
-        # Only rebuild if the counts actually changed to avoid visual flicker
-        prev_counts = getattr(self, '_loaded_album_counts', (-1, -1))
-        new_counts  = (len(main_albums), len(singles))
-        if new_counts != prev_counts:
-            self._loaded_album_counts = new_counts
-            # Remove and re-add only the Albums / Singles sections
-            self._remove_section("Albums")
-            self._remove_section("Singles & EPs")
-            worker = getattr(self, 'cover_worker', None)
-            if main_albums: self.add_section("Albums",      main_albums, worker, self.pending_items)
-            if singles:     self.add_section("Singles & EPs", singles,   worker, self.pending_items)
-
-        # Drop the loading skeleton once we have releases to show — guest artists
-        # (no albums/singles) keep it until _on_appears_ready resolves
-        if total_releases > 0:
-            self._remove_section(self._SKELETON_SECTION_TITLE)
-
-        self._try_set_focus()
-
-    def _on_top_songs_ready(self, top_songs):
-        """Phase 3 handler — fires after get_top_songs returns."""
-        self.set_top_songs(top_songs)
-
-    def _on_appears_ready(self, appears_on):
-        """Phase 5 handler — fires after search_artist_tracks returns (slowest call)."""
-        self._loaded_appears_on = appears_on
-        worker = getattr(self, 'cover_worker', None)
-        self._remove_section("Appears on & Compilations")
-        self._remove_section(self._SKELETON_SECTION_TITLE)
-        if appears_on:
-            self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
-
-        # Update stats label now that we have the final appearance count
-        total_releases = sum(getattr(self, '_loaded_album_counts', (0, 0)))
         appears_count  = len(appears_on)
+
         if total_releases == 0 and appears_count == 0:
             self._set_stats("No releases found")
         elif total_releases == 0:
@@ -2214,16 +2221,58 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             suffix = f" • {appears_count} appearances" if appears_count else ""
             self._set_stats(f"{total_releases} releases{suffix}")
 
-    def _remove_section(self, title):
-        """Remove all section widgets with the given title from sections_layout."""
-        for i in range(self.sections_layout.count() - 1, -1, -1):
-            item = self.sections_layout.itemAt(i)
-            w = item.widget() if item else None
-            if w and getattr(w, '_section_title', None) == title:
-                self.sections_layout.removeWidget(w)
-                if hasattr(w, '_timer'):
-                    w._timer.stop()
-                w.deleteLater()
+        self.set_top_songs(top_songs)
+
+        # Each QML album-section widget is built (and pre-sized in add_section)
+        # but hidden immediately, then revealed together with everything else
+        # in _reveal_content — instead of popping in one-by-one as each is built.
+        pending = []
+        worker = getattr(self, 'cover_worker', None)
+        if main_albums:  pending += self.add_section("Albums",      main_albums, worker, self.pending_items)
+        if singles:      pending += self.add_section("Singles & EPs", singles,   worker, self.pending_items)
+        if appears_on:   pending += self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
+        for w in pending:
+            w.hide()
+
+        self._pending_reveal = pending
+        self._spinner_pending = True
+
+        print(f"[REVEAL] _on_content_ready done at {time.time():.3f}  "
+              f"waiting_for={self._reveal_waiting!r}  pending_widgets={len(pending)}")
+
+        if self._reveal_waiting:
+            # Waiting on the header photo and/or the QML bio height-report —
+            # _mark_reveal_ready() fires _reveal_content() once every piece is
+            # in. Safety net in case one of them never reports back.
+            QTimer.singleShot(3000, self._reveal_content)
+        else:
+            QTimer.singleShot(0, self._reveal_content)
+
+    def _mark_reveal_ready(self, key):
+        print(f"[REVEAL] _mark_reveal_ready({key!r}) at {time.time():.3f}  "
+              f"was_waiting={self._reveal_waiting!r}  spinner_pending={getattr(self, '_spinner_pending', None)}")
+        self._reveal_waiting.discard(key)
+        if not self._reveal_waiting:
+            self._reveal_content()
+
+    def _reveal_content(self):
+        print(f"[REVEAL] _reveal_content() called at {time.time():.3f}  "
+              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
+              f"still_waiting={getattr(self, '_reveal_waiting', None)!r}  "
+              f"pending_widgets={len(getattr(self, '_pending_reveal', []))}")
+        if not self._spinner_pending:
+            print("[REVEAL]   -> already revealed, skipping")
+            return
+        self._spinner_pending = False
+        self._reveal_waiting = set()
+        for w in getattr(self, '_pending_reveal', []):
+            print(f"[REVEAL]   -> showing {w!r}")
+            w.show()
+        self._pending_reveal = []
+        self._try_set_focus()
+        self._loading_spinner.stop()
+        self._loading_overlay.hide()
+        print(f"[REVEAL]   -> spinner stopped, reveal complete at {time.time():.3f}")
 
     def _try_set_focus(self):
         """Focus first item in first section if no focus is already set."""
