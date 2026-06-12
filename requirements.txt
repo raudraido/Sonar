@@ -6,6 +6,8 @@ mutagen>=1.46.0
 
 # Album art decoding and blurring
 Pillow>=9.0.0
+numpy>=1.24.0
+scipy>=1.10.0
 
 # HTTP requests (streaming, cover art downloads)
 requests>=2.28.0
