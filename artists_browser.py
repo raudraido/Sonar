@@ -1249,6 +1249,10 @@ class ArtistDetailBridge(QObject): # Bridge for the artist detail header QML (ar
     def reportHeight(self, h: float):
         self._view._on_qml_height_changed(h)
 
+    @pyqtSlot(float)
+    def reportAboutHeight(self, h: float):
+        self._view._on_about_qml_height_changed(h)
+
     @pyqtSlot(str, int, int, int)
     def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
         from PyQt6.QtWidgets import QApplication
@@ -1359,6 +1363,32 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self.header = _header_wrapper
         self.content_layout.addWidget(self.header)
 
+        # ABOUT / BIO CARD — its own QML so the header above stays a constant
+        # height across artists (no bio-driven resize jumps); this card's
+        # height still depends on bio length, but it lives in the body, hidden
+        # until _reveal_content like the album sections.
+        self._about_qml = QQuickWidget()
+        self._about_qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
+        self._about_qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._set_qml_clear_color(self._about_qml, QColor(14, 14, 14))
+
+        about_ctx = self._about_qml.rootContext()
+        about_ctx.setContextProperty("artistBridge", self._artist_bridge)
+        self._about_qml.setSource(QUrl.fromLocalFile(resource_path("artist_about.qml")))
+
+        _about_wrapper = QWidget()
+        _about_wrapper.setObjectName('_aw')
+        _about_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        _about_wrapper.setStyleSheet('#_aw { background: transparent; }')
+        _aw_lo = QVBoxLayout(_about_wrapper)
+        _aw_lo.setContentsMargins(0, 0, 0, 0)
+        _aw_lo.setSpacing(0)
+        _aw_lo.addWidget(self._about_qml)
+
+        self.about_card = _about_wrapper
+        self.about_card.hide()
+        self.content_layout.addWidget(self.about_card)
+
         # POPULAR TRACKS
         self.lbl_top_tracks = QLabel("Popular")
         self.lbl_top_tracks.setStyleSheet("color: white; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
@@ -1389,11 +1419,12 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self.layout.addWidget(self.scroll)
         self._smooth_scroller = SmoothScroller(self.scroll)
 
-        # Opaque overlay + centered spinner shown while the page is loading.
-        # Everything underneath (header, bio/about, sections) gets built and
-        # settles to its final size while hidden behind this overlay, so the
-        # user only ever sees "empty page + spinner" -> "finished page", never
-        # a half-built/misaligned intermediate state.
+        # Opaque overlay + centered spinner shown over the body while the page
+        # is loading. The header (name, stats, pre-loaded cover) appears
+        # immediately in load_artist; everything below it (stats card, bio,
+        # sections, related artists) gets built and settles to its final size
+        # while hidden behind this overlay, so the body goes straight from
+        # "spinner" to "finished" with no half-built intermediate state.
         self._loading_overlay = QWidget(self)
         self._loading_overlay.setObjectName('_LoadingOverlay')
         self._loading_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1414,14 +1445,24 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._loading_overlay.setGeometry(self.rect())
+        self._position_loading_overlay()
         if self._loading_spinner.isVisible():
             self._center_loading_spinner()
 
+    def _position_loading_overlay(self):
+        # The header is populated immediately in load_artist (name, stats,
+        # pre-loaded cover) and stays visible the whole time -- only the body
+        # below it (stats card, bio, sections, related artists) is hidden
+        # behind the overlay while it loads/settles.
+        top_left = self.header.mapTo(self, QPoint(0, self.header.height()))
+        y = max(0, top_left.y())
+        self._loading_overlay.setGeometry(0, y, self.width(), max(0, self.height() - y))
+
     def _center_loading_spinner(self):
         s = self._loading_spinner._SIZE
-        cx = self.width() // 2
-        cy = self.height() // 2
+        rect = self._loading_overlay.geometry()
+        cx = rect.x() + rect.width() // 2
+        cy = rect.y() + rect.height() // 2
         self._loading_spinner.move(cx - s // 2, cy - s // 2)
 
     def _on_popular_album_clicked(self, data):
@@ -1770,6 +1811,7 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                 panel_hex = '#0e0e0e'
             self._artist_bridge.panelBgChanged.emit(panel_hex)
             self._set_header_qml_color(QColor(r, g, b))
+            self._set_qml_clear_color(self._about_qml, QColor(r, g, b))
             self._loading_overlay.setStyleSheet(
                 f"#_LoadingOverlay {{ background-color: rgb({r},{g},{b}); }}")
 
@@ -1827,26 +1869,39 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
               f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
               f"waiting={getattr(self, '_reveal_waiting', None)!r}")
         self._qml.setFixedHeight(max(1, round(h)))
-        self._last_header_height = h
+        if self._loading_overlay.isVisible():
+            self._position_loading_overlay()
+            if self._loading_spinner.isVisible():
+                self._center_loading_spinner()
+
+    def _on_about_qml_height_changed(self, h):
+        print(f"[REVEAL] _on_about_qml_height_changed({h!r}) at {time.time():.3f}  "
+              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
+              f"waiting={getattr(self, '_reveal_waiting', None)!r}")
+        self._about_qml.setFixedHeight(max(1, round(h)))
+        self._last_about_height = h
         if getattr(self, '_spinner_pending', False) and 'bio' in getattr(self, '_reveal_waiting', set()):
             # The bio's height-report can fire more than once in quick succession
             # (the "Show more" truncation check forces a second layout pass), so
             # don't trust the first report — wait until the height hasn't changed
-            # again for a short moment before treating the header as settled.
-            QTimer.singleShot(150, lambda hh=h: self._check_bio_height_settled(hh))
+            # again for a short moment before treating the About card as settled.
+            QTimer.singleShot(150, lambda hh=h: self._check_about_height_settled(hh))
 
-    def _check_bio_height_settled(self, h):
-        print(f"[REVEAL] _check_bio_height_settled({h!r}) at {time.time():.3f}  "
-              f"last_header_height={getattr(self, '_last_header_height', None)!r}")
-        if getattr(self, '_last_header_height', None) == h:
+    def _check_about_height_settled(self, h):
+        print(f"[REVEAL] _check_about_height_settled({h!r}) at {time.time():.3f}  "
+              f"last_about_height={getattr(self, '_last_about_height', None)!r}")
+        if getattr(self, '_last_about_height', None) == h:
             self._mark_reveal_ready('bio')
 
     def _set_header_qml_color(self, color: QColor):
-        self._qml.setClearColor(color)
-        self._qml.setAutoFillBackground(True)
-        pal = self._qml.palette()
+        self._set_qml_clear_color(self._qml, color)
+
+    def _set_qml_clear_color(self, qml_widget, color: QColor):
+        qml_widget.setClearColor(color)
+        qml_widget.setAutoFillBackground(True)
+        pal = qml_widget.palette()
         pal.setColor(QPalette.ColorRole.Window, color)
-        self._qml.setPalette(pal)
+        qml_widget.setPalette(pal)
 
     def set_related_artists(self, similar_artists):
         # Remove old row if present
@@ -2129,11 +2184,12 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         print(f"[TIMING-UI] load_artist({self.current_artist_name!r}, id={self.current_artist_id}) at {time.time():.3f}")
         self._set_stats("Loading...")
         self.set_bio("")
+        self.about_card.hide()
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
         self._spinner_pending = False
-        self._loading_overlay.setGeometry(self.rect())
+        self._position_loading_overlay()
         self._loading_overlay.show()
         self._loading_overlay.raise_()
         self._center_loading_spinner()
@@ -2176,6 +2232,7 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         # QML reporting its new height for the bio) — the reveal waits until
         # every one of these has reported in, instead of guessing at timing.
         self._reveal_waiting = set()
+        has_bio = False
 
         if info:
             self._artist_liked = bool(info.get('starred'))
@@ -2203,7 +2260,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                     self.cover_worker.queue_cover(cover_src, priority=True)
                 self._exact_artist_image = False
 
-            if info.get('biography'):
+            has_bio = bool(info.get('biography'))
+            if has_bio:
                 self._reveal_waiting.add('bio')
             if 'biography' in info:
                 self.set_bio(info['biography'])
@@ -2227,6 +2285,11 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         # but hidden immediately, then revealed together with everything else
         # in _reveal_content — instead of popping in one-by-one as each is built.
         pending = []
+        # The About card lives in its own QML so its bio-driven height settles
+        # off-screen, alongside the album sections, instead of jumping the
+        # (constant-height) header above it.
+        if has_bio:
+            pending.append(self.about_card)
         worker = getattr(self, 'cover_worker', None)
         if main_albums:  pending += self.add_section("Albums",      main_albums, worker, self.pending_items)
         if singles:      pending += self.add_section("Singles & EPs", singles,   worker, self.pending_items)

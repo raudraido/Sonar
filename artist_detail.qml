@@ -26,8 +26,6 @@ Rectangle {
     property string artistStats:   "Loading..."
     property bool   artistFavorite: false
     property string photoId:       ""
-    property string bioText:       ""
-    property bool   bioCollapsed:  true
 
     // ── Bridge connections ─────────────────────────────────────────────────────
     Connections {
@@ -49,10 +47,6 @@ Rectangle {
             root.artistFavorite = isFav
         }
         function onPhotoIdChanged(pid) { root.photoId = pid }
-        function onBioChanged(text) {
-            root.bioText      = text
-            root.bioCollapsed = true
-        }
     }
 
     Timer {
@@ -329,78 +323,6 @@ Rectangle {
                                     onExited:  artistBridge.hideTooltip()
                                 }
                             }
-                        }
-                    }
-                }
-            }
-
-            // ── ABOUT CARD ───────────────────────────────────────────────────
-            Item {
-                id: aboutArea
-                width: parent.width
-                visible: root.bioText !== ""
-                height: visible ? (24 + aboutCol.implicitHeight + 24) : 0
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 10
-                    color: root.cardBgColor
-                    border.color: root.cardBorderColor
-                    border.width: 1
-                    visible: aboutArea.visible
-                }
-
-                Column {
-                    id: aboutCol
-                    x: 24; y: 24
-                    width: parent.width - 48
-                    spacing: 8
-
-                    Text {
-                        text: "About " + root.artistName
-                        color: root.textPrimary
-                        font.pixelSize: 20; font.bold: true
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
-                    }
-
-                    Text {
-                        id: bioBody
-                        width: parent.width
-                        text: root.bioText
-                        color: root.textSecondary
-                        font.pixelSize: root.fontSizeSecondary
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
-                        wrapMode: Text.WordWrap
-                        lineHeight: 1.4
-                        maximumLineCount: root.bioCollapsed ? 10 : 100000
-                        elide: Text.ElideRight
-                    }
-
-                    // Hidden measurement copy — used only to detect whether the
-                    // full bio would overflow 10 lines, independent of bioCollapsed
-                    Text {
-                        id: bioMeasure
-                        visible: false
-                        width: bioBody.width
-                        text: root.bioText
-                        font.pixelSize: bioBody.font.pixelSize
-                        font.family: bioBody.font.family
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 10
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        text: root.bioCollapsed ? "Show more" : "Show less"
-                        color: root.textSecondary
-                        font.pixelSize: root.fontSizeSecondary
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
-                        visible: bioMeasure.truncated
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.bioCollapsed = !root.bioCollapsed
                         }
                     }
                 }
