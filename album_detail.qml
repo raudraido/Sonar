@@ -28,7 +28,11 @@ Rectangle {
     property bool   albumFavorite: false
     property string playingTrackId:      ""
     property bool   isCurrentlyPlaying:  false
-    readonly property string searchText: trackSearchBar.searchText
+    // trackSearchBar lives inside the ListView's `header` item, which is its
+    // own id scope — stash a reference here once it's created so root-level
+    // bindings/handlers (search text, search controller signals) can reach it.
+    property var    _searchBar: null
+    readonly property string searchText: root._searchBar ? root._searchBar.searchText : ""
     property string panelBgColor:  "#0e0e0e"
     property int    selectedTrkIdx: -1
 
@@ -92,31 +96,23 @@ Rectangle {
         }
         function onSelectedTrackChanged(idx) { root.selectedTrkIdx = idx }
         function onScrollToModelRow(row) {
-            var item = trackList.itemAtIndex(row)
-            if (!item) return
-            var mapped = item.mapToItem(scroller.contentItem, 0, 0)
-            var margin = 8
-            if (mapped.y < scroller.contentY + margin)
-                scroller.contentY = Math.max(0, mapped.y - margin)
-            else if (mapped.y + item.height > scroller.contentY + scroller.height - margin)
-                scroller.contentY = Math.min(scroller.contentHeight - scroller.height,
-                                             mapped.y + item.height - scroller.height + margin)
+            trackList.positionViewAtIndex(row, ListView.Contain)
         }
         function onScrollToTopOfView() {
-            scroller.contentY = 0
+            trackList.contentY = trackList.originY
         }
         function onScrollToBottomOfView() {
-            scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height)
+            trackList.contentY = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height)
         }
     }
 
     Connections {
         target: albumBridge.searchCtl
-        function onSearchReset()         { trackSearchBar.reset() }
-        function onSearchOpen()          { trackSearchBar.open() }
-        function onSearchTextAppend(ch)  { trackSearchBar.appendChar(ch) }
-        function onSearchTextBackspace() { trackSearchBar.backspace() }
-        function onSearchClose()         { trackSearchBar.close() }
+        function onSearchReset()         { if (root._searchBar) root._searchBar.reset() }
+        function onSearchOpen()          { if (root._searchBar) root._searchBar.open() }
+        function onSearchTextAppend(ch)  { if (root._searchBar) root._searchBar.appendChar(ch) }
+        function onSearchTextBackspace() { if (root._searchBar) root._searchBar.backspace() }
+        function onSearchClose()         { if (root._searchBar) root._searchBar.close() }
     }
 
     // ── Freestanding scrollbar ─────────────────────────────────────────────────
@@ -128,39 +124,47 @@ Rectangle {
         width: 10
         z: 10
 
-        opacity: scroller.contentHeight > scroller.height ? 1.0 : 0.0
+        opacity: trackList.contentHeight > trackList.height ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 250 } }
 
         property real fixedLength: 50
-        size:     scroller.height > 0 ? (fixedLength / scroller.height) : 0
-        position: (scroller.contentHeight > scroller.height)
-                  ? (scroller.contentY / (scroller.contentHeight - scroller.height)) * (1.0 - size)
+        size:     trackList.height > 0 ? (fixedLength / trackList.height) : 0
+        position: (trackList.contentHeight > trackList.height)
+                  ? ((trackList.contentY - trackList.originY) / (trackList.contentHeight - trackList.height)) * (1.0 - size)
                   : 0
         onPositionChanged: {
             if (pressed) {
                 var pct = position / (1.0 - size)
-                scroller.contentY = pct * (scroller.contentHeight - scroller.height)
+                trackList.contentY = trackList.originY + pct * (trackList.contentHeight - trackList.height)
             }
         }
         contentItem: Rectangle {
             radius: 3; color: root.accentColor
-            opacity: vbar.pressed || vbar.hovered || scroller.isScrollActive ? 0.9 : 0.0
+            opacity: vbar.pressed || vbar.hovered || trackList.isScrollActive ? 0.9 : 0.0
             Behavior on opacity { NumberAnimation { duration: 200 } }
         }
         background: Rectangle { color: "transparent" }
     }
 
-    // ── Main Flickable ─────────────────────────────────────────────────────────
-    Flickable {
-        id: scroller
+    // ── Main scrolling view ───────────────────────────────────────────────────
+    // A single virtualized ListView is the whole page: the album header card and
+    // tracklist toolbar/column headers live in `header`, the bottom card-rounding
+    // strip lives in `footer`, and track rows are normal delegates. This keeps
+    // the "everything scrolls together" feel while only realizing on-screen rows
+    // (plus cacheBuffer) regardless of track count.
+    ListView {
+        id: trackList
+        objectName: "trackList"
         anchors.fill: parent
-        contentHeight: mainCol.implicitHeight + 60
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
         clip: true
+        spacing: 0
+        cacheBuffer: 600
+        model: trackModel
 
         property bool isScrollActive: false
-        Timer { id: scrollHideTimer; interval: 600; onTriggered: scroller.isScrollActive = false }
+        Timer { id: scrollHideTimer; interval: 600; onTriggered: trackList.isScrollActive = false }
         onContentYChanged: { isScrollActive = true; scrollHideTimer.restart() }
 
         MouseArea {
@@ -168,22 +172,26 @@ Rectangle {
             acceptedButtons: Qt.NoButton
             onWheel: wheel => {
                 var delta = -(wheel.angleDelta.y / 120) * 60
-                var maxY  = Math.max(0, scroller.contentHeight - scroller.height)
-                scroller.contentY = Math.max(0, Math.min(scroller.contentY + delta, maxY))
+                var minY  = trackList.originY
+                var maxY  = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height)
+                trackList.contentY = Math.max(minY, Math.min(trackList.contentY + delta, maxY))
                 wheel.accepted = true
             }
         }
 
-        Column {
-            id: mainCol
-            x: 12; y: 12
-            width: scroller.width - 24
-            spacing: 0
+        // ── HEADER: album info card + tracklist toolbar/column headers ─────────
+        header: Item {
+            id: pageHeader
+            width: trackList.width
+            height: headerArea.height + 10 + cardLid.height
+
+            Component.onCompleted: root._searchBar = trackSearchBar
 
             // ── HEADER CARD ──────────────────────────────────────────────────
             Item {
                 id: headerArea
-                width: parent.width
+                x: 12; y: 0
+                width: parent.width - 24
                 height: Math.max(coverItem.artSize, metaCol.implicitHeight) + 56
 
                 Rectangle {
@@ -489,413 +497,438 @@ Rectangle {
                 }
             }
 
-            Item { width: parent.width; height: 10 }
+            // ── TRACKLIST CARD LID (toolbar + column headers, rounded top) ────
+            Rectangle {
+                id: cardLid
+                x: 12
+                y: headerArea.height + 10
+                width: parent.width - 24
+                height: 12 + toolbarRow.height + colHeader.height
+                color: root.cardBgColor
+                border.color: root.cardBorderColor
+                border.width: 1
+                topLeftRadius: 10
+                topRightRadius: 10
+                bottomLeftRadius: 0
+                bottomRightRadius: 0
+            }
+            // Hide cardLid's bottom border so it blends into the first track row
+            Rectangle {
+                x: 13
+                y: cardLid.y + cardLid.height - 1
+                width: parent.width - 26
+                height: 1
+                color: root.cardBgColor
+            }
 
-            // ── TRACKLIST CARD ───────────────────────────────────────────────
+            // ── TOOLBAR ROW ──────────────────────────────────────────────
             Item {
-                id: tracklistCard
-                width: parent.width
-                height: 12 + toolbarRow.height + colHeader.height + trackList.height + 12
+                id: toolbarRow
+                x: 20; y: cardLid.y + 12
+                width: parent.width - 40; height: 36
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 10
-                    color: root.cardBgColor
-                    border.color: root.cardBorderColor
-                    border.width: 1
+                SearchBar {
+                    id: trackSearchBar
+                    anchors.right: parent.right
+                    anchors.top:   parent.top
+                    anchors.bottom: parent.bottom
+
+                    accentColor:       root.accentColor
+                    textPrimary:       root.textPrimary
+                    textSecondary:     root.textSecondary
+                    panelBgColor:      root.panelBgColor
+                    borderColor:       root.cardBorderColor
+                    hoverColor:        root.hoverColor
+                    fontFamily:        root.fontFamily
+                    fontSizeSecondary: root.fontSizeSecondary
+                    placeholderText:   "Search tracks..."
+
+                    onOpened: albumBridge.searchCtl.setSearchActive(true)
+                    onClosed: albumBridge.searchCtl.setSearchActive(false)
                 }
+            }
 
-                // ── TOOLBAR ROW ──────────────────────────────────────────────
-                Item {
-                    id: toolbarRow
-                    x: 8; y: 12
-                    width: parent.width - 16; height: 36
+            // ── TRACK LIST HEADER ────────────────────────────────────────
+            Item {
+                id: colHeader
+                x: 20; y: toolbarRow.y + toolbarRow.height
+                width: parent.width - 40; height: 36
 
-                    SearchBar {
-                        id: trackSearchBar
-                        anchors.right: parent.right
-                        anchors.top:   parent.top
-                        anchors.bottom: parent.bottom
+                Row {
+                    x: 4; height: parent.height; width: parent.width - 8
+                    property string colStyle: root.textSecondary
+                    property int    fSize:    root.fontSizeSecondary - 1
 
-                        accentColor:       root.accentColor
-                        textPrimary:       root.textPrimary
-                        textSecondary:     root.textSecondary
-                        panelBgColor:      root.panelBgColor
-                        borderColor:       root.cardBorderColor
-                        hoverColor:        root.hoverColor
-                        fontFamily:        root.fontFamily
-                        fontSizeSecondary: root.fontSizeSecondary
-                        placeholderText:   "Search tracks..."
-
-                        onOpened: albumBridge.searchCtl.setSearchActive(true)
-                        onClosed: albumBridge.searchCtl.setSearchActive(false)
-                    }
-                }
-
-                // ── TRACK LIST HEADER ────────────────────────────────────────
-                Item {
-                    id: colHeader
-                    x: 8; y: toolbarRow.y + toolbarRow.height
-                    width: parent.width - 16; height: 36
-
-                    Row {
-                        x: 4; height: parent.height; width: parent.width - 8
-                        property string colStyle: root.textSecondary
-                        property int    fSize:    root.fontSizeSecondary - 1
-
-                        Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                        Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
-                        Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
-                        Item {
-                            width: root.colFav; height: parent.height
-                            Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: albumBridge.favHeaderClicked() }
-                        }
-                        Text { width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
-                        Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                        Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    }
-                    // ── Column resize handles — visible 2px line + 12px drag zone ──
-                    // Order from right: PLAYS, DURATION, GENRE, FAVORITE, ARTIST
-                    MouseArea {
-                        x: parent.width - root.colFav - root.colGenre - root.colDur - root.colPlays - 18
-                        y: 0; width: 12; height: parent.height; z: 10
-                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                        property real _pressX: 0; property int _pressW: 0
-                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colArtist }
-                        onPositionChanged: if (pressed) {
-                            root.colArtist = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
-                            colSaveTimer.restart()
-                        }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                    }
-
-                    MouseArea {
-                        x: parent.width - root.colGenre - root.colDur - root.colPlays - 18
-                        y: 0; width: 12; height: parent.height; z: 10
-                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                        property real _pressX: 0; property int _pressW: 0
-                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colFav }
-                        onPositionChanged: if (pressed) {
-                            root.colFav = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
-                            colSaveTimer.restart()
-                        }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                    }
-
-                    MouseArea {
-                        x: parent.width - root.colDur - root.colPlays - 18
-                        y: 0; width: 12; height: parent.height; z: 10
-                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                        property real _pressX: 0; property int _pressW: 0
-                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colGenre }
-                        onPositionChanged: if (pressed) {
-                            root.colGenre = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
-                            colSaveTimer.restart()
-                        }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                    }
-
-                    MouseArea {
-                        x: parent.width - root.colPlays - 18
-                        y: 0; width: 12; height: parent.height; z: 10
-                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                        property real _pressX: 0; property int _pressW: 0
-                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colDur }
-                        onPositionChanged: if (pressed) {
-                            root.colDur = Math.max(44, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
-                            colSaveTimer.restart()
-                        }
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                    }
-
-                    MouseArea {
-                        x: parent.width - 18
-                        y: 0; width: 12; height: parent.height; z: 10
-                        cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                        property real _pressX: 0; property int _pressW: 0
-                        onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colPlays }
-                        onPositionChanged: if (pressed) {
-                            root.colPlays = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
-                            colSaveTimer.restart()
-                        }
-                    }
-
-                }
-
-                // ── TRACK ROWS ───────────────────────────────────────────────
-                ListView {
-                    id: trackList
-                    x: 8; y: colHeader.y + colHeader.height
-                    width: parent.width - 16
-                    height: contentHeight
-                    interactive: false
-                    model: trackModel
-                    spacing: 0
-
-                delegate: Item {
-                    id: trackRow
-                    width: trackList.width
-
-                    // Cache all model roles as local properties BEFORE any Repeater
-                    // can shadow the 'model' context object.
-                    property bool   isDisc:    model.isDiscHeader
-                    property string discLbl:   model.discLabel    || ""
-                    property int    trkIdx:    model.trackIdx
-                    property string trkId:     model.trackId      || ""
-                    property string trkNum:    model.trackNumber  || ""
-                    property string trkTitle:  model.trackTitle   || ""
-                    property string artName:   model.artistName   || ""
-                    property bool   isFav:     model.isFavorite
-                    property string durStr:    model.durationStr  || ""
-                    property string playsStr:  model.playCountStr || ""
-                    property string genreStr:  model.trackGenre   || ""
-
-                    property bool rowHov:      false
-                    property bool isSelected:  !isDisc && trkIdx === root.selectedTrkIdx
-                    property bool isPlaying:   root.isCurrentlyPlaying && trkId === root.playingTrackId
-                    property bool matchSearch: root.searchText === ""
-                        || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
-                        || artName.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
-                        || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
-
-                    height: isDisc ? (root.searchText === "" ? 36 : 0) : (matchSearch ? 40 : 0)
-                    visible: height > 0
-                    clip: false
-
-                    // ── Disc header ─────────────────────────────────────────
+                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
+                    Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
                     Item {
-                        visible: isDisc; anchors.fill: parent
+                        width: root.colFav; height: parent.height
+                        Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: albumBridge.favHeaderClicked() }
+                    }
+                    Text { width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
+                    Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                }
+                // ── Column resize handles — visible 2px line + 12px drag zone ──
+                // Order from right: PLAYS, DURATION, GENRE, FAVORITE, ARTIST
+                MouseArea {
+                    x: parent.width - root.colFav - root.colGenre - root.colDur - root.colPlays - 18
+                    y: 0; width: 12; height: parent.height; z: 10
+                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                    property real _pressX: 0; property int _pressW: 0
+                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colArtist }
+                    onPositionChanged: if (pressed) {
+                        root.colArtist = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                        colSaveTimer.restart()
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                }
+
+                MouseArea {
+                    x: parent.width - root.colGenre - root.colDur - root.colPlays - 18
+                    y: 0; width: 12; height: parent.height; z: 10
+                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                    property real _pressX: 0; property int _pressW: 0
+                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colFav }
+                    onPositionChanged: if (pressed) {
+                        root.colFav = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                        colSaveTimer.restart()
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                }
+
+                MouseArea {
+                    x: parent.width - root.colDur - root.colPlays - 18
+                    y: 0; width: 12; height: parent.height; z: 10
+                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                    property real _pressX: 0; property int _pressW: 0
+                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colGenre }
+                    onPositionChanged: if (pressed) {
+                        root.colGenre = Math.max(60, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                        colSaveTimer.restart()
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                }
+
+                MouseArea {
+                    x: parent.width - root.colPlays - 18
+                    y: 0; width: 12; height: parent.height; z: 10
+                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                    property real _pressX: 0; property int _pressW: 0
+                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colDur }
+                    onPositionChanged: if (pressed) {
+                        root.colDur = Math.max(44, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                        colSaveTimer.restart()
+                    }
+                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                }
+
+                MouseArea {
+                    x: parent.width - 18
+                    y: 0; width: 12; height: parent.height; z: 10
+                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                    property real _pressX: 0; property int _pressW: 0
+                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colPlays }
+                    onPositionChanged: if (pressed) {
+                        root.colPlays = Math.max(40, _pressW + (mapToItem(null, mouseX, 0).x - _pressX))
+                        colSaveTimer.restart()
+                    }
+                }
+            }
+        }
+
+        // ── FOOTER: bottom rounded corner of the tracklist card + page padding ──
+        footer: Item {
+            width: trackList.width
+            height: 12 + 32
+
+            Rectangle {
+                x: 12; y: 0
+                width: parent.width - 24; height: 12
+                color: root.cardBgColor
+                border.color: root.cardBorderColor
+                border.width: 1
+                topLeftRadius: 0
+                topRightRadius: 0
+                bottomLeftRadius: 10
+                bottomRightRadius: 10
+            }
+            // Hide this rectangle's top border so it blends into the last track row
+            Rectangle {
+                x: 13; y: 0
+                width: parent.width - 26; height: 1
+                color: root.cardBgColor
+            }
+        }
+
+        // ── TRACK ROWS ───────────────────────────────────────────────────────
+        delegate: Item {
+            id: trackRow
+            width: trackList.width
+
+            // Cache all model roles as local properties BEFORE any Repeater
+            // can shadow the 'model' context object.
+            property bool   isDisc:    model.isDiscHeader
+            property string discLbl:   model.discLabel    || ""
+            property int    trkIdx:    model.trackIdx
+            property string trkId:     model.trackId      || ""
+            property string trkNum:    model.trackNumber  || ""
+            property string trkTitle:  model.trackTitle   || ""
+            property string artName:   model.artistName   || ""
+            property bool   isFav:     model.isFavorite
+            property string durStr:    model.durationStr  || ""
+            property string playsStr:  model.playCountStr || ""
+            property string genreStr:  model.trackGenre   || ""
+
+            property bool rowHov:      false
+            property bool isSelected:  !isDisc && trkIdx === root.selectedTrkIdx
+            property bool isPlaying:   root.isCurrentlyPlaying && trkId === root.playingTrackId
+            property bool matchSearch: root.searchText === ""
+                || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+                || artName.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+                || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+
+            height: isDisc ? (root.searchText === "" ? 36 : 0) : (matchSearch ? 40 : 0)
+            visible: height > 0
+            clip: false
+
+            // ── Card body continuation (fill + side borders) ────────────────
+            Rectangle {
+                x: 12; y: 0
+                width: parent.width - 24; height: parent.height
+                color: root.cardBgColor
+            }
+            Rectangle { x: 12; y: 0; width: 1; height: parent.height; color: root.cardBorderColor }
+            Rectangle { x: parent.width - 13; y: 0; width: 1; height: parent.height; color: root.cardBorderColor }
+
+            // ── Disc header ─────────────────────────────────────────
+            Item {
+                visible: isDisc; anchors.fill: parent
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: root.colNum + 28
+                    text: trackRow.discLbl
+                    color: root.textSecondary
+                    font.pixelSize: root.fontSizeSecondary; font.bold: true
+                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                }
+            }
+
+            // ── Track row ────────────────────────────────────────────
+            Item {
+                visible: !isDisc; anchors.fill: parent
+
+                // Hover / playing / keyboard-selection background
+                Rectangle {
+                    x: 13; y: 1
+                    width: parent.width - 26; height: parent.height - 2
+                    radius: 4
+                    color: isPlaying
+                        ? Qt.rgba(Qt.color(root.accentColor).r, Qt.color(root.accentColor).g, Qt.color(root.accentColor).b, 0.15)
+                        : root.hoverColor
+                    opacity: isPlaying ? 1.0 : (rowHov || isSelected ? 1.0 : 0.0)
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                }
+
+                Row {
+                    x: 24; y: 0
+                    width: parent.width - 48; height: parent.height
+
+                    // # / playing bars
+                    Item {
+                        width: root.colNum; height: parent.height
                         Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: root.colNum + 8
-                            text: trackRow.discLbl
-                            color: root.textSecondary
-                            font.pixelSize: root.fontSizeSecondary; font.bold: true
+                            visible: !isPlaying; anchors.centerIn: parent
+                            text: trackRow.trkNum; color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary
                             font.family: root.fontFamily; renderType: Text.NativeRendering
                         }
+                        Row {
+                            visible: isPlaying; anchors.centerIn: parent; spacing: 3
+                            Repeater {
+                                model: [300, 420, 340]
+                                delegate: Rectangle {
+                                    required property int modelData
+                                    required property int index
+                                    width: 3; radius: 1.5; color: root.accentColor; height: 4
+                                    SequentialAnimation on height {
+                                        loops: Animation.Infinite
+                                        running: isPlaying && root.isCurrentlyPlaying
+                                        NumberAnimation { from: 4; to: 4 + (index + 1) * 4; duration: modelData; easing.type: Easing.InOutSine }
+                                        NumberAnimation { from: 4 + (index + 1) * 4; to: 4; duration: modelData; easing.type: Easing.InOutSine }
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    // ── Track row ────────────────────────────────────────────
+                    // Title
+                    Text {
+                        width: root.colTitleW(trackList.width - 48); height: parent.height
+                        verticalAlignment: Text.AlignVCenter; leftPadding: 4
+                        text: trackRow.trkTitle
+                        color: isPlaying ? root.accentColor : root.textPrimary
+                        font.pixelSize: root.fontSizePrimary; font.bold: true
+                        elide: Text.ElideRight; font.family: root.fontFamily; renderType: Text.NativeRendering
+                    }
+
+                    // Artist — split into clickable parts
+                    // NOTE: uses trackRow.artName (NOT model.artistName) to avoid
+                    // the Repeater's own 'model' property shadowing the delegate context.
                     Item {
-                        visible: !isDisc; anchors.fill: parent
+                        width: root.colArtist; height: parent.height; clip: true
 
-                        // Hover / playing / keyboard-selection background
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.leftMargin: 1; anchors.rightMargin: 1
-                            anchors.topMargin: 1; anchors.bottomMargin: 1
-                            radius: 4
-                            color: isPlaying
-                                ? Qt.rgba(Qt.color(root.accentColor).r, Qt.color(root.accentColor).g, Qt.color(root.accentColor).b, 0.15)
-                                : root.hoverColor
-                            opacity: isPlaying ? 1.0 : (rowHov || isSelected ? 1.0 : 0.0)
-                            Behavior on opacity { NumberAnimation { duration: 120 } }
-                        }
+                        Flow {
+                            id: flowArt
+                            x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+                            height: Math.min(implicitHeight, root._twoLineH)
+                            clip: true
 
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 4; anchors.rightMargin: 4
+                            Repeater {
+                                model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
 
-                            // # / playing bars
-                            Item {
-                                width: root.colNum; height: parent.height
-                                Text {
-                                    visible: !isPlaying; anchors.centerIn: parent
-                                    text: trackRow.trkNum; color: root.textSecondary
+                                delegate: Text {
+                                    property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
+                                    property bool hov: false
+                                    text: modelData
+                                    opacity: isSep ? 0.4 : 1.0
+                                    color: !isSep && hov ? root.accentColor : root.textSecondary
                                     font.pixelSize: root.fontSizeSecondary
                                     font.family: root.fontFamily; renderType: Text.NativeRendering
-                                }
-                                Row {
-                                    visible: isPlaying; anchors.centerIn: parent; spacing: 3
-                                    Repeater {
-                                        model: [300, 420, 340]
-                                        delegate: Rectangle {
-                                            required property int modelData
-                                            required property int index
-                                            width: 3; radius: 1.5; color: root.accentColor; height: 4
-                                            SequentialAnimation on height {
-                                                loops: Animation.Infinite
-                                                running: isPlaying && root.isCurrentlyPlaying
-                                                NumberAnimation { from: 4; to: 4 + (index + 1) * 4; duration: modelData; easing.type: Easing.InOutSine }
-                                                NumberAnimation { from: 4 + (index + 1) * 4; to: 4; duration: modelData; easing.type: Easing.InOutSine }
-                                            }
-                                        }
+                                    Rectangle {
+                                        visible: !parent.isSep && parent.hov
+                                        y: parent.baselineOffset + 2
+                                        width: parent.paintedWidth; height: 1
+                                        color: parent.color
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent; hoverEnabled: true
+                                        enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
+                                        onEntered: parent.hov = true
+                                        onExited:  parent.hov = false
+                                        onClicked: mouse => { albumBridge.trackArtistClicked(parent.text); mouse.accepted = true }
                                     }
                                 }
-                            }
-
-                            // Title
-                            Text {
-                                width: root.colTitleW(trackList.width - 8); height: parent.height
-                                verticalAlignment: Text.AlignVCenter; leftPadding: 4
-                                text: trackRow.trkTitle
-                                color: isPlaying ? root.accentColor : root.textPrimary
-                                font.pixelSize: root.fontSizePrimary; font.bold: true
-                                elide: Text.ElideRight; font.family: root.fontFamily; renderType: Text.NativeRendering
-                            }
-
-                            // Artist — split into clickable parts
-                            // NOTE: uses trackRow.artName (NOT model.artistName) to avoid
-                            // the Repeater's own 'model' property shadowing the delegate context.
-                            Item {
-                                width: root.colArtist; height: parent.height; clip: true
-
-                                Flow {
-                                    id: flowArt
-                                    x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
-                                    height: Math.min(implicitHeight, root._twoLineH)
-                                    clip: true
-
-                                    Repeater {
-                                        model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
-
-                                        delegate: Text {
-                                            property bool isSep: /^( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )$/.test(modelData)
-                                            property bool hov: false
-                                            text: modelData
-                                            opacity: isSep ? 0.4 : 1.0
-                                            color: !isSep && hov ? root.accentColor : root.textSecondary
-                                            font.pixelSize: root.fontSizeSecondary
-                                            font.family: root.fontFamily; renderType: Text.NativeRendering
-                                            Rectangle {
-                                                visible: !parent.isSep && parent.hov
-                                                y: parent.baselineOffset + 2
-                                                width: parent.paintedWidth; height: 1
-                                                color: parent.color
-                                            }
-                                            MouseArea {
-                                                anchors.fill: parent; hoverEnabled: true
-                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
-                                                onEntered: parent.hov = true
-                                                onExited:  parent.hov = false
-                                                onClicked: mouse => { albumBridge.trackArtistClicked(parent.text); mouse.accepted = true }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    visible: flowArt.implicitHeight > flowArt.height
-                                    text: "…"
-                                    anchors.right: parent.right; anchors.rightMargin: 4
-                                    y: flowArt.y + flowArt.height - implicitHeight
-                                    color: root.textSecondary
-                                    font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
-                                    renderType: Text.NativeRendering
-                                }
-                            }
-
-                            // Favorite
-                            Item {
-                                width: root.colFav; height: parent.height
-                                Image {
-                                    anchors.centerIn: parent; width: 16; height: 16
-                                    source: trackRow.isFav
-                                        ? "image://albumicons/heart_filled_E91E63"
-                                        : "image://albumicons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
-                                    cache: false; mipmap: true; smooth: true
-                                    scale: favHov.containsMouse ? 1.2 : 1.0
-                                    Behavior on scale { NumberAnimation { duration: 100 } }
-                                }
-                                MouseArea {
-                                    id: favHov; anchors.fill: parent; hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor; z: 5
-                                    onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
-                                }
-                            }
-
-                            // Genre — clickable parts separated by " • "
-                            Item {
-                                width: root.colGenre; height: parent.height; clip: true
-
-                                Flow {
-                                    id: flowGen
-                                    x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
-                                    height: Math.min(implicitHeight, root._twoLineH)
-                                    clip: true
-
-                                    Repeater {
-                                        model: trackRow.genreStr.split(/( • )/).filter(function(p) { return p !== "" })
-
-                                        delegate: Text {
-                                            property bool isSep: modelData === " • "
-                                            property bool hov: false
-                                            text: modelData
-                                            opacity: isSep ? 0.4 : 1.0
-                                            color: !isSep && hov ? root.accentColor : root.textSecondary
-                                            font.pixelSize: root.fontSizeSecondary
-                                            font.family: root.fontFamily; renderType: Text.NativeRendering
-                                            Rectangle {
-                                                visible: !parent.isSep && parent.hov
-                                                y: parent.baselineOffset + 2
-                                                width: parent.paintedWidth; height: 1
-                                                color: parent.color
-                                            }
-                                            MouseArea {
-                                                anchors.fill: parent; hoverEnabled: true
-                                                enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
-                                                onEntered: parent.hov = true
-                                                onExited:  parent.hov = false
-                                                onClicked: mouse => { albumBridge.trackGenreClicked(parent.text); mouse.accepted = true }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    visible: flowGen.implicitHeight > flowGen.height
-                                    text: "…"
-                                    anchors.right: parent.right; anchors.rightMargin: 4
-                                    y: flowGen.y + flowGen.height - implicitHeight
-                                    color: root.textSecondary
-                                    font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
-                                    renderType: Text.NativeRendering
-                                }
-                            }
-
-                            // Duration
-                            Text {
-                                width: root.colDur; height: parent.height
-                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                text: trackRow.durStr
-                                color: isPlaying ? root.accentColor : root.textSecondary
-                                font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
-                            }
-
-                            // Plays
-                            Text {
-                                width: root.colPlays; height: parent.height
-                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                text: trackRow.playsStr; color: root.textSecondary
-                                font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
                             }
                         }
 
-                        // Row mouse handler
-                        HoverHandler { onHoveredChanged: trackRow.rowHov = hovered }
-                        MouseArea {
-                            anchors.fill: parent; hoverEnabled: false
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton; z: 2
-                            propagateComposedEvents: true
-                            onClicked: mouse => {
-                                if (mouse.button === Qt.RightButton) {
-                                    var gp = mapToGlobal(mouse.x, mouse.y)
-                                    albumBridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
-                                    mouse.accepted = true
-                                } else {
-                                    mouse.accepted = false
-                                }
-                            }
-                            onDoubleClicked: albumBridge.trackPlayClicked(trackRow.trkIdx)
+                        Text {
+                            visible: flowArt.implicitHeight > flowArt.height
+                            text: "…"
+                            anchors.right: parent.right; anchors.rightMargin: 4
+                            y: flowArt.y + flowArt.height - implicitHeight
+                            color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                            renderType: Text.NativeRendering
                         }
                     }
+
+                    // Favorite
+                    Item {
+                        width: root.colFav; height: parent.height
+                        Image {
+                            anchors.centerIn: parent; width: 16; height: 16
+                            source: trackRow.isFav
+                                ? "image://albumicons/heart_filled_E91E63"
+                                : "image://albumicons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
+                            cache: false; mipmap: true; smooth: true
+                            scale: favHov.containsMouse ? 1.2 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100 } }
+                        }
+                        MouseArea {
+                            id: favHov; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor; z: 5
+                            onClicked: mouse => { albumBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
+                        }
+                    }
+
+                    // Genre — clickable parts separated by " • "
+                    Item {
+                        width: root.colGenre; height: parent.height; clip: true
+
+                        Flow {
+                            id: flowGen
+                            x: 4; width: parent.width - 4; anchors.verticalCenter: parent.verticalCenter; spacing: 0
+                            height: Math.min(implicitHeight, root._twoLineH)
+                            clip: true
+
+                            Repeater {
+                                model: trackRow.genreStr.split(/( • )/).filter(function(p) { return p !== "" })
+
+                                delegate: Text {
+                                    property bool isSep: modelData === " • "
+                                    property bool hov: false
+                                    text: modelData
+                                    opacity: isSep ? 0.4 : 1.0
+                                    color: !isSep && hov ? root.accentColor : root.textSecondary
+                                    font.pixelSize: root.fontSizeSecondary
+                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    Rectangle {
+                                        visible: !parent.isSep && parent.hov
+                                        y: parent.baselineOffset + 2
+                                        width: parent.paintedWidth; height: 1
+                                        color: parent.color
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent; hoverEnabled: true
+                                        enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
+                                        onEntered: parent.hov = true
+                                        onExited:  parent.hov = false
+                                        onClicked: mouse => { albumBridge.trackGenreClicked(parent.text); mouse.accepted = true }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: flowGen.implicitHeight > flowGen.height
+                            text: "…"
+                            anchors.right: parent.right; anchors.rightMargin: 4
+                            y: flowGen.y + flowGen.height - implicitHeight
+                            color: root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                            renderType: Text.NativeRendering
+                        }
+                    }
+
+                    // Duration
+                    Text {
+                        width: root.colDur; height: parent.height
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: trackRow.durStr
+                        color: isPlaying ? root.accentColor : root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                    }
+
+                    // Plays
+                    Text {
+                        width: root.colPlays; height: parent.height
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: trackRow.playsStr; color: root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                    }
+                }
+
+                // Row mouse handler
+                HoverHandler { onHoveredChanged: trackRow.rowHov = hovered }
+                MouseArea {
+                    anchors.fill: parent; hoverEnabled: false
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton; z: 2
+                    propagateComposedEvents: true
+                    onClicked: mouse => {
+                        if (mouse.button === Qt.RightButton) {
+                            var gp = mapToGlobal(mouse.x, mouse.y)
+                            albumBridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
+                            mouse.accepted = true
+                        } else {
+                            mouse.accepted = false
+                        }
+                    }
+                    onDoubleClicked: albumBridge.trackPlayClicked(trackRow.trkIdx)
                 }
             }
-            }
-
-            Item { width: parent.width; height: 32 }
         }
     }
-
 }
