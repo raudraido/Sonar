@@ -159,8 +159,24 @@ Rectangle {
 
         property bool isScrollActive: false
         Timer { id: scrollHideTimer; interval: 600; onTriggered: scroller.isScrollActive = false }
-        onContentYChanged: { isScrollActive = true; scrollHideTimer.restart() }
+        onContentYChanged: {
+            isScrollActive = true; scrollHideTimer.restart()
+            if (!scroller._animating) scroller.targetY = scroller.contentY
+        }
 
+        property real targetY: 0
+        property bool _animating: false
+
+        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
+        // system (tied to the render loop / real vsync), unlike a stepped
+        // direct contentY assignment which jumps instantly.
+        Behavior on contentY {
+            enabled: scroller._animating
+            SmoothedAnimation {
+                velocity: 1800
+                onRunningChanged: if (!running) scroller._animating = false
+            }
+        }
 
         MouseArea {
             anchors.fill: parent
@@ -168,7 +184,9 @@ Rectangle {
             onWheel: wheel => {
                 var delta = -(wheel.angleDelta.y / 120) * 60
                 var maxY  = Math.max(0, scroller.contentHeight - scroller.height)
-                scroller.contentY = Math.max(0, Math.min(scroller.contentY + delta, maxY))
+                scroller._animating = true
+                scroller.targetY = Math.max(0, Math.min(scroller.targetY + delta, maxY))
+                scroller.contentY = scroller.targetY
                 wheel.accepted = true
             }
         }
@@ -518,7 +536,6 @@ Rectangle {
                                             anchors.fill: parent
                                             source:   coverId !== "" ? "image://homecovers/" + coverId : ""
                                             fillMode: Image.PreserveAspectCrop
-                                            mipmap:   true
                                             cache:    false
                                             layer.enabled: true
                                             layer.effect: null

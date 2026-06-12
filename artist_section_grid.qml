@@ -121,7 +121,6 @@ Item {
                         anchors.fill: parent
                         source: coverId ? "image://sectioncovers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
-                        mipmap: true
                         cache: false
                     }
 

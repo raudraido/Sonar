@@ -21,7 +21,7 @@ from PyQt6.QtCore import (Qt, QPoint, QRect, QRectF, QSize, pyqtSignal, QSetting
                           QAbstractListModel, QModelIndex, QObject)
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 from PyQt6.QtQuickWidgets import QQuickWidget
-from PyQt6.QtQuick import QQuickImageProvider
+from PyQt6.QtQuick import QQuickImageProvider, QQuickView
 from PyQt6.QtGui import (
     QFont, QFontMetrics, QColor, QMouseEvent, QPainter, QPen,
     QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence, QIcon, QCursor, QImage
@@ -1915,10 +1915,78 @@ class DummyScrollBar:
     def setStyleSheet(self, style): pass
     def setSingleStep(self, step): pass
 
-class QMLGridWrapper(QQuickWidget):
+class QMLGridWrapper(QWidget):
+    """
+    Composite QML host: a QQuickView embedded via createWindowContainer
+    (renders at the monitor's real refresh rate, unlike QQuickWidget which
+    caps at ~60Hz), plus the legacy QListWidget-compatible shim methods used
+    by main.py and the album/artist/playlist grid browsers.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._dummy_scroll = DummyScrollBar()
+
+        self._view = QQuickView()
+        self._container = QWidget.createWindowContainer(self._view, self)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._container)
+
+    # ── QML engine/view delegation ──────────────────────────────────────────
+    def engine(self): return self._view.engine()
+
+    def rootContext(self): return self._view.rootContext()
+
+    def rootObject(self): return self._view.rootObject()
+
+    def setSource(self, url): self._view.setSource(url)
+
+    def setClearColor(self, color): self._view.setColor(color)
+
+    def setResizeMode(self, mode):
+        self._view.setResizeMode(QQuickView.ResizeMode(mode.value))
+
+    # ── Focus must reach the native container for QML keyboard handling ────
+    def setFocusPolicy(self, policy):
+        super().setFocusPolicy(policy)
+        self._container.setFocusPolicy(policy)
+
+    def setFocus(self, *args):
+        self._container.setFocus(*args)
+
+    def hasFocus(self):
+        return self._container.hasFocus()
+
+    # Mirror search/capture flags onto _container too: QApplication.focusWidget()
+    # may return either object, and the global type-to-search interceptor in
+    # player/mixins/keyboard.py reads these via getattr(focusWidget(), ...)
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in ('_search_active', '_capturing') and '_container' in self.__dict__:
+            self._container.__dict__[name] = value
+
+    # ── Forward filters/cursor to the objects that actually receive events ──
+    def installEventFilter(self, obj):
+        super().installEventFilter(obj)
+        self._container.installEventFilter(obj)
+        self._view.installEventFilter(obj)
+
+    def removeEventFilter(self, obj):
+        super().removeEventFilter(obj)
+        self._container.removeEventFilter(obj)
+        self._view.removeEventFilter(obj)
+
+    def setCursor(self, cursor):
+        super().setCursor(cursor)
+        self._container.setCursor(cursor)
+
+    def unsetCursor(self):
+        super().unsetCursor()
+        self._container.unsetCursor()
+
+    def _owns(self, obj):
+        return obj is self or obj is self._container or obj is self._view
 
     def verticalScrollBar(self): return self._dummy_scroll
 
@@ -1959,11 +2027,6 @@ class QMLGridWrapper(QQuickWidget):
 
     def item(self, *args): return None
 
-    def setResizeMode(self, mode):
-        from PyQt6.QtQuickWidgets import QQuickWidget
-        if isinstance(mode, QQuickWidget.ResizeMode):
-            super().setResizeMode(mode)
-
 class QMLMiddleClickScroller(QObject):
     """
     Middle-click omni-scroller for QMLGridWrapper.
@@ -1986,12 +2049,12 @@ class QMLMiddleClickScroller(QObject):
         self.target.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if obj == self.target and event.type() == QEvent.Type.Hide:
+        if self.target._owns(obj) and event.type() == QEvent.Type.Hide:
             if self.is_scrolling:
                 self._stop()
             return False
 
-        if obj == self.target:
+        if self.target._owns(obj):
             if event.type() == QEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.MiddleButton:
                     if self.is_scrolling:
@@ -2049,6 +2112,7 @@ class ArrowButton(QAbstractButton):
         super().__init__(parent)
         self._direction = direction
         self._color = QColor(color)
+        self._bg_color = None
         self.setFixedSize(30, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
@@ -2057,10 +2121,16 @@ class ArrowButton(QAbstractButton):
         self._color = QColor(color)
         self.update()
 
+    def set_bg_color(self, color):
+        self._bg_color = QColor(color)
+        self.update()
+
     def paintEvent(self, _):
         from player.mixins.visuals import resolve_menu_hover
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._bg_color is not None:
+            p.fillRect(self.rect(), self._bg_color)
         if self.underMouse():
             theme = getattr(self.window(), 'theme', None)
             p.setBrush(QColor(resolve_menu_hover(theme)))

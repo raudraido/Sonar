@@ -163,9 +163,9 @@ Rectangle {
                 var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed
                 var minY = -grid.topMargin
                 var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)
-                grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
                 grid._animating = true
-                if (!smoothScrollTimer.running) smoothScrollTimer.start()
+                grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
+                grid.contentY = grid.targetY
                 wheel.accepted = true
             }
         }
@@ -227,19 +227,14 @@ Rectangle {
         property real targetY: 0
         property bool _animating: false
 
-        Timer {
-            id: smoothScrollTimer
-            interval: 16
-            repeat: true
-            onTriggered: {
-                var diff = grid.targetY - grid.contentY
-                if (Math.abs(diff) < 0.5) {
-                    grid.contentY = grid.targetY
-                    grid._animating = false
-                    smoothScrollTimer.stop()
-                } else {
-                    grid.contentY += diff * 0.25
-                }
+        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
+        // system (tied to the render loop / real vsync), unlike a fixed-interval
+        // Timer which caps motion updates at its own rate regardless of refresh rate.
+        Behavior on contentY {
+            enabled: grid._animating
+            SmoothedAnimation {
+                velocity: 1800
+                onRunningChanged: if (!running) grid._animating = false
             }
         }
 
@@ -325,7 +320,6 @@ Rectangle {
                         anchors.fill: parent
                         source: coverId ? "image://covers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
-                        mipmap: true
                         cache: false
                     }
 

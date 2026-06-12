@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QSettings, QTimer,
                           QObject, pyqtSlot, QUrl)
 from PyQt6.QtGui  import QColor
-from PyQt6.QtQuickWidgets import QQuickWidget
+from PyQt6.QtQuick import QQuickView
 
 from player import resource_path
 from player.workers import GridCoverWorker
@@ -219,25 +219,28 @@ class HomeView(QWidget): # Top-level home tab: hosts home.qml with three AlbumMo
             self.recent_model, self.random_model, self.most_played_model)
         self.bridge._view = self
 
-        # QML widget
-        self._qml = QQuickWidget()
-        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        # QML widget — QQuickView in a window container renders at the
+        # monitor's real refresh rate, unlike QQuickWidget which caps at ~60Hz
+        # regardless of display Hz.
+        self._qml_view = QQuickView()
+        self._qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        self._qml = QWidget.createWindowContainer(self._qml_view, self)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.icon_provider = AlbumIconProvider()
 
-        engine = self._qml.engine()
+        engine = self._qml_view.engine()
         engine.addImageProvider("homecovers", self.cover_provider)
         engine.addImageProvider("homeicons",  self.icon_provider)
 
-        ctx = self._qml.rootContext()
+        ctx = self._qml_view.rootContext()
         ctx.setContextProperty("recentModel",     self.recent_model)
         ctx.setContextProperty("randomModel",     self.random_model)
         ctx.setContextProperty("mostPlayedModel", self.most_played_model)
         ctx.setContextProperty("homeBridge",      self.bridge)
         ctx.setContextProperty("savedRowOrder",   self._load_row_order())
 
-        self._qml.setSource(QUrl.fromLocalFile(resource_path("home.qml")))
+        self._qml_view.setSource(QUrl.fromLocalFile(resource_path("home.qml")))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -278,7 +281,7 @@ class HomeView(QWidget): # Top-level home tab: hosts home.qml with three AlbumMo
         self._bg_color = c
         try:
             r, g, b = (int(x) for x in c.split(','))
-            self._qml.setClearColor(QColor(r, g, b))
+            self._qml_view.setColor(QColor(r, g, b))
         except Exception:
             pass
 

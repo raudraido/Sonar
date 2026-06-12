@@ -4,6 +4,7 @@ import json
 
 
 from PyQt6.QtQuickWidgets import QQuickWidget
+from PyQt6.QtQuick import QQuickView
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout,
                              QStackedWidget)
 
@@ -566,21 +567,26 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         self._tracks_ready.connect(self._on_tracks_ready)
         self._album_star_ready.connect(self.set_header_heart_state)
 
-        self._qml = QQuickWidget()
-        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        # QML widget — QQuickView in a window container renders at the
+        # monitor's real refresh rate, unlike QQuickWidget which caps at ~60Hz
+        # regardless of display Hz.
+        self._qml_view = QQuickView()
+        self._qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        self._qml = QWidget.createWindowContainer(self._qml_view, self)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._album_key_filter = _AlbumKeyFilter(self._bridge, self._qml)
         self._qml.installEventFilter(self._album_key_filter)
+        self._qml_view.installEventFilter(self._album_key_filter)
 
-        engine = self._qml.engine()
+        engine = self._qml_view.engine()
         engine.addImageProvider("albumdetailcover", self._cover_provider)
         engine.addImageProvider("albumicons",        self._icon_provider)
 
-        ctx = self._qml.rootContext()
+        ctx = self._qml_view.rootContext()
         ctx.setContextProperty("trackModel",  self._track_model)
         ctx.setContextProperty("albumBridge", self._bridge)
 
-        self._qml.setSource(QUrl.fromLocalFile(resource_path("album_detail.qml")))
+        self._qml_view.setSource(QUrl.fromLocalFile(resource_path("album_detail.qml")))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -649,7 +655,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         self._bg_color = c
         try:
             r, g, b = (int(x) for x in c.split(','))
-            self._qml.setClearColor(QColor(r, g, b))
+            self._qml_view.setColor(QColor(r, g, b))
         except Exception:
             pass
 
@@ -969,7 +975,7 @@ class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStacked
         self.qml_view = QMLGridWrapper()
         self.qml_view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.qml_view.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        
+
         # DEMOTE Z-ORDER: Let Spotlight sit on top naturally without breaking the OS!
         self.qml_view.setClearColor(self._qml_bg_color())
         self.qml_view.setStyleSheet("border: none;")

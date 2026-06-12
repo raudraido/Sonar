@@ -7,8 +7,8 @@ buttons are overlaid as small widgets in the header's top-right corner.
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QTimer, QUrl
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtQuickWidgets import QQuickWidget
+from PyQt6.QtGui import QColor
+from PyQt6.QtQuick import QQuickView
 
 from player.widgets import AlbumIconProvider, LeftPanelCoverProvider
 from player import resource_path
@@ -65,34 +65,35 @@ class LeftPanel(QWidget):
         self._art_token = 0
         self._art_visible = False
         self._header_widgets = []
+        self._panel_bg_hex = '#0e0e0e'
 
         self._bridge = LeftPanelBridge(self)
         self._cover_provider = LeftPanelCoverProvider()
         self._icon_provider = AlbumIconProvider()
 
-        self._qml = QQuickWidget()
-        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self._qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # QQuickWidget defaults to a white clear color — match the panel
+        # QQuickView in a window container renders at the monitor's real
+        # refresh rate, unlike QQuickWidget which caps at ~60Hz regardless
+        # of display Hz.
+        self._qml_view = QQuickView()
+        self._qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        # QQuickView defaults to a white clear color — match the panel
         # background to avoid a white flash while the QML loads.
-        self._qml.setClearColor(QColor(14, 14, 14))
-        self._qml.setAutoFillBackground(True)
-        pal = self._qml.palette()
-        pal.setColor(QPalette.ColorRole.Window, QColor(14, 14, 14))
-        self._qml.setPalette(pal)
+        self._qml_view.setColor(QColor(14, 14, 14))
+        self._qml = QWidget.createWindowContainer(self._qml_view, self)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        engine = self._qml.engine()
+        engine = self._qml_view.engine()
         engine.addImageProvider("leftpanelcover", self._cover_provider)
         engine.addImageProvider("albumicons", self._icon_provider)
 
-        ctx = self._qml.rootContext()
+        ctx = self._qml_view.rootContext()
         ctx.setContextProperty("leftPanelBridge", self._bridge)
         ctx.setContextProperty(
             "leftPanelLogoBase",
             QUrl.fromLocalFile(resource_path("img/shahedron2.png")).toString(),
         )
 
-        self._qml.setSource(QUrl.fromLocalFile(resource_path("left_panel.qml")))
+        self._qml_view.setSource(QUrl.fromLocalFile(resource_path("left_panel.qml")))
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -109,6 +110,15 @@ class LeftPanel(QWidget):
     # ── Header overlay (back/forward nav buttons) ───────────────────────
     def add_header_widget(self, widget):
         widget.setParent(self)
+        # createWindowContainer's native child window always paints above
+        # regular (non-native) sibling widgets. Promote this overlay widget
+        # to a native window too so normal raise_()/z-order applies between
+        # it and the QML view's container. Native child windows don't
+        # composite translucency, so paint an opaque background matching
+        # the QML header color instead.
+        widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        if hasattr(widget, 'set_bg_color'):
+            widget.set_bg_color(self._panel_bg_hex)
         widget.show()
         self._header_widgets.append(widget)
         self._reposition_header_widgets()
@@ -208,9 +218,13 @@ class LeftPanel(QWidget):
             panel_hex = '#{:02x}{:02x}{:02x}'.format(r, g, b)
         except Exception:
             panel_hex = '#0e0e0e'
+        self._panel_bg_hex = panel_hex
         self._bridge.panelBgChanged.emit(panel_hex)
         self._bridge.borderColorChanged.emit(self._border_color_to_hex(theme.border_color))
         self._bridge.borderWidthChanged.emit(theme.border_width)
+        for w in self._header_widgets:
+            if hasattr(w, 'set_bg_color'):
+                w.set_bg_color(panel_hex)
 
     @staticmethod
     def _border_color_to_hex(color_str: str) -> str:

@@ -111,13 +111,6 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
 
-    # Match QML animation driver to the screen refresh rate (default is 60 Hz).
-    # Must be set before any QQuickWidget/QML engine is created.
-    _screen_hz = (app.primaryScreen().refreshRate() if app.primaryScreen() else 60.0)
-    _anim_ms = max(1, round(1000 / _screen_hz))
-    print(f'[Display] Refresh rate: {_screen_hz:.1f}Hz, QML animation interval: {_anim_ms}ms', flush=True)
-    os.environ["QML_ANIMATION_DRIVER_TARGET_ELAPSED_MS"] = str(_anim_ms)  # always override
-
     app.setStyle("Fusion")
     _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     QFontDatabase.addApplicationFont(os.path.join(_base, "fonts", "InterVariable.ttf"))

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QPushButton, QSizePolicy, QFrame, QGraphicsDropShadowEffect,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QRectF, QTimer, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty, QEvent
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QBrush, QPen, QFont, QFontMetrics, QIcon
 
 from player.mixins.visuals import resolve_menu_hover, install_scroll_reveal, scrollbar_css
@@ -403,17 +403,33 @@ def _extract_vibrant_color(pix: QPixmap) -> QColor:
 
 
 class _CoverOverlay(QWidget):
-    """Full-window dimmed overlay showing album art large on click."""
+    """Full-window dimmed overlay showing album art large on click.
+
+    A top-level frameless window rather than a child widget: QQuickView-backed
+    views (createWindowContainer) always paint above regular child widgets,
+    so a child overlay would be hidden behind them.
+    """
     def __init__(self, pixmap, parent, cover_id=None, client=None):
-        super().__init__(parent)
+        super().__init__(None,
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.NoDropShadowWindowHint)
         self._pixmap = pixmap
         self._worker = None
+        self._parent_window = parent
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setGeometry(parent.rect())
+        self.setGeometry(parent.geometry())
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        self.raise_()
-        self.setFocus()
+        parent.installEventFilter(self)
+        # No QObject parent (top-level window), so keep a strong Python ref
+        # on the main window — otherwise this gets garbage-collected right
+        # after __init__ returns, killing the still-running cover worker thread.
+        parent._cover_overlay = self
         self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
         if cover_id and client:
             self._worker = _FullResCoverWorker(client, cover_id)
             self._worker.done.connect(self._on_hires)
@@ -423,6 +439,11 @@ class _CoverOverlay(QWidget):
         if not pix.isNull():
             self._pixmap = pix
             self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._parent_window and event.type() in (QEvent.Type.Move, QEvent.Type.Resize):
+            self.setGeometry(self._parent_window.geometry())
+        return False
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -443,10 +464,17 @@ class _CoverOverlay(QWidget):
         p.end()
 
     def mousePressEvent(self, _):
-        self.close(); self.deleteLater()
+        self._close()
 
     def keyPressEvent(self, _):
-        self.close(); self.deleteLater()
+        self._close()
+
+    def _close(self):
+        self._parent_window.removeEventFilter(self)
+        if getattr(self._parent_window, '_cover_overlay', None) is self:
+            self._parent_window._cover_overlay = None
+        self.close()
+        self.deleteLater()
 
 
 class _RoundedPixmapLabel(QWidget):

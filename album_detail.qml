@@ -165,7 +165,24 @@ Rectangle {
 
         property bool isScrollActive: false
         Timer { id: scrollHideTimer; interval: 600; onTriggered: trackList.isScrollActive = false }
-        onContentYChanged: { isScrollActive = true; scrollHideTimer.restart() }
+        onContentYChanged: {
+            isScrollActive = true; scrollHideTimer.restart()
+            if (!trackList._animating) trackList.targetY = trackList.contentY
+        }
+
+        property real targetY: 0
+        property bool _animating: false
+
+        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
+        // system (tied to the render loop / real vsync), unlike a stepped
+        // direct contentY assignment which jumps instantly.
+        Behavior on contentY {
+            enabled: trackList._animating
+            SmoothedAnimation {
+                velocity: 1800
+                onRunningChanged: if (!running) trackList._animating = false
+            }
+        }
 
         MouseArea {
             anchors.fill: parent
@@ -174,7 +191,9 @@ Rectangle {
                 var delta = -(wheel.angleDelta.y / 120) * 60
                 var minY  = trackList.originY
                 var maxY  = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height)
-                trackList.contentY = Math.max(minY, Math.min(trackList.contentY + delta, maxY))
+                trackList._animating = true
+                trackList.targetY = Math.max(minY, Math.min(trackList.targetY + delta, maxY))
+                trackList.contentY = trackList.targetY
                 wheel.accepted = true
             }
         }

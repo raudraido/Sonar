@@ -64,20 +64,34 @@ Rectangle {
         focus: true
         currentIndex: count > 0 ? 0 : -1
 
+        property real targetY: 0
+        property bool _animating: false
+
+        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
+        // system (tied to the render loop / real vsync), unlike a stepped
+        // direct contentY assignment which jumps instantly.
+        Behavior on contentY {
+            enabled: grid._animating
+            SmoothedAnimation {
+                velocity: 1800
+                onRunningChanged: if (!running) grid._animating = false
+            }
+        }
+
         MouseArea {
             anchors.fill: parent
-            
-            
+
+
             acceptedButtons: Qt.NoButton
 
-            // Keep your scrolling math exactly the same!
             onWheel: (wheel) => {
                 var scrollSpeed = 3.0
                 var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed
-                var newY = grid.contentY - pixelScroll
                 var minY = -grid.topMargin
                 var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)
-                grid.contentY = Math.max(minY, Math.min(newY, maxY))
+                grid._animating = true
+                grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
+                grid.contentY = grid.targetY
                 wheel.accepted = true
             }
         }
@@ -141,7 +155,10 @@ Rectangle {
         model: playlistModel
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        onContentYChanged: { root.isScrollActive = true; scrollHideTimer.restart() }
+        onContentYChanged: {
+            root.isScrollActive = true; scrollHideTimer.restart()
+            if (!grid._animating) grid.targetY = grid.contentY
+        }
 
         delegate: Item {
             width: grid.cellWidth
@@ -176,7 +193,6 @@ Rectangle {
                         anchors.fill: parent
                         source: coverId ? "image://plcovers/" + coverId : ""
                         fillMode: Image.PreserveAspectCrop
-                        mipmap: true
                         cache: false
                     }
 
