@@ -64,34 +64,52 @@ Rectangle {
         focus: true
         currentIndex: count > 0 ? 0 : -1
 
-        property real targetY: 0
-        property bool _animating: false
+        // Momentum wheel-scroll: each notch adds an impulse to a velocity that
+        // decays exponentially (friction), like Chromium/macOS wheel scrolling.
+        // A single notch gives a short ~120px glide; rapid notches stack
+        // velocity for a faster, longer glide that eases out smoothly —
+        // unlike a constant-velocity-to-target model, speed continuously
+        // decreases rather than running at full speed then stopping abruptly.
+        property real wheelVelocity: 0       // px/sec, +down/-up
+        property real minContentY: -topMargin
+        property real maxContentY: Math.max(minContentY, contentHeight + bottomMargin - height)
 
-        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
-        // system (tied to the render loop / real vsync), unlike a stepped
-        // direct contentY assignment which jumps instantly.
-        Behavior on contentY {
-            enabled: grid._animating
-            SmoothedAnimation {
-                velocity: 1800
-                onRunningChanged: if (!running) grid._animating = false
+        // FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
+        // 143.8Hz monitor), unlike a Timer which is capped around 60Hz.
+        FrameAnimation {
+            id: momentumAnim
+            running: Math.abs(grid.wheelVelocity) > 1
+            onTriggered: {
+                var dt = frameTime
+                if (dt <= 0) return
+                var newY = grid.contentY + grid.wheelVelocity * dt
+                if (newY <= grid.minContentY) {
+                    newY = grid.minContentY
+                    grid.wheelVelocity = 0
+                } else if (newY >= grid.maxContentY) {
+                    newY = grid.maxContentY
+                    grid.wheelVelocity = 0
+                } else {
+                    grid.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
+                    if (Math.abs(grid.wheelVelocity) <= 1) {
+                        // Last frame of this glide: snap to a whole pixel so
+                        // Text.NativeRendering (always pixel-snapped) lands
+                        // on the same pixel as the sub-pixel-positioned
+                        // images/rects, instead of settling ~0.5px apart and
+                        // popping by 1px once the glide stops.
+                        newY = Math.round(newY)
+                    }
+                }
+                grid.contentY = newY
             }
         }
 
         MouseArea {
             anchors.fill: parent
-
-
             acceptedButtons: Qt.NoButton
-
             onWheel: (wheel) => {
-                var scrollSpeed = 3.0
-                var pixelScroll = (wheel.angleDelta.y / 120) * 60 * scrollSpeed
-                var minY = -grid.topMargin
-                var maxY = Math.max(minY, grid.contentHeight + grid.bottomMargin - grid.height)
-                grid._animating = true
-                grid.targetY = Math.max(minY, Math.min(grid.targetY - pixelScroll, maxY))
-                grid.contentY = grid.targetY
+                var impulse = -(wheel.angleDelta.y / 120) * scrollTuning.impulsePerNotch
+                grid.wheelVelocity = Math.max(-scrollTuning.maxVelocity, Math.min(grid.wheelVelocity + impulse, scrollTuning.maxVelocity))
                 wheel.accepted = true
             }
         }
@@ -155,9 +173,9 @@ Rectangle {
         model: playlistModel
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        interactive: false  // wheel handled above via momentum; no touch/drag flicking on this grid
         onContentYChanged: {
             root.isScrollActive = true; scrollHideTimer.restart()
-            if (!grid._animating) grid.targetY = grid.contentY
         }
 
         delegate: Item {
@@ -257,7 +275,11 @@ Rectangle {
                         font.pixelSize: root.fontSizePrimary
                         font.bold: true
                         elide: Text.ElideRight
-                        renderType: Text.NativeRendering
+                        // QtRendering (default), not NativeRendering: native
+                        // rendering snaps glyphs to integer pixels
+                        // independently of contentY, causing a 1px pop
+                        // relative to the (sub-pixel) cover image during the
+                        // slow tail of a momentum scroll.
                     }
 
                     Text {
@@ -266,7 +288,7 @@ Rectangle {
                         color: root.fontColorSecondary
                         font.pixelSize: root.fontSizeSecondary
                         elide: Text.ElideRight
-                        renderType: Text.NativeRendering
+                        // QtRendering (default) — see note above.
                     }
                 }
 

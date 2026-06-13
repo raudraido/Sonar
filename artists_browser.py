@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QStyledItemDelegate, QStyle)
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon, QPalette
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
@@ -17,7 +17,7 @@ from player.qml_search import SearchController, GridSearchKeyFilter, set_window_
 from player import resource_path
 from player.workers import GridCoverWorker
 
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, CoverDecodeWorker
+from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, WheelForwarder, CoverDecodeWorker
 
 
 class ArtistPlayWorker(QThread): # Fetches all tracks matching an artist (incl. as albumArtist, splitting multi-artist strings), sorted by album/disc/track number for playback.
@@ -771,12 +771,14 @@ class QMLAlbumSectionWidget(QWidget): # Widget for an album section in the artis
         title_container.setVisible(bool(title))
 
         # ── QML grid ───────────────────────────────────────────────────────
-        self.qml_widget = QQuickWidget()
+        # QQuickView in a window container renders at the monitor's real
+        # refresh rate, unlike QQuickWidget which caps at ~60Hz regardless
+        # of display Hz.
+        self.qml_widget = QMLGridWrapper()
         self.qml_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self.qml_widget.setMinimumHeight(10)
-        # QQuickWidget paints white for the first frame or two before its scene
-        # graph is ready, so give it an opaque palette matching the clear color
-        # to avoid a white flash while the QML content is still loading.
+        # QQuickView defaults to a white clear color — match the section
+        # background to avoid a white flash while the QML loads.
         self._set_qml_widget_color(QColor(14, 14, 14))
         outer.addWidget(self.qml_widget)
 
@@ -864,10 +866,6 @@ class QMLAlbumSectionWidget(QWidget): # Widget for an album section in the artis
 
     def _set_qml_widget_color(self, color: QColor):
         self.qml_widget.setClearColor(color)
-        self.qml_widget.setAutoFillBackground(True)
-        pal = self.qml_widget.palette()
-        pal.setColor(QPalette.ColorRole.Window, color)
-        self.qml_widget.setPalette(pal)
 
     def set_accent_color(self, color):
         self.bridge.accentColorChanged.emit(color)
@@ -1154,16 +1152,35 @@ class RelatedArtistRowWidget(QWidget): # A horizontally scrollable strip of rela
         return super().eventFilter(source, event)
 
 class _ArtistPhotoOverlay(QWidget): # A full-screen tinted overlay showing the artist photo large and centered.
-   
+
     def __init__(self, pixmap, parent):
-        super().__init__(parent)
+        # Top-level frameless window rather than a child widget: QQuickView-backed
+        # views (createWindowContainer) always paint above regular child widgets,
+        # so a child overlay would be hidden behind them.
+        super().__init__(None,
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.NoDropShadowWindowHint)
         self._pixmap = pixmap
+        self._parent_window = parent
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setGeometry(parent.rect())
+        self.setGeometry(parent.geometry())
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        self.raise_()
-        self.setFocus()
+        parent.installEventFilter(self)
+        # No QObject parent (top-level window), so keep a strong Python ref
+        # on the main window — otherwise this gets garbage-collected right
+        # after __init__ returns.
+        parent._photo_overlay = self
         self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
+
+    def eventFilter(self, obj, event):
+        if obj is self._parent_window and event.type() in (QEvent.Type.Move, QEvent.Type.Resize):
+            self.setGeometry(self._parent_window.geometry())
+        return False
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -1184,10 +1201,15 @@ class _ArtistPhotoOverlay(QWidget): # A full-screen tinted overlay showing the a
         p.end()
 
     def mousePressEvent(self, _):
-        self.close()
-        self.deleteLater()
+        self._close()
 
     def keyPressEvent(self, event):
+        self._close()
+
+    def _close(self):
+        self._parent_window.removeEventFilter(self)
+        if getattr(self._parent_window, '_photo_overlay', None) is self:
+            self._parent_window._photo_overlay = None
         self.close()
         self.deleteLater()
 
@@ -1333,10 +1355,13 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self._artist_icon_provider = AlbumIconProvider()
         self._artist_bridge = ArtistDetailBridge(self)
 
-        self._qml = QQuickWidget()
+        # QQuickView in a window container renders at the monitor's real
+        # refresh rate, unlike QQuickWidget which caps at ~60Hz regardless
+        # of display Hz.
+        self._qml = QMLGridWrapper()
         self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        # QQuickWidget defaults to a white clear color, and the QML root Rectangle's
+        # QQuickView defaults to a white clear color, and the QML root Rectangle's
         # height can briefly lag behind the widget's own height (set via reportHeight)
         # while content is loading. Match the panel background so any gap reads as
         # background instead of a white flash.
@@ -1367,7 +1392,7 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         # height across artists (no bio-driven resize jumps); this card's
         # height still depends on bio length, but it lives in the body, hidden
         # until _reveal_content like the album sections.
-        self._about_qml = QQuickWidget()
+        self._about_qml = QMLGridWrapper()
         self._about_qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
         self._about_qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._set_qml_clear_color(self._about_qml, QColor(14, 14, 14))
@@ -1417,7 +1442,17 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         
         self.scroll.setWidget(self.content_widget)
         self.layout.addWidget(self.scroll)
-        self._smooth_scroller = SmoothScroller(self.scroll)
+        # Drive the scroll easing off the header QQuickView's real vsync
+        # (>60Hz) instead of a fixed 16ms QTimer, matching the smooth
+        # scrolling already used in the album/artist grids.
+        self._smooth_scroller = SmoothScroller(self.scroll, vsync_source=self._qml.quickWindow())
+
+        # The header/about QML are createWindowContainer native surfaces,
+        # which don't propagate Wheel events to the outer QScrollArea like
+        # regular child widgets do — redirect them to the smooth scroller.
+        self._wheel_forwarder = WheelForwarder(self._smooth_scroller, self)
+        self._qml.installEventFilter(self._wheel_forwarder)
+        self._about_qml.installEventFilter(self._wheel_forwarder)
 
         # Opaque overlay + centered spinner shown over the body while the page
         # is loading. The header (name, stats, pre-loaded cover) appears
@@ -1430,10 +1465,20 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         self._loading_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._loading_overlay.setStyleSheet(
             f"#_LoadingOverlay {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); }}")
+        # createWindowContainer's native child windows (the about card and
+        # section grids underneath) always paint above regular sibling
+        # widgets — promote this overlay to a native window too so raise_()
+        # ordering against them works correctly.
+        self._loading_overlay.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._loading_overlay.hide()
 
         from queue_panel import _SpinnerRing
         self._loading_spinner = _SpinnerRing(self)
+        # Same native-window z-order fix as _loading_overlay; native windows
+        # don't composite translucency, so paint an opaque fill matching the
+        # overlay's background instead.
+        self._loading_spinner.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self._loading_spinner.set_bg_color(self._bg_qcolor())
         self._spinner_pending = False
         self._pending_reveal = []
         self._reveal_waiting = set()
@@ -1814,6 +1859,7 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             self._set_qml_clear_color(self._about_qml, QColor(r, g, b))
             self._loading_overlay.setStyleSheet(
                 f"#_LoadingOverlay {{ background-color: rgb({r},{g},{b}); }}")
+            self._loading_spinner.set_bg_color(QColor(r, g, b))
 
         if not hasattr(self, '_scroll_reveal'):
             self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
@@ -1898,10 +1944,13 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
     def _set_qml_clear_color(self, qml_widget, color: QColor):
         qml_widget.setClearColor(color)
-        qml_widget.setAutoFillBackground(True)
-        pal = qml_widget.palette()
-        pal.setColor(QPalette.ColorRole.Window, color)
-        qml_widget.setPalette(pal)
+
+    def _bg_qcolor(self):
+        try:
+            r, g, b = (int(x) for x in getattr(self, '_bg_color', '14,14,14').split(','))
+        except Exception:
+            r, g, b = 14, 14, 14
+        return QColor(r, g, b)
 
     def set_related_artists(self, similar_artists):
         # Remove old row if present
@@ -2033,6 +2082,7 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             row.play_album.connect(self.play_album.emit)
             row.artist_name_clicked.connect(lambda name, aid: self.artist_clicked.emit({'name': name, 'id': aid or None}))
             row.qml_widget.installEventFilter(self)
+            row.qml_widget.installEventFilter(self._wheel_forwarder)
             if content_w > 0:
                 row._set_height(w=content_w)
             self.sections_layout.addWidget(row)
@@ -2167,8 +2217,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         # it keeps animating back toward the old (pre-reset) position.
         smoother = getattr(self, '_smooth_scroller', None)
         if smoother:
-            smoother._timer.stop()
-            smoother._target = 0.0
+            smoother._stop_animation()
+            smoother._wheel_velocity = 0.0
         self.scroll.verticalScrollBar().setValue(0)
 
         self.pending_items = {}

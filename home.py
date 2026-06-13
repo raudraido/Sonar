@@ -19,6 +19,7 @@ from PyQt6.QtQuick import QQuickView
 from player import resource_path
 from player.workers import GridCoverWorker
 from player.widgets import AlbumModel, AlbumIconProvider, CoverImageProvider
+from player.scroll_tuning import scroll_tuning
 
 _PAGE        = 50
 _RANDOM_PAGE = 100
@@ -239,6 +240,7 @@ class HomeView(QWidget): # Top-level home tab: hosts home.qml with three AlbumMo
         ctx.setContextProperty("mostPlayedModel", self.most_played_model)
         ctx.setContextProperty("homeBridge",      self.bridge)
         ctx.setContextProperty("savedRowOrder",   self._load_row_order())
+        ctx.setContextProperty("scrollTuning",    scroll_tuning)
 
         self._qml_view.setSource(QUrl.fromLocalFile(resource_path("home.qml")))
 

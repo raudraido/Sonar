@@ -9,6 +9,7 @@ import os
 import re
 import time
 from version import __version__
+from player.scroll_tuning import scroll_tuning
 
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout, QSizePolicy,
@@ -1927,6 +1928,7 @@ class QMLGridWrapper(QWidget):
         self._dummy_scroll = DummyScrollBar()
 
         self._view = QQuickView()
+        self._view.rootContext().setContextProperty("scrollTuning", scroll_tuning)
         self._container = QWidget.createWindowContainer(self._view, self)
 
         layout = QVBoxLayout(self)
@@ -1939,6 +1941,8 @@ class QMLGridWrapper(QWidget):
     def rootContext(self): return self._view.rootContext()
 
     def rootObject(self): return self._view.rootObject()
+
+    def quickWindow(self): return self._view
 
     def setSource(self, url): self._view.setSource(url)
 

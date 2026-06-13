@@ -158,6 +158,7 @@ Rectangle {
         anchors.fill: parent
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
+        interactive: false  // wheel handled below via momentum; no touch/drag flicking on this view
         clip: true
         spacing: 0
         cacheBuffer: 600
@@ -167,20 +168,45 @@ Rectangle {
         Timer { id: scrollHideTimer; interval: 600; onTriggered: trackList.isScrollActive = false }
         onContentYChanged: {
             isScrollActive = true; scrollHideTimer.restart()
-            if (!trackList._animating) trackList.targetY = trackList.contentY
         }
 
-        property real targetY: 0
-        property bool _animating: false
+        // Momentum wheel-scroll: each notch adds an impulse to a velocity that
+        // decays exponentially (friction), like Chromium/macOS wheel scrolling.
+        // A single notch gives a short ~120px glide; rapid notches stack
+        // velocity for a faster, longer glide that eases out smoothly —
+        // unlike a constant-velocity-to-target model, speed continuously
+        // decreases rather than running at full speed then stopping abruptly.
+        property real wheelVelocity: 0       // px/sec, +down/-up
+        property real minContentY: originY
+        property real maxContentY: originY + Math.max(0, contentHeight - height)
 
-        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
-        // system (tied to the render loop / real vsync), unlike a stepped
-        // direct contentY assignment which jumps instantly.
-        Behavior on contentY {
-            enabled: trackList._animating
-            SmoothedAnimation {
-                velocity: 1800
-                onRunningChanged: if (!running) trackList._animating = false
+        // FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
+        // 143.8Hz monitor), unlike a Timer which is capped around 60Hz.
+        FrameAnimation {
+            id: momentumAnim
+            running: Math.abs(trackList.wheelVelocity) > 1
+            onTriggered: {
+                var dt = frameTime
+                if (dt <= 0) return
+                var newY = trackList.contentY + trackList.wheelVelocity * dt
+                if (newY <= trackList.minContentY) {
+                    newY = trackList.minContentY
+                    trackList.wheelVelocity = 0
+                } else if (newY >= trackList.maxContentY) {
+                    newY = trackList.maxContentY
+                    trackList.wheelVelocity = 0
+                } else {
+                    trackList.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
+                    if (Math.abs(trackList.wheelVelocity) <= 1) {
+                        // Last frame of this glide: snap to a whole pixel so
+                        // Text.NativeRendering (always pixel-snapped) lands
+                        // on the same pixel as the sub-pixel-positioned
+                        // images/rects, instead of settling ~0.5px apart and
+                        // popping by 1px once the glide stops.
+                        newY = Math.round(newY)
+                    }
+                }
+                trackList.contentY = newY
             }
         }
 
@@ -188,12 +214,8 @@ Rectangle {
             anchors.fill: parent
             acceptedButtons: Qt.NoButton
             onWheel: wheel => {
-                var delta = -(wheel.angleDelta.y / 120) * 60
-                var minY  = trackList.originY
-                var maxY  = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height)
-                trackList._animating = true
-                trackList.targetY = Math.max(minY, Math.min(trackList.targetY + delta, maxY))
-                trackList.contentY = trackList.targetY
+                var impulse = -(wheel.angleDelta.y / 120) * scrollTuning.impulsePerNotch
+                trackList.wheelVelocity = Math.max(-scrollTuning.maxVelocity, Math.min(trackList.wheelVelocity + impulse, scrollTuning.maxVelocity))
                 wheel.accepted = true
             }
         }
@@ -331,7 +353,12 @@ Rectangle {
                             text: root.albumType.toUpperCase()
                             color: root.textSecondary
                             font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.5
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
+                            // QtRendering (default), not NativeRendering: native
+                            // rendering snaps glyphs to integer pixels
+                            // independently of contentY, causing a 1px pop
+                            // relative to the (sub-pixel) cover image during the
+                            // slow tail of a momentum scroll.
                             visible: root.albumType !== ""
                         }
 
@@ -341,7 +368,8 @@ Rectangle {
                             color: root.textPrimary
                             font.pixelSize: 28; font.bold: true
                             wrapMode: Text.WordWrap
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
+                            // QtRendering (default) — see note above.
                         }
 
                         // Artist — accent color, underline + click per part
@@ -358,7 +386,8 @@ Rectangle {
                                     text: modelData
                                     color: isSep ? root.textSecondary : root.accentColor
                                     font.pixelSize: root.fontSizePrimary + 1
-                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    font.family: root.fontFamily
+                                    // QtRendering (default) — see note above.
                                     Rectangle {
                                         visible: !parent.isSep && parent.hov
                                         y: parent.baselineOffset + 2
@@ -382,14 +411,16 @@ Rectangle {
                             text: root.albumMeta
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.bold: true
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
+                            // QtRendering (default) — see note above.
                             visible: root.albumMeta !== "" && root.albumMeta !== "Loading..."
                         }
                         Text {
                             text: "Loading…"
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
+                            // QtRendering (default) — see note above.
                             visible: root.albumMeta === "Loading..."
                         }
 
@@ -578,17 +609,17 @@ Rectangle {
                     property string colStyle: root.textSecondary
                     property int    fSize:    root.fontSizeSecondary - 1
 
-                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
-                    Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
+                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }  // QtRendering (default)
+                    Text { width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }  // QtRendering (default)
+                    Text { width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }  // QtRendering (default)
                     Item {
                         width: root.colFav; height: parent.height
-                        Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                        Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }  // QtRendering (default)
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: albumBridge.favHeaderClicked() }
                     }
-                    Text { width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering; leftPadding: 4 }
-                    Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
-                    Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; renderType: Text.NativeRendering }
+                    Text { width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }  // QtRendering (default)
+                    Text { width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }  // QtRendering (default)
+                    Text { width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }  // QtRendering (default)
                 }
                 // ── Column resize handles — visible 2px line + 12px drag zone ──
                 // Order from right: PLAYS, DURATION, GENRE, FAVORITE, ARTIST
@@ -731,7 +762,8 @@ Rectangle {
                     text: trackRow.discLbl
                     color: root.textSecondary
                     font.pixelSize: root.fontSizeSecondary; font.bold: true
-                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                    font.family: root.fontFamily
+                    // QtRendering (default) — see note above.
                 }
             }
 
@@ -762,7 +794,8 @@ Rectangle {
                             visible: !isPlaying; anchors.centerIn: parent
                             text: trackRow.trkNum; color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
+                            // QtRendering (default) — see note above.
                         }
                         Row {
                             visible: isPlaying; anchors.centerIn: parent; spacing: 3
@@ -790,7 +823,8 @@ Rectangle {
                         text: trackRow.trkTitle
                         color: isPlaying ? root.accentColor : root.textPrimary
                         font.pixelSize: root.fontSizePrimary; font.bold: true
-                        elide: Text.ElideRight; font.family: root.fontFamily; renderType: Text.NativeRendering
+                        elide: Text.ElideRight; font.family: root.fontFamily
+                        // QtRendering (default) — see note above.
                     }
 
                     // Artist — split into clickable parts
@@ -815,7 +849,8 @@ Rectangle {
                                     opacity: isSep ? 0.4 : 1.0
                                     color: !isSep && hov ? root.accentColor : root.textSecondary
                                     font.pixelSize: root.fontSizeSecondary
-                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    font.family: root.fontFamily
+                                    // QtRendering (default) — see note above.
                                     Rectangle {
                                         visible: !parent.isSep && parent.hov
                                         y: parent.baselineOffset + 2
@@ -840,7 +875,7 @@ Rectangle {
                             y: flowArt.y + flowArt.height - implicitHeight
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
-                            renderType: Text.NativeRendering
+                            // QtRendering (default) — see note above.
                         }
                     }
 
@@ -883,7 +918,8 @@ Rectangle {
                                     opacity: isSep ? 0.4 : 1.0
                                     color: !isSep && hov ? root.accentColor : root.textSecondary
                                     font.pixelSize: root.fontSizeSecondary
-                                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                                    font.family: root.fontFamily
+                                    // QtRendering (default) — see note above.
                                     Rectangle {
                                         visible: !parent.isSep && parent.hov
                                         y: parent.baselineOffset + 2
@@ -908,7 +944,7 @@ Rectangle {
                             y: flowGen.y + flowGen.height - implicitHeight
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
-                            renderType: Text.NativeRendering
+                            // QtRendering (default) — see note above.
                         }
                     }
 
@@ -918,7 +954,8 @@ Rectangle {
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         text: trackRow.durStr
                         color: isPlaying ? root.accentColor : root.textSecondary
-                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                        // QtRendering (default) — see note above.
                     }
 
                     // Plays
@@ -926,7 +963,8 @@ Rectangle {
                         width: root.colPlays; height: parent.height
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         text: trackRow.playsStr; color: root.textSecondary
-                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                        // QtRendering (default) — see note above.
                     }
                 }
 

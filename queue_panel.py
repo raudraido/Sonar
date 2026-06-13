@@ -398,6 +398,7 @@ class _SpinnerRing(QWidget):
         super().__init__(parent)
         self._angle = 0
         self._color = QColor('#cccccc')
+        self._bg_color = None
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -408,6 +409,14 @@ class _SpinnerRing(QWidget):
 
     def set_color(self, color: str):
         self._color = QColor(color)
+        if self.isVisible():
+            self.update()
+
+    def set_bg_color(self, color: QColor):
+        # Native child windows (WA_NativeWindow) don't composite
+        # WA_TranslucentBackground — paint an opaque fill matching the
+        # surface behind this spinner instead.
+        self._bg_color = QColor(color)
         if self.isVisible():
             self.update()
 
@@ -428,6 +437,8 @@ class _SpinnerRing(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._bg_color is not None:
+            p.fillRect(self.rect(), self._bg_color)
         m = 5
         rect = QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m)
         pen = QPen(QColor(255, 255, 255, 35), 3.5)

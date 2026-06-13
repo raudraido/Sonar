@@ -8,10 +8,11 @@ import time
 from version import __version__
 
 from PyQt6.QtWidgets import QAbstractItemView, QAbstractButton, QApplication, QLabel, QListWidget
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QObject, QEvent, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer, QPropertyAnimation, QObject, QEvent, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPalette, QImage
 
 from player import resource_path
+from player.scroll_tuning import scroll_tuning
 from player.workers import BlurWorker, BPMWorker, CoverLoaderWorker
 
 class _ScrollRevealFilter(QObject):
@@ -196,55 +197,185 @@ def install_scroll_reveal(viewport, scrollbar):
 
 class SmoothScroller(QObject):
     """
-    Smooth wheel-scroll for any QAbstractScrollArea (QScrollArea, QListWidget,
-    QTreeWidget, QTreeView, etc.).
+    Momentum wheel-scroll for any QAbstractScrollArea (QScrollArea,
+    QListWidget, QTreeWidget, QTreeView, etc.).
 
     Usage:
         SmoothScroller(my_widget)
+        SmoothScroller(my_widget, vsync_source=some_qquickwindow)
 
     Parents itself to the widget so it is cleaned up automatically.
-    Also syncs the internal target whenever the scrollbar moves externally
-    (drag, keyboard navigation, programmatic setValue) so the user can always
-    scroll to any position without the animation fighting back.
-    """
-    _PIXELS_PER_NOTCH = 120  # 60 px * speed 2.0
-    _EASING = 0.25           # fraction of remaining distance applied per 16 ms frame
 
-    def __init__(self, widget):
+    Implements the same momentum model as the QML grids/lists (see
+    album_grid.qml etc.): each wheel notch adds an impulse to a velocity
+    (px/sec) that decays exponentially (friction), like Chromium/macOS wheel
+    scrolling — a single notch gives a short glide, rapid notches stack
+    velocity for a faster, longer glide that eases out smoothly. Tuning
+    (`impulsePerNotch`, `maxVelocity`, `decayHalfLife`) comes from the shared
+    `scroll_tuning` singleton (player/scroll_tuning.py) — tune it there, not
+    here.
+
+    If the scrollbar moves for any reason other than this scroller's own tick
+    (drag, keyboard navigation, programmatic setValue), the velocity is reset
+    to zero so the glide never fights the user.
+
+    With no vsync_source, the animation ticks on a 16ms (~60Hz) QTimer. Pass
+    a QQuickWindow/QQuickView (e.g. via QMLGridWrapper.quickWindow()) as
+    vsync_source to also drive the animation off that window's frameSwapped
+    signal, tracking the monitor's real refresh rate (>60Hz).
+    """
+
+    def __init__(self, widget, vsync_source=None):
         super().__init__(widget)
         if isinstance(widget, QAbstractItemView):
             widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._w = widget
-        self._target = 0.0
+        self._wheel_velocity = 0.0  # px/sec, +down/-up
+        self._position = float(widget.verticalScrollBar().value())  # sub-pixel accumulator
+        self._last_wheel_ts = None
+        self._vsync_source = vsync_source
+        self._animating = False
+        self._applying = False
+        self._elapsed = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
         widget.viewport().installEventFilter(self)
         widget.verticalScrollBar().valueChanged.connect(self._on_external_move)
 
+        # SCROLL_DEBUG=1 prints the actual _tick rate once per second while a
+        # glide is running, so the effect of vsync_source can be measured
+        # (should approach the monitor's refresh rate, not be capped at ~60Hz).
+        self._fps_debug = bool(os.environ.get("SCROLL_DEBUG"))
+        self._fps_tick_count = 0
+        self._fps_t0 = 0.0
+
+    def _is_animating(self):
+        return self._timer.isActive()
+
+    def _start_animation(self):
+        # The 16ms timer is the guaranteed baseline driver: a vsync_source's
+        # frameSwapped can stop firing entirely once its QQuickWindow is
+        # scrolled out of view, which would silently stall _tick. The timer
+        # keeps _tick alive regardless; frameSwapped just adds bonus ticks
+        # for >60Hz smoothness when its window is actually rendering.
+        if not self._timer.isActive():
+            self._elapsed.restart()
+            self._timer.start()
+            if self._fps_debug:
+                self._fps_tick_count = 0
+                self._fps_t0 = time.monotonic()
+        if self._vsync_source is not None and not self._animating:
+            self._animating = True
+            self._vsync_source.frameSwapped.connect(self._tick)
+            self._vsync_source.update()
+
+    def _stop_animation(self):
+        self._timer.stop()
+        if self._vsync_source is not None and self._animating:
+            self._animating = False
+            try:
+                self._vsync_source.frameSwapped.disconnect(self._tick)
+            except TypeError:
+                pass
+
     def _tick(self):
+        dt = self._elapsed.restart() / 1000.0
+        if dt <= 0:
+            return
         sb = self._w.verticalScrollBar()
-        diff = self._target - sb.value()
-        if abs(diff) < 0.5:
-            sb.setValue(int(self._target))
-            self._timer.stop()
+        new_position = self._position + self._wheel_velocity * dt
+        minimum, maximum = sb.minimum(), sb.maximum()
+        if new_position <= minimum:
+            new_position = minimum
+            self._wheel_velocity = 0.0
+        elif new_position >= maximum:
+            new_position = maximum
+            self._wheel_velocity = 0.0
         else:
-            sb.setValue(int(sb.value() + diff * self._EASING))
+            self._wheel_velocity *= 0.5 ** (dt / scroll_tuning.decayHalfLife)
+        self._position = new_position
+        self._applying = True
+        sb.setValue(int(round(new_position)))
+        self._applying = False
+        if self._fps_debug:
+            self._fps_tick_count += 1
+            now = time.monotonic()
+            elapsed = now - self._fps_t0
+            if elapsed >= 1.0:
+                print(f"[scroll fps] {self._fps_tick_count / elapsed:.1f}Hz "
+                      f"vsync_source={'yes' if self._vsync_source else 'no'}")
+                self._fps_tick_count = 0
+                self._fps_t0 = now
+        if abs(self._wheel_velocity) <= 1:
+            self._stop_animation()
+            return
+        if self._vsync_source is not None:
+            self._vsync_source.update()
 
     def _on_external_move(self, value: int):
-        if not self._timer.isActive():
-            self._target = float(value)
+        if not self._applying:
+            if self._fps_debug:
+                print(f"[scroll settle] external scrollbar move: "
+                      f"{self._position:.2f} -> {value} "
+                      f"(delta {value - self._position:.2f}, animating={self._is_animating()})")
+            self._wheel_velocity = 0.0
+            self._position = float(value)
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.Wheel:
-            sb = self._w.verticalScrollBar()
-            delta = event.angleDelta().y()
-            step = -(delta / 120.0) * self._PIXELS_PER_NOTCH
-            self._target = max(sb.minimum(), min(sb.maximum(), self._target + step))
-            if not self._timer.isActive():
-                self._timer.start()
+            self._apply_wheel(event)
             return True
         return super().eventFilter(obj, event)
+
+    def _apply_wheel(self, event):
+        # QMLGridWrapper.installEventFilter() registers a filter on three
+        # underlying QObjects (the wrapper, its container, and the embedded
+        # QQuickWindow), since Qt can deliver a Wheel event to any of them
+        # depending on the event. That means a WheelForwarder installed on a
+        # QMLGridWrapper sees the SAME physical wheel notch 2-3x. Dedup by
+        # timestamp so the velocity only gets one impulse per notch.
+        ts = event.timestamp()
+        if ts and ts == self._last_wheel_ts:
+            return
+        self._last_wheel_ts = ts
+
+        delta = event.angleDelta().y()
+        impulse = -(delta / 120.0) * scroll_tuning.impulsePerNotch
+        self._wheel_velocity = max(-scroll_tuning.maxVelocity,
+                                    min(self._wheel_velocity + impulse, scroll_tuning.maxVelocity))
+        self._start_animation()
+
+    def forward_wheel(self, event):
+        """Apply a wheel event captured by an external event filter.
+
+        createWindowContainer's native surface doesn't propagate Wheel
+        events to parent widgets the way regular child widgets do, so views
+        embedding a QQuickView inside this scroller's widget must catch
+        Wheel events themselves (e.g. via WheelForwarder) and hand them here.
+        """
+        self._apply_wheel(event)
+
+
+class WheelForwarder(QObject):
+    """Redirects QEvent.Wheel from a createWindowContainer's native surface
+    to a SmoothScroller, since native child windows don't propagate wheel
+    events to parent widgets like regular widgets do.
+
+    Usage:
+        forwarder = WheelForwarder(smooth_scroller, parent)
+        qml_grid_wrapper.installEventFilter(forwarder)
+    """
+
+    def __init__(self, scroller, parent=None):
+        super().__init__(parent)
+        self._scroller = scroller
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            self._scroller.forward_wheel(event)
+            return True
+        return False
 
 
 def resolve_active_hover(theme) -> 'QColor':

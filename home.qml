@@ -152,7 +152,7 @@ Rectangle {
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
         clip: true
-        interactive: root.draggingIdx === -1  // freeze scroll while reordering
+        interactive: false  // wheel handled below via momentum; no touch/drag flicking on this view
 
         // Prevent Flickable from consuming arrow keys — delegate to root nav
         Keys.forwardTo: [root]
@@ -161,20 +161,45 @@ Rectangle {
         Timer { id: scrollHideTimer; interval: 600; onTriggered: scroller.isScrollActive = false }
         onContentYChanged: {
             isScrollActive = true; scrollHideTimer.restart()
-            if (!scroller._animating) scroller.targetY = scroller.contentY
         }
 
-        property real targetY: 0
-        property bool _animating: false
+        // Momentum wheel-scroll: each notch adds an impulse to a velocity that
+        // decays exponentially (friction), like Chromium/macOS wheel scrolling.
+        // A single notch gives a short ~120px glide; rapid notches stack
+        // velocity for a faster, longer glide that eases out smoothly —
+        // unlike a constant-velocity-to-target model, speed continuously
+        // decreases rather than running at full speed then stopping abruptly.
+        property real wheelVelocity: 0       // px/sec, +down/-up
+        property real minContentY: 0
+        property real maxContentY: Math.max(0, contentHeight - height)
 
-        // Wheel-scroll easing — SmoothedAnimation is driven by Qt's animation
-        // system (tied to the render loop / real vsync), unlike a stepped
-        // direct contentY assignment which jumps instantly.
-        Behavior on contentY {
-            enabled: scroller._animating
-            SmoothedAnimation {
-                velocity: 1800
-                onRunningChanged: if (!running) scroller._animating = false
+        // FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
+        // 143.8Hz monitor), unlike a Timer which is capped around 60Hz.
+        FrameAnimation {
+            id: momentumAnim
+            running: Math.abs(scroller.wheelVelocity) > 1
+            onTriggered: {
+                var dt = frameTime
+                if (dt <= 0) return
+                var newY = scroller.contentY + scroller.wheelVelocity * dt
+                if (newY <= scroller.minContentY) {
+                    newY = scroller.minContentY
+                    scroller.wheelVelocity = 0
+                } else if (newY >= scroller.maxContentY) {
+                    newY = scroller.maxContentY
+                    scroller.wheelVelocity = 0
+                } else {
+                    scroller.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
+                    if (Math.abs(scroller.wheelVelocity) <= 1) {
+                        // Last frame of this glide: snap to a whole pixel so
+                        // Text.NativeRendering (always pixel-snapped) lands
+                        // on the same pixel as the sub-pixel-positioned
+                        // images/rects, instead of settling ~0.5px apart and
+                        // popping by 1px once the glide stops.
+                        newY = Math.round(newY)
+                    }
+                }
+                scroller.contentY = newY
             }
         }
 
@@ -182,11 +207,8 @@ Rectangle {
             anchors.fill: parent
             acceptedButtons: Qt.NoButton
             onWheel: wheel => {
-                var delta = -(wheel.angleDelta.y / 120) * 60
-                var maxY  = Math.max(0, scroller.contentHeight - scroller.height)
-                scroller._animating = true
-                scroller.targetY = Math.max(0, Math.min(scroller.targetY + delta, maxY))
-                scroller.contentY = scroller.targetY
+                var impulse = -(wheel.angleDelta.y / 120) * scrollTuning.impulsePerNotch
+                scroller.wheelVelocity = Math.max(-scrollTuning.maxVelocity, Math.min(scroller.wheelVelocity + impulse, scrollTuning.maxVelocity))
                 wheel.accepted = true
             }
         }
@@ -319,7 +341,11 @@ Rectangle {
                             anchors.left: gripHandle.right
                             anchors.leftMargin: 4
                             anchors.verticalCenter: parent.verticalCenter
-                            renderType: Text.NativeRendering
+                            // QtRendering (default), not NativeRendering: native
+                            // rendering snaps glyphs to integer pixels
+                            // independently of contentY, causing a 1px pop
+                            // relative to the (sub-pixel) cover image during the
+                            // slow tail of a momentum scroll.
                         }
 
                         // Right controls: refresh + arrows
@@ -611,7 +637,11 @@ Rectangle {
                                             font.pixelSize: root.fontSizePrimary
                                             font.bold:      true
                                             elide: Text.ElideRight
-                                            renderType: Text.NativeRendering
+                                            // QtRendering (default), not NativeRendering: native
+                                            // rendering snaps glyphs to integer pixels
+                                            // independently of contentY, causing a 1px pop
+                                            // relative to the (sub-pixel) cover image during the
+                                            // slow tail of a momentum scroll.
                                         }
 
                                         Text {
@@ -622,13 +652,13 @@ Rectangle {
                                             color: hov ? root.accentColor : root.textSecondary
                                             font.pixelSize: root.fontSizeSecondary
                                             elide: Text.ElideRight
+                                            // QtRendering (default) — see note above.
                                             Rectangle {
                                                 visible: parent.hov
                                                 y: parent.baselineOffset + 2
                                                 width: parent.paintedWidth; height: 1
                                                 color: parent.color
                                             }
-                                            renderType: Text.NativeRendering
 
                                             MouseArea {
                                                 anchors.fill: parent
@@ -652,7 +682,7 @@ Rectangle {
                                             color: root.textSecondary
                                             font.pixelSize: root.fontSizeSecondary
                                             elide: Text.ElideRight
-                                            renderType: Text.NativeRendering
+                                            // QtRendering (default) — see note above.
                                         }
                                     }
 

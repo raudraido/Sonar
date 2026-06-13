@@ -16,6 +16,7 @@ from PyQt6.QtGui import QColor
 from player import resource_path
 from player.workers import GridCoverWorker
 from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider, QMLGridWrapper, QMLMiddleClickScroller
+from player.scroll_tuning import scroll_tuning
 
 
 class GridBridge(QObject): # Bridge for the main album grid's QML (album_grid.qml): item/play clicks resolved via album_model, visible-range reporting for lazy loading/scroll, search controller, sort-menu requests, and theme/typography/color signals to QML.
@@ -585,6 +586,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         ctx = self._qml_view.rootContext()
         ctx.setContextProperty("trackModel",  self._track_model)
         ctx.setContextProperty("albumBridge", self._bridge)
+        ctx.setContextProperty("scrollTuning", scroll_tuning)
 
         self._qml_view.setSource(QUrl.fromLocalFile(resource_path("album_detail.qml")))
 
