@@ -2049,6 +2049,11 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             if w:
                 if hasattr(w, '_timer'):
                     w._timer.stop()
+                # row.qml_widget is a QMLGridWrapper (createWindowContainer):
+                # its native window keeps rendering its last frame — possibly
+                # above the loading overlay — until deleteLater() actually
+                # runs. Hide it immediately to unmap that native window now.
+                w.hide()
                 w.deleteLater()
 
     # Max albums per QML widget — keeps each texture well under GPU limits

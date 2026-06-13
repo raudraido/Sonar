@@ -83,10 +83,10 @@ The "feel" of every scroll — QML grid/list wheel-scroll and the QWidget
 `SmoothScroller` alike — comes from one shared `ScrollTuning` QObject
 singleton (`scroll_tuning`), with three properties:
 
-- `impulsePerNotch` (default `1000.0`, px/sec) — velocity added per wheel
+- `impulsePerNotch` (default `1600.0`, px/sec) — velocity added per wheel
   notch.
 - `maxVelocity` (default `8000.0`, px/sec) — cap on accumulated velocity.
-- `decayHalfLife` (default `0.08`, seconds) — time for velocity to halve
+- `decayHalfLife` (default `0.045`, seconds) — time for velocity to halve
   (friction). Lower = snappier stop, higher = longer glide.
 
 To change the app-wide scroll feel, edit the defaults in
@@ -104,66 +104,44 @@ grids and the artist section grids); `AlbumDetailView`
 (`albums_browser.py`) and `HomeView` (`home.py`) do it alongside their other
 `setContextProperty` calls. Any new QQuickView must do the same.
 
-### QML views (Flickable/ListView/GridView content scroll)
+### QML views (Flickable/ListView/GridView content scroll): `MomentumScroll.qml`
 
-Reference implementation: `album_grid.qml`'s `grid`, also applied to
-`artist_grid.qml`, `playlist_grid.qml`, `album_detail.qml`'s `trackList`, and
-`home.qml`'s `scroller`.
+`MomentumScroll.qml` (project root, alongside `IconButton.qml`/`SearchBar.qml`/
+`SkeletonCard.qml` — resolved automatically as a local type, no import
+needed) implements the model above as a drop-in child of the view it
+scrolls. Used by `album_grid.qml`'s `grid`, `artist_grid.qml`,
+`playlist_grid.qml`, `album_detail.qml`'s `trackList`, and `home.qml`'s
+`scroller`. Any new scrolling QML view should use it too:
 
 ```qml
-import QtQuick  // needed for FrameAnimation
+import QtQuick  // needed for FrameAnimation (used inside MomentumScroll)
 
 // interactive: false — momentum model has sole control; no native
 // touch/drag flicking on this view.
 interactive: false
 
-property real wheelVelocity: 0       // px/sec, +down/-up
-property real minContentY: -topMargin
-property real maxContentY: Math.max(minContentY, contentHeight + bottomMargin - height)
-
-// FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
-// 143.8Hz monitor), unlike a Timer which is capped around 60Hz.
-FrameAnimation {
-    running: Math.abs(view.wheelVelocity) > 1
-    onTriggered: {
-        var dt = frameTime
-        if (dt <= 0) return
-        var newY = view.contentY + view.wheelVelocity * dt
-        if (newY <= view.minContentY) {
-            newY = view.minContentY
-            view.wheelVelocity = 0
-        } else if (newY >= view.maxContentY) {
-            newY = view.maxContentY
-            view.wheelVelocity = 0
-        } else {
-            view.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
-        }
-        view.contentY = newY
-    }
-}
-
-MouseArea {
-    anchors.fill: parent
-    acceptedButtons: Qt.NoButton
-    onWheel: (wheel) => {
-        var impulse = -(wheel.angleDelta.y / 120) * scrollTuning.impulsePerNotch
-        view.wheelVelocity = Math.max(-scrollTuning.maxVelocity, Math.min(view.wheelVelocity + impulse, scrollTuning.maxVelocity))
-        wheel.accepted = true
-    }
+MomentumScroll {
+    target: view
+    // GridView (topMargin/bottomMargin):
+    minContentY: -view.topMargin
+    maxContentY: Math.max(minContentY, view.contentHeight + view.bottomMargin - view.height)
+    // ListView with a header (originY != 0):
+    //   minContentY: view.originY
+    //   maxContentY: view.originY + Math.max(0, view.contentHeight - view.height)
+    // Plain Flickable: omit minContentY/maxContentY — defaults to
+    // 0 / (contentHeight - height).
 }
 ```
 
-`minContentY`/`maxContentY` are derived from each view's own bounds
-(`topMargin`/`bottomMargin`/`contentHeight`/`height` for `GridView`, or
-`originY`/`contentHeight`/`height` for `ListView`/`Flickable`) — these stay
-local, only the tuning constants (`impulsePerNotch`/`maxVelocity`/
-`decayHalfLife`) are centralized via `scrollTuning`.
+`MomentumScroll` reads `scrollTuning` from the engine's root context
+(set by `QMLGridWrapper`/`AlbumDetailView`/`HomeView`, see above) — no extra
+wiring needed. `onContentYChanged` no longer needs to sync a separate
+`targetY`; scrollbar drag / keyboard nav / programmatic `contentY` writes
+just work since there's no separate target to fight.
 
 `FrameAnimation` (Qt 6.3+, from `import QtQuick`) is required instead of a
 `Timer` — a `Timer` is capped around 60Hz, which is visibly choppy on a
-143.8Hz monitor. `onContentYChanged` no longer needs to sync a separate
-`targetY`; scrollbar drag / keyboard nav / programmatic `contentY` writes
-just work since there's no separate target to fight.
+143.8Hz monitor.
 
 ### QWidget scroll areas: `SmoothScroller` (`player/mixins/visuals.py:198`)
 

@@ -163,54 +163,9 @@ Rectangle {
             isScrollActive = true; scrollHideTimer.restart()
         }
 
-        // Momentum wheel-scroll: each notch adds an impulse to a velocity that
-        // decays exponentially (friction), like Chromium/macOS wheel scrolling.
-        // A single notch gives a short ~120px glide; rapid notches stack
-        // velocity for a faster, longer glide that eases out smoothly —
-        // unlike a constant-velocity-to-target model, speed continuously
-        // decreases rather than running at full speed then stopping abruptly.
-        property real wheelVelocity: 0       // px/sec, +down/-up
-        property real minContentY: 0
-        property real maxContentY: Math.max(0, contentHeight - height)
-
-        // FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
-        // 143.8Hz monitor), unlike a Timer which is capped around 60Hz.
-        FrameAnimation {
-            id: momentumAnim
-            running: Math.abs(scroller.wheelVelocity) > 1
-            onTriggered: {
-                var dt = frameTime
-                if (dt <= 0) return
-                var newY = scroller.contentY + scroller.wheelVelocity * dt
-                if (newY <= scroller.minContentY) {
-                    newY = scroller.minContentY
-                    scroller.wheelVelocity = 0
-                } else if (newY >= scroller.maxContentY) {
-                    newY = scroller.maxContentY
-                    scroller.wheelVelocity = 0
-                } else {
-                    scroller.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
-                    if (Math.abs(scroller.wheelVelocity) <= 1) {
-                        // Last frame of this glide: snap to a whole pixel so
-                        // Text.NativeRendering (always pixel-snapped) lands
-                        // on the same pixel as the sub-pixel-positioned
-                        // images/rects, instead of settling ~0.5px apart and
-                        // popping by 1px once the glide stops.
-                        newY = Math.round(newY)
-                    }
-                }
-                scroller.contentY = newY
-            }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.NoButton
-            onWheel: wheel => {
-                var impulse = -(wheel.angleDelta.y / 120) * scrollTuning.impulsePerNotch
-                scroller.wheelVelocity = Math.max(-scrollTuning.maxVelocity, Math.min(scroller.wheelVelocity + impulse, scrollTuning.maxVelocity))
-                wheel.accepted = true
-            }
+        // Momentum wheel-scroll: see MomentumScroll.qml for the model.
+        MomentumScroll {
+            target: scroller
         }
 
         Column {

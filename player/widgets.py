@@ -1989,6 +1989,14 @@ class QMLGridWrapper(QWidget):
         super().unsetCursor()
         self._container.unsetCursor()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # createWindowContainer's native window can briefly show a stale,
+        # stretched/clipped frame at the old size after a resize until the
+        # QQuickWindow re-renders -- force an immediate repaint so the new
+        # size's content appears without that artifact.
+        self._view.update()
+
     def _owns(self, obj):
         return obj is self or obj is self._container or obj is self._view
 
