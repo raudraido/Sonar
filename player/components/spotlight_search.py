@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent, QThread, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QIcon, QPainter, QPainterPath
 from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover
+from player.components.cover_cache import CACHE_DIR
 
       
 
@@ -86,7 +87,7 @@ class SearchCoverWorker(QThread):
         try:
             data = self.client.get_cover_art(self.cover_id, size=150)
             if data:
-                cache_dir = "covers_cache"
+                cache_dir = CACHE_DIR
                 if not os.path.exists(cache_dir): os.makedirs(cache_dir)
                 
                 img_hash = hashlib.md5(data).hexdigest()
@@ -316,11 +317,11 @@ class SearchResultRow(QWidget):
     def load_cover(self):
         cover_id = self.item_data.get('cover_id')
         if not cover_id: return
-        link_path = os.path.join("covers_cache", f"{cover_id}.link")
+        link_path = os.path.join(CACHE_DIR, f"{cover_id}.link")
         if os.path.exists(link_path):
             try:
                 with open(link_path, "r") as f: img_hash = f.read().strip()
-                img_path = os.path.join("covers_cache", f"{img_hash}.jpg")
+                img_path = os.path.join(CACHE_DIR, f"{img_hash}.jpg")
                 if os.path.exists(img_path):
                     self.cover.setPixmap(QPixmap(img_path))
                     return

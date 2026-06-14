@@ -35,6 +35,11 @@ Item {
     property real wheelVelocity: 0   // px/sec, +down/-up
 
     anchors.fill: parent
+    // Sit behind the Flickable's content (header/delegates): this Item is
+    // added after the Flickable's own contentItem, so without an explicit z
+    // it wins cursor/hover hit-testing everywhere it overlaps, swallowing
+    // every cursorShape set on content MouseAreas (buttons, resize handles).
+    z: -1
 
     // FrameAnimation ticks on the render loop's actual vsync (>60Hz on a
     // 143.8Hz monitor), unlike a Timer which is capped around 60Hz.

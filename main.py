@@ -88,7 +88,7 @@ def _background_preload():
     try:
         import player.mixins.playback as _pb
         base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-        bpm_path = os.path.join(base_dir, 'app_data', 'json_data', 'bpm_cache.json')
+        bpm_path = os.path.join(base_dir, 'app_data', 'bpm_cache.json')
         if os.path.exists(bpm_path):
             with open(bpm_path, 'r') as f:
                 _pb._preloaded_bpm_cache = json.load(f)

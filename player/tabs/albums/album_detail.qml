@@ -182,14 +182,14 @@ Rectangle {
         header: Item {
             id: pageHeader
             width: trackList.width
-            height: headerArea.height + 10 + cardLid.height
+            height: headerArea.y + headerArea.height + 10 + cardLid.height
 
             Component.onCompleted: root._searchBar = trackSearchBar
 
             // ── HEADER CARD ──────────────────────────────────────────────────
             Item {
                 id: headerArea
-                x: 12; y: 0
+                x: 12; y: 12
                 width: parent.width - 24
                 height: Math.max(coverItem.artSize, metaCol.implicitHeight) + 56
 
@@ -509,7 +509,7 @@ Rectangle {
             Rectangle {
                 id: cardLid
                 x: 12
-                y: headerArea.height + 10
+                y: headerArea.y + headerArea.height + 10
                 width: parent.width - 24
                 height: 12 + toolbarRow.height + colHeader.height
                 color: root.cardBgColor

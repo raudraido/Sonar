@@ -11,11 +11,17 @@ No worker should directly touch the covers_cache directory anymore.
 """
 
 import os
+import sys
 import hashlib
 import threading
 from collections import OrderedDict
 
-CACHE_DIR   = "covers_cache"
+if getattr(sys, 'frozen', False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+CACHE_DIR   = os.path.join(_BASE_DIR, "app_data", "covers_cache")
 THUMB_SIZE  = 300   # used for grid cards, playlist rows, artist tiles
 FULL_SIZE   = 800   # used for the main now-playing artwork display
 

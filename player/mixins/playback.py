@@ -742,15 +742,15 @@ class PlaybackMixin:
                     self.audio_engine.request_waveform(target_path, num_points=10000)
     
     def load_bpm_cache(self):
-        """Loads the saved BPM dictionary from the app_data/json_data folder."""
+        """Loads the saved BPM dictionary from the app_data folder."""
         # 1. Safely find the directory, whether we are in dev mode or a frozen .exe!
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-        # 2. Build the target folder path: working_dir/app_data/json_data
-        cache_dir = os.path.join(base_dir, "app_data", "json_data")
+        # 2. Build the target folder path: working_dir/app_data
+        cache_dir = os.path.join(base_dir, "app_data")
         os.makedirs(cache_dir, exist_ok=True)
         self.bpm_cache_file = os.path.join(cache_dir, "bpm_cache.json")
 

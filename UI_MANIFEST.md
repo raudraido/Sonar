@@ -11,10 +11,9 @@ consistently across pages.
 its animation driver is hardcoded to ~16ms (~60Hz) regardless of the
 monitor's actual refresh rate. `QQuickView` embedded via
 `QWidget.createWindowContainer()` gets a real native surface and tracks the
-monitor's actual vsync (verified 143.8Hz on the primary monitor, 60Hz on a
-secondary one).
+monitor's actual vsync.
 
-### Standard widget: `QMLGridWrapper` (`player/widgets.py:1918`)
+### Standard widget: `QMLGridWrapper` (`player/widgets.py:1920`)
 
 For any new QML-hosting widget, reuse `QMLGridWrapper` rather than writing a
 new `QQuickView`/container pair. It's a composite `QWidget` that already
@@ -101,20 +100,23 @@ self._view.rootContext().setContextProperty("scrollTuning", scroll_tuning)
 ```
 `QMLGridWrapper` does this in its constructor (covers album/artist/playlist
 grids and the artist section grids); `AlbumDetailView`
-(`albums_browser.py`) and `HomeView` (`home.py`) do it alongside their other
+(`player/tabs/albums/albums_browser.py`) and `HomeView`
+(`player/tabs/home/home.py`) do it alongside their other
 `setContextProperty` calls. Any new QQuickView must do the same.
 
 ### QML views (Flickable/ListView/GridView content scroll): `MomentumScroll.qml`
 
-`MomentumScroll.qml` (project root, alongside `IconButton.qml`/`SearchBar.qml`/
-`SkeletonCard.qml` — resolved automatically as a local type, no import
-needed) implements the model above as a drop-in child of the view it
-scrolls. Used by `album_grid.qml`'s `grid`, `artist_grid.qml`,
-`playlist_grid.qml`, `album_detail.qml`'s `trackList`, and `home.qml`'s
-`scroller`. Any new scrolling QML view should use it too:
+`MomentumScroll.qml` (`player/tabs/shared_qml/`, alongside
+`IconButton.qml`/`SearchBar.qml`/`SkeletonCard.qml` — each consuming tab's
+QML imports this directory via `import "../shared_qml"`) implements the
+model above as a drop-in child of the view it scrolls. Used by
+`album_grid.qml`'s `grid`, `artist_grid.qml`, `playlist_grid.qml`,
+`album_detail.qml`'s `trackList`, and `home.qml`'s `scroller`. Any new
+scrolling QML view should use it too:
 
 ```qml
-import QtQuick  // needed for FrameAnimation (used inside MomentumScroll)
+import QtQuick      // needed for FrameAnimation (used inside MomentumScroll)
+import "../shared_qml"  // for MomentumScroll (adjust relative path as needed)
 
 // interactive: false — momentum model has sole control; no native
 // touch/drag flicking on this view.
@@ -143,6 +145,16 @@ just work since there's no separate target to fight.
 `Timer` — a `Timer` is capped around 60Hz, which is visibly choppy on a
 143.8Hz monitor.
 
+**Gotcha — `z: -1` is required**: `MomentumScroll`'s root `Item` is added as
+a QML child of the `Flickable`/`ListView`/`GridView` it scrolls, which means
+it's inserted *after* that view's own `contentItem` in the children list —
+without an explicit `z`, it paints on top of and wins cursor/hover
+hit-testing over everything the view contains (header buttons, column-resize
+handles, delegates), silently breaking every `cursorShape` set on those
+items even though they still receive clicks. `MomentumScroll.qml` sets
+`z: -1` for exactly this reason — don't remove it, and give any other
+full-`anchors.fill` overlay child the same treatment.
+
 ### QWidget scroll areas: `SmoothScroller` (`player/mixins/visuals.py:198`)
 
 `SmoothScroller(widget)` adds the same momentum wheel-scroll to any
@@ -170,7 +182,7 @@ so QML-grid pages and QWidget-list pages feel identical.
 - To reset/cancel an in-flight glide programmatically, call
   `scroller._stop_animation()` and set `scroller._wheel_velocity = 0.0`.
 
-### Forwarding wheel events out of native QML surfaces: `WheelForwarder` (`player/mixins/visuals.py:349`)
+### Forwarding wheel events out of native QML surfaces: `WheelForwarder` (`player/mixins/visuals.py:360`)
 
 `createWindowContainer`'s native child window does **not** propagate
 unhandled `QEvent.Wheel` to parent widgets the way a regular child widget
@@ -210,9 +222,9 @@ or be covered by, a `QMLGridWrapper` needs one of these two fixes:
 
 ### Pattern A — top-level `Tool` window (for overlays that must appear ABOVE QML)
 
-Used by `_CoverOverlay` (`now_playing_info.py:405`) and
-`_ArtistPhotoOverlay` (`artists_browser.py:1154`). Convert the overlay from a
-child `QWidget` to a top-level frameless window:
+Used by `_CoverOverlay` (`player/tabs/now_playing/now_playing_info.py:405`)
+and `_ArtistPhotoOverlay` (`player/tabs/artists/artists_browser.py:1154`).
+Convert the overlay from a child `QWidget` to a top-level frameless window:
 
 ```python
 super().__init__(None,
@@ -237,7 +249,7 @@ self.show(); self.raise_(); self.activateWindow(); self.setFocus()
 
 ### Pattern B — `WA_NativeWindow` (for small overlays that must sit ON TOP of QML within the same window)
 
-Used by `LeftPanel`'s nav `ArrowButton`s (`player/widgets.py:2110`) and
+Used by `LeftPanel`'s nav `ArrowButton`s (`player/widgets.py:2113`) and
 `ArtistRichDetailView`'s `_loading_overlay`/`_loading_spinner`. Promote the
 overlay widget to a native window so normal `raise_()`/z-order works against
 the `QMLGridWrapper`'s container:
@@ -250,8 +262,8 @@ widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
   they render as opaque black if you try. If the overlay needs to look
   transparent, give it a `set_bg_color(color)` that paints an **opaque
   fill** matching the QML surface behind it (see `ArrowButton.set_bg_color`,
-  `_SpinnerRing.set_bg_color` in `queue_panel.py`), and call it whenever the
-  theme/panel background changes.
+  `_SpinnerRing.set_bg_color` in `player/panels/right/queue_panel.py`), and
+  call it whenever the theme/panel background changes.
 - Keep `raise_()` ordering correct: anything that must sit on top (e.g. a
   spinner on top of its loading overlay) must call `raise_()` *after* the
   layer below it.
@@ -272,9 +284,9 @@ widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
 
 ## 5. Scrollbars
 
-Use `scrollbar_css(color)` (`player/mixins/visuals.py:368`) for any
+Use `scrollbar_css(color)` (`player/mixins/visuals.py:420`) for any
 `QScrollBar` stylesheet — hidden by default, shown in the accent/master color
 on hover or while scrolling via `install_scroll_reveal(viewport, scrollbar)`
-(`player/mixins/visuals.py:190`). QML `ScrollBar` items follow the same
+(`player/mixins/visuals.py:191`). QML `ScrollBar` items follow the same
 hidden-until-active visual language (`opacity` bound to
 `root.isScrollActive`/`pressed`/`hovered`).

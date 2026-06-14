@@ -1309,7 +1309,7 @@ class SettingsWindow(QDialog):
             # Clear JSON data cache on disk
             import shutil
             if getattr(sys, 'frozen', False): base_dir = os.path.dirname(sys.executable)
-            else: base_dir = os.path.dirname(os.path.abspath(__file__))
+            else: base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cache_dir = os.path.join(base_dir, "app_data", "json_data")
             if os.path.exists(cache_dir):
                 try: shutil.rmtree(cache_dir)
@@ -1915,6 +1915,7 @@ class DummyScrollBar:
     def setValue(self, val): pass
     def setStyleSheet(self, style): pass
     def setSingleStep(self, step): pass
+
 
 class QMLGridWrapper(QWidget):
     """
