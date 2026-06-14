@@ -139,7 +139,7 @@ class NavigationMixin:
                     if current_id != target_id:
                         if hasattr(self.global_playlist_view.track_list, 'show_skeleton_loader'):
                             self.global_playlist_view.track_list.show_skeleton_loader(10)
-                        from playlists_browser import PlaylistTracksWorker
+                        from player.tabs.playlists.playlists_browser import PlaylistTracksWorker
                         self._pl_worker = PlaylistTracksWorker(self.navidrome_client, data)
                         self._pl_worker.results_ready.connect(self.global_playlist_view.populate_view)
                         self._pl_worker.start()
@@ -420,7 +420,7 @@ class NavigationMixin:
         if hasattr(self.global_playlist_view.track_list, 'show_skeleton_loader'):
             self.global_playlist_view.track_list.show_skeleton_loader(10)
             
-        from playlists_browser import PlaylistTracksWorker
+        from player.tabs.playlists.playlists_browser import PlaylistTracksWorker
         self._pl_worker = PlaylistTracksWorker(self.navidrome_client, playlist_data)
         self._pl_worker.results_ready.connect(self.global_playlist_view.populate_view)
         self._pl_worker.start()
@@ -696,7 +696,7 @@ class NavigationMixin:
         menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self)
 
     def _show_footer_track_info(self, track):
-        from components import TrackInfoDialog
+        from player.components.shared_widgets import TrackInfoDialog
         accent = getattr(self.theme, 'accent', '#1DB954') if hasattr(self, 'theme') else '#1DB954'
         album_id = track.get('albumId') or track.get('parent')
         album_data = {

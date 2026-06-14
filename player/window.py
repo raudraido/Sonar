@@ -11,13 +11,13 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QStyledItemDelegate, QColorDialog, QMenu,
     QStyle, QCheckBox, QToolTip, QGraphicsColorizeEffect, QLineEdit,
     QGraphicsOpacityEffect, QTabWidget, QTabBar, QStackedWidget,
-    QStylePainter, QStyleOptionTab, QProxyStyle, QListWidgetItem, QSizePolicy,
+    QStylePainter, QStyleOptionTab, QProxyStyle, QListWidgetItem,
     QProgressBar, QDialog, QMessageBox, QComboBox, QApplication, QSplitter
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QThread, pyqtSignal, QPropertyAnimation,
     QUrl, QPoint, QPointF, QItemSelectionModel, QRect, QEvent,
-    QRectF, QSettings, QEasingCurve
+    QRectF, QSettings
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QColor, QMouseEvent, QAction, QIcon,
@@ -30,20 +30,19 @@ import os
 import sys
 import json
 import threading
-from version import __version__
-from visualizer import AudioVisualizer
-from audio_engine import AudioEngine
-from subsonic_client import SubsonicClient
-from albums_browser import LibraryGridBrowser
-from artists_browser import ArtistGridBrowser
-from now_playing import PlaylistTree, NowPlayingPanel, COL_LENGTH, COL_TITLE, COL_ALBUM
-from now_playing_info import NowPlayingInfoTab
-from home import HomeView
-from tracks_browser import TracksBrowser
-from spotlight_search import SpotlightSearch
-from login_dialog import LoginDialog
-from playlists_browser import PlaylistsBrowser
-from waveform_scrubber import WaveformScrubber
+from player.components.version import __version__
+from player.tabs.visualizer.visualizer import AudioVisualizer
+from player.components.audio_engine import AudioEngine
+from player.components.subsonic_client import SubsonicClient
+from player.tabs.albums.albums_browser import LibraryGridBrowser
+from player.tabs.artists.artists_browser import ArtistGridBrowser
+from player.panels.right.queue_tree import PlaylistTree, NowPlayingPanel, COL_LENGTH, COL_TITLE, COL_ALBUM
+from player.tabs.now_playing.now_playing_info import NowPlayingInfoTab
+from player.tabs.home.home import HomeView
+from player.tabs.tracks.tracks_browser import TracksBrowser
+from player.components.spotlight_search import SpotlightSearch
+from player.components.login_dialog import LoginDialog
+from player.tabs.playlists.playlists_browser import PlaylistsBrowser
 
 from player.workers import (
     BPMWorker, SyncCheckWorker, PlaybackManager, BlurWorker,
@@ -51,9 +50,9 @@ from player.workers import (
     CoverLoaderWorker, CrossPlatformMediaKeyListener,
 )
 from player.widgets import (
-    ElidedLabel, NowPlayingFooterWidget, FooterClickableLabel,
-    TriangleTooltip, ClickableSlider,
-    SettingsWindow, StatusButton, PlayButton,
+    ElidedLabel, FooterClickableLabel,
+    TriangleTooltip,
+    SettingsWindow,
 )
 from player import resource_path
 from player.theme import Theme
@@ -62,8 +61,11 @@ from player.mixins.navigation  import NavigationMixin
 from player.mixins.visuals     import VisualsMixin
 from player.mixins.keyboard    import KeyboardMixin
 from player.mixins.persistence import PersistenceMixin
-from queue_panel import QueuePanel
-from left_panel import LeftPanel
+from player.panels.right.queue_panel import QueuePanel
+from player.panels.left.left_panel import LeftPanel
+from player.panels.footer import FooterPanel
+from player.panels.main import MainPanel
+from player.tabs.mix_builder import MixBuilderTab
 from PyQt6.QtCore import QObject as _QObject, QEvent as _QEvent2
 
 
@@ -73,7 +75,6 @@ class _NoBaseStyle(QProxyStyle):
         if element == QStyle.PrimitiveElement.PE_FrameTabBarBase:
             return
         super().drawPrimitive(element, option, painter, widget)
-
 
 class _TabBar(QTabBar):
     """QTabBar that skips CE_TabBarBase so no gray baseline is drawn."""
@@ -170,7 +171,6 @@ class _TabBar(QTabBar):
 
         self._sync_overlays()
 
-
 class _TabsCompat(_QObject):
     """QTabBar + QStackedWidget drop-in for the QTabWidget API we use.
     tab_bar lives inside main_header; tab_stack sits below it in right_panel."""
@@ -230,7 +230,6 @@ class _TabsCompat(_QObject):
 from PyQt6.QtWidgets import QFrame as _QFrame, QLabel as _QLabelTT
 from PyQt6.QtCore import Qt as _Qt2
 from PyQt6.QtGui import QPainter as _QPainter, QColor as _QColor
-
 
 class _TooltipLabel(_QFrame):
     """Custom tooltip popup with painted shadow + text."""
@@ -339,7 +338,6 @@ class _TooltipLabel(_QFrame):
         super(_TooltipLabel, self).show()
         self.raise_()
 
-
 class _TooltipFilter(_QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -376,7 +374,6 @@ class _TooltipFilter(_QObject):
             if self._tip and self._tip.isVisible():
                 self._tip.hide()
         return False
-
 
 class _ResizeHandle(QWidget):
     """Transparent overlay at a panel border — only the drag icon is visible."""
@@ -466,7 +463,6 @@ class _ResizeHandle(QWidget):
         self._drag_x = None
         self._drag_w = None
         super().mouseReleaseEvent(event)
-
 
 class SonarPlayer(
     PlaybackMixin,
@@ -630,7 +626,7 @@ class SonarPlayer(
                 # 3a. Try getting the image from the local cache first
                 cid = str(track_for_bg.get('cover_id') or track_for_bg.get('coverArt') or track_for_bg.get('albumId') or '')
                 if cid:
-                    from cover_cache import CoverCache
+                    from player.components.cover_cache import CoverCache
                     cache = CoverCache.instance()
                     cached_data = cache.get_full(cid) or cache.get_thumb(cid)
                     if cached_data:
@@ -975,7 +971,7 @@ class SonarPlayer(
         self.tabs.addTab(self.playlists_browser, "Playlists")
 
         # 7. Favorites
-        from favorites_view import FavoritesView
+        from player.tabs.favorites.favorites_view import FavoritesView
         self._favorites_tab = FavoritesView(self.navidrome_client)
         self._favorites_tab.setObjectName('FavoritesTab')
         self._favorites_tab.album_clicked.connect(self.navigate_to_album)
@@ -987,17 +983,7 @@ class SonarPlayer(
         self.tabs.addTab(self._favorites_tab, "Favorites")
 
         # 8. Mix Builder
-        self._mix_builder_tab = QWidget()
-        self._mix_builder_tab.setObjectName('MixBuilderTab')
-        self._mix_builder_tab.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _mb_lo = QVBoxLayout(self._mix_builder_tab)
-        _mb_lo.setContentsMargins(0, 0, 0, 0)
-        _mb_lo.setSpacing(0)
-        _mb_lbl = QLabel("Coming Soon™")
-        _mb_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        _mb_lbl.setStyleSheet("padding: 10px 0 0 0;")
-        _mb_lo.addWidget(_mb_lbl)
-        _mb_lo.addStretch()
+        self._mix_builder_tab = MixBuilderTab()
         self.tabs.addTab(self._mix_builder_tab, "Mix Builder")
 
         # 9. Visualizer — created lazily on first visit to save ~50–80 MB at startup
@@ -1037,7 +1023,7 @@ class SonarPlayer(
         self.tabs.currentChanged.connect(_on_vis_tab_changed)
 
         # 8. THE HIDDEN GLOBAL ALBUM TAB!
-        from albums_browser import AlbumDetailView
+        from player.tabs.albums.albums_browser import AlbumDetailView
         self.global_album_view = AlbumDetailView(None)
         
         
@@ -1073,7 +1059,7 @@ class SonarPlayer(
         self.tabs.tabBarClicked.connect(_on_tab_clicked_egg)
 
         # 8. THE HIDDEN GLOBAL ARTIST TAB!
-        from artists_browser import ArtistRichDetailView
+        from player.tabs.artists.artists_browser import ArtistRichDetailView
         self.global_artist_view = ArtistRichDetailView()
         
         # Route clicks to your main navigation engine
@@ -1090,7 +1076,7 @@ class SonarPlayer(
         self.tabs.tabBar().setTabVisible(self.global_artist_tab_idx, False)
 
         # 9. THE HIDDEN GLOBAL PLAYLIST TAB!
-        from playlists_browser import PlaylistDetailView
+        from player.tabs.playlists.playlists_browser import PlaylistDetailView
         self.global_playlist_view = PlaylistDetailView(None)
         
         self.global_playlist_view.track_list.play_track.connect(self.add_and_play_from_browser)
@@ -1149,42 +1135,7 @@ class SonarPlayer(
         self.add_global_nav(self.tabs.indexOf(self.home_tab), 'home')
 
         # --- Main Panel (Tabs) ---
-        self._main_panel = QWidget()
-        self._main_panel.setObjectName('MainPanel')
-        self._main_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        right_panel = QVBoxLayout(self._main_panel)
-        _bw = self.theme.border_width
-        right_panel.setContentsMargins(0, 0, 0, 0)
-        right_panel.setSpacing(0)
-
-        self.main_header = QWidget()
-        self.main_header.setObjectName('MainHeader')
-        self.main_header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.main_header.setFixedHeight(62)
-        self.main_header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        _mh_layout = QHBoxLayout(self.main_header)
-        _mh_layout.setContentsMargins(0, 0, 0, 0)
-        _mh_layout.setSpacing(0)
-
-        _mh_layout.addStretch()
-        _mh_layout.addWidget(self.tab_bar)
-        _mh_layout.addStretch()
-
-        # Nav buttons overlay the left panel header's right corner
-        self._left_panel.add_header_widget(self.btn_back)
-        self._left_panel.add_header_widget(self.btn_fwd)
-
-        # Trigger tab mode check whenever the header is resized (e.g. panels dragged)
-        class _HRF(_QObject):
-            def eventFilter(self_, obj, ev):
-                if ev.type() == QEvent.Type.Resize:
-                    QTimer.singleShot(0, self._update_tab_mode)
-                return False
-        self._header_resize_filter = _HRF(self.main_header)
-        self.main_header.installEventFilter(self._header_resize_filter)
-
-        right_panel.addWidget(self.main_header)       # tab bar only — own background
-        right_panel.addWidget(self.tab_stack, 1)      # content — browser backgrounds only
+        self._main_panel = MainPanel(self)
         _right_widget = self._main_panel
 
         _left_w = max(297, min(363, int(self.settings.value('left_panel_width', 330))))
@@ -1219,172 +1170,7 @@ class SonarPlayer(
         # PLAYER CONTROLS & FOOTER
         # =========================================================
 
-
-        self.cast_btn = QPushButton("")
-        self.cast_btn.setFixedSize(40, 40)
-        self.cast_btn.setIconSize(QSize(22, 22))
-        self.cast_btn.setFlat(True)
-        self.cast_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cast_btn.setStyleSheet("background: transparent; border: none;")
-        self.cast_btn.setToolTip("Cast to device")
-        self.cast_btn.clicked.connect(self._on_cast_clicked)
-
-        self.settings_btn = QPushButton("")
-        self.settings_btn.setFixedSize(40, 40)
-        self.settings_btn.setIconSize(QSize(20, 20))
-        self.settings_btn.clicked.connect(self.open_settings)
-        self.settings_btn.setToolTip("Settings")
-
-        self.btn_stop = QPushButton("")
-        self.btn_stop.setFixedSize(40, 40)
-        self.btn_stop.clicked.connect(self._media_stop)
-        self.btn_stop.setToolTip("Stop")
-
-        self.btn_shuffle = StatusButton("")
-        self.btn_shuffle.setCheckable(True)
-        self.btn_shuffle.setFixedSize(40, 40)
-        self.btn_shuffle.clicked.connect(self.toggle_shuffle)
-        self.btn_shuffle.setToolTip("Shuffle")
-
-        self.btn_prev = QPushButton("")
-        self.btn_prev.setFixedSize(50, 50)
-        self.btn_prev.clicked.connect(self.play_prev)
-        self.btn_prev.setToolTip("Previous Track")
-
-        self.btn_play = PlayButton()
-        self.btn_play.setFixedSize(58, 58)
-        self.btn_play.clicked.connect(self.toggle_playback)
-        self.btn_play.setToolTip("Play/Pause")
-
-        self.btn_next = QPushButton("")
-        self.btn_next.setFixedSize(50, 50)
-        self.btn_next.clicked.connect(self.play_next)
-        self.btn_next.setToolTip("Next Track")
-
-        self.btn_repeat = StatusButton("")
-        self.btn_repeat.setCheckable(True)
-        self.btn_repeat.setFixedSize(40, 40)
-        self.btn_repeat.clicked.connect(self.toggle_repeat)
-        self.btn_repeat.setToolTip("Repeat")
-
-        self.vol_slider = ClickableSlider(Qt.Orientation.Horizontal, self, is_volume=True)
-        self.vol_slider.setFixedWidth(100)
-        self.vol_slider.setRange(0, 100)
-        self.vol_slider.setValue(self.last_volume)
-        self.vol_slider.valueChanged.connect(self.update_volume)
-        self.vol_slider.sliderMoved.connect(self.vol_slider.update_tooltip_pos)
-
-        self.vol_icon_label = QPushButton()
-        self.vol_icon_label.setFixedSize(40, 40)
-        self.vol_icon_label.setIconSize(QSize(self._VOL_ICON_SIZE, self._VOL_ICON_SIZE))
-        self.vol_icon_label.setToolTip("Mute/Unmute")
-        self.vol_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.vol_icon_label.setFlat(True)
-        self.vol_icon_label.clicked.connect(self.toggle_mute)
-
-        self.current_time_label = QLabel("0:00")
-        
-        # SWAP THE SLIDER FOR THE WAVEFORM
-        self.seek_bar = WaveformScrubber(master_color=self.theme.accent, parent=self)
-        self.seek_bar.seek_requested.connect(self.on_waveform_seek)
-        self.seek_bar.mode_toggled.connect(self.on_waveform_toggled)
-        
-        # THE SCRATCH CONNECTION (Wire physics straight to C++)
-        self.seek_bar.scratch_mode_changed.connect(self.audio_engine.set_scratch_mode)
-        self.seek_bar.velocity_changed.connect(self.audio_engine.set_scratch_velocity)
-        
-        # THE UI CONNECTION (Update the time text while scrubbing)
-        self.seek_bar.position_updated.connect(
-            lambda ms: self.current_time_label.setText(self.format_time(ms)) if hasattr(self, 'current_time_label') else None
-        )
-
-        saved_mode = int(self.settings.value('waveform_mode', 2))
-        if saved_mode in (1, 2):
-            self.seek_bar.display_mode = saved_mode
-            self.seek_bar.render_timer.stop()
-
-        saved_vis = int(self.settings.value('vis_mode', 0))
-        if saved_vis and getattr(self, 'visualizer', None):
-            self.visualizer.vis_mode = saved_vis
-        
-        self.total_time_label = QLabel("0:00")
-
-
-        self.controls_layout = QHBoxLayout()
-        self.controls_layout.setSpacing(20)
-        self.controls_layout.addStretch()
-        self.controls_layout.addWidget(self.btn_stop)
-        self.controls_layout.addWidget(self.btn_shuffle)
-        self.controls_layout.addWidget(self.btn_prev)
-        self.controls_layout.addWidget(self.btn_play)
-        self.controls_layout.addWidget(self.btn_next)
-        self.controls_layout.addWidget(self.btn_repeat)
-        self.controls_layout.addStretch()
-
-        self.slider_layout = QHBoxLayout()
-        self.slider_layout.setContentsMargins(0, 0, 0, 0)
-        self.slider_layout.setSpacing(15)
-        self.slider_layout.addWidget(self.current_time_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.slider_layout.addWidget(self.seek_bar, 1)
-        self.slider_layout.addWidget(self.total_time_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self._footer_panel = QWidget()
-        self._footer_panel.setObjectName("FooterPanel")
-        self._footer_panel.setStyleSheet("QWidget#FooterPanel { background-color: rgba(14, 14, 14, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
-
-        main_footer_layout = QHBoxLayout(self._footer_panel)
-        main_footer_layout.setContentsMargins(8, 0, 20, 0)
-        main_footer_layout.setSpacing(0)
-
-        footer_left = QWidget()
-        left_layout = QHBoxLayout(footer_left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        
-        self.now_playing_widget = NowPlayingFooterWidget()
-        self.now_playing_widget.artist_clicked.connect(self.on_footer_artist_click)
-        self.now_playing_widget.album_clicked.connect(self.on_footer_album_click)
-        self.now_playing_widget.title_clicked.connect(self.on_footer_title_click)
-        self.now_playing_widget.track_right_clicked.connect(self._show_footer_track_context_menu)
-        # art left-click intentionally unbound
-        self.now_playing_widget.bpm_adjusted.connect(self._on_footer_bpm_adjusted)
-        self.now_playing_widget.expand_art_clicked.connect(self._toggle_sidebar_art)
-
-        # Footer art slide animation (width) — needs now_playing_widget to exist
-        self._footer_art_anim = QPropertyAnimation(
-            self.now_playing_widget.art_label, b"maximumWidth"
-        )
-        self._footer_art_anim.setDuration(250)
-        self._footer_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._footer_art_anim.valueChanged.connect(
-            lambda v: self.now_playing_widget.art_label.setMinimumWidth(int(v))
-        )
-
-        left_layout.addWidget(self.now_playing_widget)
-        
-        footer_center = QWidget()
-        center_layout = QVBoxLayout(footer_center)
-        center_layout.setContentsMargins(10, 10, 10, 0)
-        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.addLayout(self.controls_layout)
-        center_layout.addLayout(self.slider_layout)
-        
-        footer_right = QWidget()
-        right_layout = QHBoxLayout(footer_right)
-        right_layout.setContentsMargins(8, 0, 8, 0)
-        right_layout.setSpacing(8)
-
-        right_layout.addStretch()
-        right_layout.addWidget(self.settings_btn)
-        right_layout.addWidget(self.vol_icon_label)
-        right_layout.addSpacing(4)
-        right_layout.addWidget(self.vol_slider)
-        right_layout.addWidget(self.cast_btn)
-        
-        main_footer_layout.addWidget(footer_left, 2)
-        main_footer_layout.addWidget(footer_center, 3)
-        main_footer_layout.addWidget(footer_right, 2)
-
+        self._footer_panel = FooterPanel(self)
         main_layout.addWidget(self._footer_panel)
 
         # Queue panel is now a permanent sidebar (see body layout above)
@@ -1420,7 +1206,7 @@ class SonarPlayer(
         overlay_layout.addWidget(self.sync_progress_bar)
         overlay_layout.addWidget(self.sync_progress_label)
         
-        from hotkeys import HotkeyManager
+        from player.components.hotkeys import HotkeyManager
         self.hotkey_manager = HotkeyManager(self.settings)
 
         self.sc_space         = self.hotkey_manager.register("play_pause",       self, self.handle_space_shortcut)
@@ -1464,7 +1250,7 @@ class SonarPlayer(
 
     def _init_cast_manager(self):
         """Called at startup (2 s delay) to kick off background device discovery."""
-        from cast_manager import CastManager
+        from player.components.cast_manager import CastManager
         if not hasattr(self, '_cast_manager'):
             self._cast_manager = CastManager(self)
 
@@ -1562,7 +1348,7 @@ class SonarPlayer(
             self.tracks_browser.refresh_track_bpm(track_id, rounded)
 
     def _toggle_tetris(self):
-        from tetris_easter_egg import TetrisWidget
+        from player.components.tetris_easter_egg import TetrisWidget
         if not hasattr(self, '_tetris_widget'):
             self._tetris_widget = None
         if self._tetris_widget and self._tetris_widget.isVisible():

@@ -54,8 +54,8 @@ def _qt_msg_handler(msg_type, _ctx, message):
 
 qInstallMessageHandler(_qt_msg_handler)
 
-from subsonic_client import SubsonicClient
-from login_dialog import LoginDialog
+from player.components.subsonic_client import SubsonicClient
+from player.components.login_dialog import LoginDialog
 from player.window import SonarPlayer
 
 
@@ -70,7 +70,7 @@ def _background_preload():
     try:
         base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         dll_name = 'audio_core.dll' if platform.system() == 'Windows' else 'audio_core.so'
-        dll_path = os.path.join(base, dll_name)
+        dll_path = os.path.join(base, 'player', 'components', dll_name)
         if os.path.exists(dll_path):
             ctypes.CDLL(dll_path)
     except Exception:
@@ -78,7 +78,7 @@ def _background_preload():
 
     # 2. Create the CoverCache singleton and ensure the cache directory exists.
     try:
-        from cover_cache import CoverCache
+        from player.components.cover_cache import CoverCache
         CoverCache.instance()
     except Exception:
         pass

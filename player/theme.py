@@ -79,7 +79,6 @@ class Theme:
         t.dynamic_accent = dynamic_color
         return t
 
-
 def load_presets() -> dict[str, "Theme"]:
     """Load all *.json files from player/themes/ as named Theme presets."""
     import os, glob

@@ -20,7 +20,7 @@ from io import BytesIO
 from mutagen import File
 from PIL import Image
 
-from cover_cache import CoverCache, THUMB_SIZE
+from player.components.cover_cache import CoverCache, THUMB_SIZE
 
 _COVER_WORKERS = min(6, (os.cpu_count() or 2) + 2)
 
@@ -361,7 +361,7 @@ class PlaylistCoverWorker(QThread):
         self.queue   = []
         self.running = True
         self.seen    = set()
-        from cover_cache import CoverCache
+        from player.components.cover_cache import CoverCache
         self._cache  = CoverCache.instance()
 
     def queue_covers(self, cover_ids):
@@ -383,7 +383,7 @@ class PlaylistCoverWorker(QThread):
         if not self.client or not self.running:
             return False
         try:
-            from cover_cache import THUMB_SIZE
+            from player.components.cover_cache import THUMB_SIZE
             data = self.client.get_cover_art(cid, size=THUMB_SIZE)
             if data:
                 self._cache.save_thumb(cid, data)
@@ -435,7 +435,7 @@ class GridCoverWorker(QThread):
         self._abort_requested  = False
         self._urgent_in_flight = set()
 
-        from cover_cache import CoverCache
+        from player.components.cover_cache import CoverCache
         self._cache  = CoverCache.instance()
 
     def queue_cover(self, cover_id, priority=False):
@@ -473,7 +473,7 @@ class GridCoverWorker(QThread):
 
         # 2. Network download
         try:
-            from cover_cache import THUMB_SIZE
+            from player.components.cover_cache import THUMB_SIZE
             data = self.client.get_cover_art(cid, size=THUMB_SIZE)
             if data:
                 self._cache.save_thumb(cid, data)
@@ -597,7 +597,7 @@ class CoverLoaderWorker(QThread):
         super().__init__()
         self.client   = client
         self.cover_id = str(cover_id)
-        from cover_cache import CoverCache
+        from player.components.cover_cache import CoverCache
         self._cache   = CoverCache.instance()
 
     def run(self):
@@ -611,7 +611,7 @@ class CoverLoaderWorker(QThread):
 
         # 2. Fetch from server at full resolution
         try:
-            from cover_cache import FULL_SIZE
+            from player.components.cover_cache import FULL_SIZE
             data = self.client.get_cover_art(cid, size=FULL_SIZE)
             if data:
                 self._cache.save_full(cid, data)

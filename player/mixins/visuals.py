@@ -5,7 +5,7 @@ dynamic theming, row highlighting, and volume icon updates.
 import os
 import sys
 import time
-from version import __version__
+from player.components.version import __version__
 
 from PyQt6.QtWidgets import QAbstractItemView, QAbstractButton, QApplication, QLabel, QListWidget
 from PyQt6.QtCore import Qt, QTimer, QElapsedTimer, QPropertyAnimation, QObject, QEvent, QThread, pyqtSignal
@@ -1201,7 +1201,7 @@ class VisualsMixin:
                 _cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
                 if _cid:
                     try:
-                        from cover_cache import CoverCache
+                        from player.components.cover_cache import CoverCache
                         _data = CoverCache.instance().get_full(_cid) or CoverCache.instance().get_thumb(_cid)
                         if _data:
                             _pix = QPixmap()

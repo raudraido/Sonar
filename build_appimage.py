@@ -105,7 +105,7 @@ def collect_assets():
     print("\n--- Detecting Audio Engine Binary ---")
     binary = find_audio_binary()
     if binary:
-        added.append(f"--add-binary={binary}{_SEP}.")
+        added.append(f"--add-binary={binary}{_SEP}player/components")
         print(f"  Bundled: {binary}")
     else:
         print("  WARNING: audio_core.so not found — run build.py first.")

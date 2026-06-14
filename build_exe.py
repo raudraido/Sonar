@@ -206,20 +206,21 @@ def bundle_linux_qt_platform_plugins(added_data):
 
 
 def find_audio_binary():
-    """Return the audio_core binary filename for the current platform, or None."""
+    """Return the path to the audio_core binary for the current platform, or None."""
     current_os = platform.system()
+    components_dir = os.path.join('player', 'components')
     candidates = {
         "Windows": "audio_core.dll",
         "Darwin":  "audio_core.dylib",
         "Linux":   "audio_core.so",
     }
     name = candidates.get(current_os)
-    if name and os.path.exists(name):
-        return name
+    if name and os.path.exists(os.path.join(components_dir, name)):
+        return os.path.join(components_dir, name)
     # Fallback: check all known names in case of a cross-build
     for n in candidates.values():
-        if os.path.exists(n):
-            return n
+        if os.path.exists(os.path.join(components_dir, n)):
+            return os.path.join(components_dir, n)
     return None
 
 
@@ -326,22 +327,22 @@ def build():
     print("\n--- Detecting Audio Engine Binary ---")
     binary = find_audio_binary()
     if binary:
-        added_data.append(f'--add-binary={binary}{_SEP}.')
+        added_data.append(f'--add-binary={binary}{_SEP}player/components')
         print(f"  Added Binary: {binary}")
     else:
         print("  WARNING: No audio_core binary found. Run build.py first.")
 
     if current_os == "Windows":
-        libs_dir = "libs"
+        libs_dir = os.path.join('player', 'components', 'libs')
         if os.path.isdir(libs_dir):
             print("\n--- Bundling audio_core dependency DLLs ---")
             for dll in os.listdir(libs_dir):
                 if dll.lower().endswith(".dll"):
                     src = os.path.join(libs_dir, dll)
-                    added_data.append(f'--add-binary={src}{_SEP}libs')
+                    added_data.append(f'--add-binary={src}{_SEP}player/components/libs')
                     print(f"  Added DLL: {dll}")
         else:
-            print("  WARNING: libs/ folder not found — audio_core.dll dependencies may be missing.")
+            print("  WARNING: player/components/libs/ folder not found — audio_core.dll dependencies may be missing.")
 
     # 7. PyInstaller arguments
     args = [

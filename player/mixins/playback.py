@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import json
-from version import __version__
+from player.components.version import __version__
 import time
 import random
 
@@ -1025,7 +1025,7 @@ class PlaybackMixin:
         if cm and getattr(cm, 'has_airplay2', lambda: False)():
             # Compute a future NTP start time so cliap2 can buffer ahead
             try:
-                from airplay_manager import _ntp_now
+                from player.components.airplay_manager import _ntp_now
                 _NTP_PER_S = 1 << 32
                 sync_ms = cm._AP2_SYNC_MS
                 ntp_start = _ntp_now() + int(sync_ms / 1000.0 * _NTP_PER_S)

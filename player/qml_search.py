@@ -80,7 +80,6 @@ class SearchController(QObject):
         for ch in text:
             self.searchTextAppend.emit(ch)
 
-
 class SearchKeyFilter(QObject):
     """Widget-level key filter — fires regardless of QML focus state.
 
@@ -119,7 +118,6 @@ class SearchKeyFilter(QObject):
             return self._on_navigate(event)
         return False
 
-
 class GridSearchKeyFilter(SearchKeyFilter):
     """Widget-level key filter for a grid view's inline search box.
 
@@ -140,7 +138,6 @@ class GridSearchKeyFilter(SearchKeyFilter):
             self._view.focus_first_grid_item()
             return True
         return False
-
 
 def set_window_shortcuts_enabled(host, qml_widget, enabled: bool):
     """Enable/disable all QShortcuts on the top-level window, and flag

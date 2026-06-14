@@ -96,11 +96,13 @@ def bundle_runtime_dlls(dll_name, bin_dir, libs_dir):
 def build():
     print("Attempting to compile audio_core.cpp...")
 
-    if not os.path.exists("audio_core.cpp"):
+    src_dir = os.path.join("player", "components")
+
+    if not os.path.exists(os.path.join(src_dir, "audio_core.cpp")):
         print("ERROR: audio_core.cpp not found!")
         return
 
-    if not os.path.exists("miniaudio.h"):
+    if not os.path.exists(os.path.join(src_dir, "miniaudio.h")):
         print("ERROR: miniaudio.h not found!")
         return
 
@@ -137,23 +139,23 @@ def build():
     qm_defines = "-Dkiss_fft_scalar=double"
 
     if current_os == "Windows":
-        output_filename = "audio_core.dll"
+        output_filename = os.path.join(src_dir, "audio_core.dll")
         flags = f"-O2 -static-libgcc -static-libstdc++ -Wl,--export-all-symbols -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
     elif current_os == "Darwin":
-        output_filename = "audio_core.dylib"
+        output_filename = os.path.join(src_dir, "audio_core.dylib")
         flags = f"-O2 -fPIC -dynamiclib -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
     else:
-        output_filename = "audio_core.so"
+        output_filename = os.path.join(src_dir, "audio_core.so")
         flags = f"-O2 -fPIC -I . -I ./qm-dsp {qm_defines} {curl_inc} {curl_lib}"
 
-    cmd = f"g++ -shared -o {output_filename} audio_core.cpp {qm_sources} {flags}"
+    cmd = f"g++ -shared -o {output_filename} {os.path.join(src_dir, 'audio_core.cpp')} {qm_sources} {flags}"
     print(f"Executing: {cmd}")
 
     result = subprocess.run(cmd, shell=True)
     if result.returncode == 0:
         print(f"SUCCESS: Compiled {output_filename}")
         if current_os == "Windows":
-            bundle_runtime_dlls(output_filename, curl_bin, "libs")
+            bundle_runtime_dlls(output_filename, curl_bin, os.path.join(src_dir, "libs"))
     else:
         print("FAILED: Compile error. Check the output above for details.")
 

@@ -8,7 +8,7 @@ parent reference so it can write back to visual_settings).
 import os
 import re
 import time
-from version import __version__
+from player.components.version import __version__
 from player.scroll_tuning import scroll_tuning
 
 from PyQt6.QtWidgets import (
@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
     QBrush, QPainterPath, QPolygon, QPixmap, QKeySequence, QIcon, QCursor, QImage
 )
 
-from audio_engine import AudioEngine
+from player.components.audio_engine import AudioEngine
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect as _QDSE
 
 
@@ -986,7 +986,7 @@ class SettingsWindow(QDialog):
         self._lyrics_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(self._lyrics_label)
 
-        from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
+        from player.panels.right.lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
         _s = QSettings('Icosahedron', 'Icosahedron')
         _enabled = list(_s.value(_LYRIC_KEY, _LYRIC_SOURCES) or _LYRIC_SOURCES)
         self._lyrics_source_checks = {}
@@ -1002,7 +1002,7 @@ class SettingsWindow(QDialog):
 
         # ── Right column: hotkeys + logout ────────────────────────────────
         if hasattr(self.parent, 'hotkey_manager'):
-            from hotkeys import DEFAULT_HOTKEYS
+            from player.components.hotkeys import DEFAULT_HOTKEYS
 
             self._hotkeys_label = QLabel("HOTKEYS")
             self._hotkeys_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
@@ -1104,7 +1104,7 @@ class SettingsWindow(QDialog):
     def _open_theme_builder(self):
         import sys, os
         sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-        from theme_builder import ThemeBuilderDialog
+        from player.components.theme_builder import ThemeBuilderDialog
         dlg = ThemeBuilderDialog(self.parent, self)
         dlg.exec()
 
@@ -1219,7 +1219,7 @@ class SettingsWindow(QDialog):
         self._refresh_preset_buttons(name)
 
     def _save_lyrics_sources(self):
-        from lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
+        from player.panels.right.lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
         enabled = [src for src, cb in self._lyrics_source_checks.items() if cb.isChecked()]
         QSettings('Icosahedron', 'Icosahedron').setValue(_LYRIC_KEY, enabled)
 
@@ -1988,14 +1988,6 @@ class QMLGridWrapper(QWidget):
     def unsetCursor(self):
         super().unsetCursor()
         self._container.unsetCursor()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # createWindowContainer's native window can briefly show a stale,
-        # stretched/clipped frame at the old size after a resize until the
-        # QQuickWindow re-renders -- force an immediate repaint so the new
-        # size's content appears without that artifact.
-        self._view.update()
 
     def _owns(self, obj):
         return obj is self or obj is self._container or obj is self._view
