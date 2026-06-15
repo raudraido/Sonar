@@ -1497,15 +1497,25 @@ class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStacked
         self.album_model.append_albums(items)
 
     def _on_chunk_loaded(self, albums, chunk_index):
+        is_expected = hasattr(self, 'active_chunk_workers') and chunk_index in self.active_chunk_workers
+        if is_expected:
+            worker = self.active_chunk_workers.pop(chunk_index)
+            self._safe_discard_worker(worker)
+        else:
+            return  # stale delivery after ghost-cancel/reset, discard
+
         # Persist chunk 0 for fast next-session display (default sort only)
         if chunk_index == 0 and albums and self.client and not getattr(self, 'current_query', ''):
             _sort = getattr(self, 'current_sort', 'latest')
             self.client.stale_cache_set(f'albums_chunk_0_{_sort}', albums)
-        if hasattr(self, 'active_chunk_workers') and chunk_index in self.active_chunk_workers:
-            worker = self.active_chunk_workers.pop(chunk_index)
-            self._safe_discard_worker(worker)
-            
-        if not albums: return
+
+        if not albums:
+            # Fetch failed/empty (e.g. timeout under concurrent load) — drop the
+            # "loaded" mark so the next viewport check retries this chunk
+            # instead of leaving its rows stuck as placeholders forever.
+            if hasattr(self, 'loaded_chunks'):
+                self.loaded_chunks.discard(chunk_index)
+            return
         start_row = chunk_index * 50
         if start_row >= len(self.album_model.albums):
             if hasattr(self, 'loaded_chunks'):
@@ -1604,6 +1614,9 @@ class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStacked
             _is_random = getattr(self, 'current_sort', 'latest') == 'random'
             if pending:
                 self.loaded_chunks.add(0)
+                if not hasattr(self, 'active_chunk_workers'):
+                    self.active_chunk_workers = {}
+                self.active_chunk_workers[0] = None  # satisfy is_expected check in _on_chunk_loaded
             initial = min(50, self.true_server_count)
             placeholders = [{'type': 'placeholder', 'title': ''} for _ in range(initial)]
             self.album_model.clear()

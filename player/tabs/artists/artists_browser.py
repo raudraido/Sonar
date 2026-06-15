@@ -2144,7 +2144,13 @@ class ArtistGridBrowser(QWidget): # Top-level artist-browsing widget: a QStacked
         else:
             return  # stale delivery after reset, discard
 
-        if not artists: return
+        if not artists:
+            # Fetch failed/empty (e.g. timeout under concurrent load) — drop the
+            # "loaded" mark so the next viewport check retries this chunk
+            # instead of leaving its rows stuck as placeholders forever.
+            if hasattr(self, 'loaded_chunks'):
+                self.loaded_chunks.discard(chunk_index)
+            return
 
         if not hasattr(self, '_chunk_data_cache'):
             self._chunk_data_cache = {}
