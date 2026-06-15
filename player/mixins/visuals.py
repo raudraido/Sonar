@@ -457,10 +457,10 @@ class VisualsMixin:
             self.blur_thread.quit()
 
         
-        # Use the left panel width as the target art size; fall back to 500 if not available.
-        # Don't use art_container dimensions — it may be collapsed (maxHeight=0).
-        _panel_w = getattr(self, '_left_panel', None)
-        art_size = (_panel_w.width() - 16) if _panel_w and _panel_w.width() > 16 else 500
+        # Fixed target art size — large enough to stay sharp for both the
+        # 84px footer thumbnail and the expanded left-panel sidebar art
+        # (which is scaled down from this, never up).
+        art_size = 500
 
         self.blur_thread = BlurWorker(
             path,

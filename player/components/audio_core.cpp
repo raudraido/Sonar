@@ -152,6 +152,7 @@ struct AudioEngine {
     std::atomic<long long> seek_target{-1}; 
     std::atomic<bool> is_seeking{false}; 
     std::atomic<long long> current_frame{0};
+    std::atomic<long long> output_latency_frames{0};
     std::atomic<long long> total_frames{0};
     std::atomic<long long> frames_until_switch{-1}; 
     std::atomic<long long> pending_total_frames{0}; 
@@ -350,9 +351,13 @@ void producer_loop() {
             std::lock_guard<std::mutex> lock(engine.decode_mutex);
             if (engine.decoder_loaded) {
                 ma_decoder_seek_to_pcm_frame(&engine.decoder, target);
-                engine.is_seeking = true; 
-                engine.buffer.clear();    
-                engine.current_frame = target;
+                engine.is_seeking = true;
+                engine.buffer.clear();
+                // get_position() subtracts output_latency_frames, so offset
+                // current_frame here to cancel that out — otherwise the
+                // reported position jumps backward by the latency amount
+                // the instant playback resumes after a seek.
+                engine.current_frame = target + engine.output_latency_frames.load();
                 engine.frames_until_switch = -1;
                 
                 ma_uint64 frames_read = 0;
@@ -539,6 +544,22 @@ extern "C" {
             config.performanceProfile = ma_performance_profile_low_latency;
             ma_device_init(NULL, &config, &engine.device);
         #endif
+
+        // current_frame counts frames handed to the backend's data callback,
+        // but the backend itself buffers ~(internalPeriodSizeInFrames *
+        // internalPeriods) frames before they're actually audible (this gap
+        // is much larger on Linux/PulseAudio's conservative profile than on
+        // other platforms' low-latency profile). Subtract that buffered
+        // amount in get_position() so the scrubber tracks audible playback.
+        {
+            ma_uint64 latency_internal = (ma_uint64)engine.device.playback.internalPeriodSizeInFrames *
+                                          (ma_uint64)engine.device.playback.internalPeriods;
+            ma_uint32 internal_rate = engine.device.playback.internalSampleRate;
+            if (internal_rate > 0) {
+                engine.output_latency_frames = (long long)(latency_internal * SAMPLE_RATE / internal_rate);
+            }
+        }
+
         ma_device_start(&engine.device);
     }
 
@@ -919,7 +940,11 @@ extern "C" {
         engine.seek_target = (ms * SAMPLE_RATE) / 1000; 
     }
     
-    EXPORT long long get_position() { return (engine.current_frame * 1000) / SAMPLE_RATE; }
+    EXPORT long long get_position() {
+        long long pos = engine.current_frame - engine.output_latency_frames;
+        if (pos < 0) pos = 0;
+        return (pos * 1000) / SAMPLE_RATE;
+    }
     
     EXPORT long long get_duration() { return (engine.total_frames * 1000) / SAMPLE_RATE; }
     

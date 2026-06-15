@@ -1,7 +1,9 @@
 import random
 import time
 
-from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget, QPushButton
+import numpy as np
+
+from PyQt6.QtWidgets import QApplication, QGraphicsOpacityEffect, QWidget, QPushButton
 from PyQt6.QtGui import QPainter, QColor, QPen, QIcon, QPixmap, QImage
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QRectF, QPropertyAnimation, QSize
 from player import resource_path
@@ -27,6 +29,7 @@ class WaveformScrubber(QWidget):
         
         self.samples = [0.0] * 5000
         self.total_samples = len(self.samples)
+        self._samples_np = np.zeros(self.total_samples, dtype=np.float64)
         self.has_real_data = False
 
         self.current_index = 0.0
@@ -47,14 +50,21 @@ class WaveformScrubber(QWidget):
         self.decay_timer.timeout.connect(self._decay_velocity)
 
         self.render_timer = QTimer(self)
-        self.render_timer.setInterval(16)
+        _screen = QApplication.primaryScreen()
+        _hz = _screen.refreshRate() if _screen else 60.0
+        self.render_timer.setInterval(max(1, round(1000 / _hz)))
         self.render_timer.timeout.connect(self._auto_scroll)
         self.last_render_time = time.time()
 
         # THE DISPLAY MODE (0=Scratch, 1=Minimal, 2=SoundCloud)
         self.display_mode = 2
 
-        self._color_cache = {}
+        self._bar_path = None
+        self._bar_path_dims = None
+        self._bar_path_samples = None
+
+        self._fade_lookup_np = np.array([], dtype=np.float64)
+        self._waveform_buf = None
 
         self.btn_toggle_wave = QPushButton(self)
         self.btn_toggle_wave.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -138,8 +148,7 @@ class WaveformScrubber(QWidget):
 
     def set_master_color(self, color_hex):
         self.master_color = QColor(color_hex)
-        self._color_cache.clear()
-        
+
         r = self.master_color.red()
         g = self.master_color.green()
         b = self.master_color.blue()
@@ -176,13 +185,11 @@ class WaveformScrubber(QWidget):
     def _rebuild_fade_lookup(self):
         w = self.width()
         if w <= 0:
-            self._fade_lookup = []
+            self._fade_lookup_np = np.array([], dtype=np.float64)
             return
         cx = w / 2.0
-        self._fade_lookup = [
-            max(0.0, 1.0 - (abs(x - cx) / (w / 2.0)) ** 1.6)
-            for x in range(w)
-        ]
+        x = np.arange(w, dtype=np.float64)
+        self._fade_lookup_np = np.maximum(0.0, 1.0 - (np.abs(x - cx) / cx) ** 1.6)
 
     def enterEvent(self, event):
         if self.toggle_opacity is None:
@@ -234,11 +241,12 @@ class WaveformScrubber(QWidget):
     def set_real_samples(self, new_samples):
         if not new_samples: return
         
-        self.has_real_data = True 
-        
+        self.has_real_data = True
+
         self.samples = new_samples
         self.total_samples = len(self.samples)
-        
+        self._samples_np = np.asarray(self.samples, dtype=np.float64)
+
         if self.duration_ms > 0:
             ratio = self.position_ms / self.duration_ms
             self.current_index = ratio * (self.total_samples - 1)
@@ -249,6 +257,7 @@ class WaveformScrubber(QWidget):
         self.has_real_data = False
         self.samples = [0.0] * 5000
         self.total_samples = len(self.samples)
+        self._samples_np = np.zeros(self.total_samples, dtype=np.float64)
         self.current_index = 0.0
         self.update()
 
@@ -401,63 +410,25 @@ class WaveformScrubber(QWidget):
         # --- MODE 0: HEAVY DJ SCRATCH WAVEFORM ---
         if self.display_mode == 0:
             if getattr(self, 'has_real_data', False):
-                fade_lookup = getattr(self, '_fade_lookup', None)
-                if not fade_lookup or len(fade_lookup) != width:
+                fade_lookup_np = self._fade_lookup_np
+                if fade_lookup_np.shape[0] != width:
                     self._rebuild_fade_lookup()
-                    fade_lookup = self._fade_lookup
+                    fade_lookup_np = self._fade_lookup_np
 
-                img = getattr(self, '_waveform_image', None)
-                if img is None or img.width() != width or img.height() != height:
-                    img = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
-                    self._waveform_image = img
-                
-                img.fill(0) 
-                
-                img_painter = QPainter(img)
-                img_painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+                buf = self._waveform_buf
+                if buf is None or buf.shape[0] != height or buf.shape[1] != width:
+                    buf = np.zeros((height, width, 4), dtype=np.uint8)
+                    self._waveform_buf = buf
 
-                for x in range(width):
-                    distance_from_center_px = x - center_x
-                    sample_offset = distance_from_center_px / self.pixels_per_sample
-                    exact_index = self.current_index + sample_offset
+                from player.panels.footer.waveform_renderer import render_scratch_waveform
+                render_scratch_waveform(
+                    buf, width, height,
+                    self._samples_np, self.total_samples,
+                    self.current_index, self.pixels_per_sample, fade_lookup_np,
+                    base_hue, max_bar_height, self._user_picked, self.master_color
+                )
 
-                    if 0 <= exact_index < self.total_samples - 1:
-                        idx1 = int(exact_index)
-                        frac = exact_index - idx1
-                        raw_val = self.samples[idx1] + (self.samples[idx1 + 1] - self.samples[idx1]) * frac
-                        val = raw_val * raw_val * 0.5 + raw_val * 0.5
-                        bar_h = val * max_bar_height
-
-                        fade_factor = fade_lookup[x]
-
-                        if x < center_x:
-                            brightness = int(120 + (135 * fade_factor))
-                            alpha = int(255 * fade_factor)
-                        else:
-                            brightness = int(70 + (130 * fade_factor))
-                            alpha = int(180 * fade_factor)
-
-                        hue_shift = int(20 * raw_val)
-                        final_hue = (base_hue + hue_shift) % 360
-                        sat_base = self.master_color.saturation() if self._user_picked else 255
-                        sat_min  = 0.0 if self._user_picked else 0.3
-                        saturation = int(sat_base * max(sat_min, 1.0 - (raw_val * 0.6)))
-
-                        key = (final_hue, saturation, brightness, alpha)
-                        rgba = self._color_cache.get(key)
-                        if rgba is None:
-                            c = QColor.fromHsv(final_hue, saturation, brightness)
-                            c.setAlpha(alpha)
-                            rgba = c.rgba()
-                            self._color_cache[key] = rgba
-
-                        top    = max(0, int(center_y - bar_h))
-                        bottom = min(height, int(center_y + bar_h))
-                        
-                        img_painter.setPen(QColor.fromRgba(rgba))
-                        img_painter.drawLine(x, top, x, bottom)
-
-                img_painter.end()
+                img = QImage(buf.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
                 painter.drawImage(0, 0, img)
             else:
                 if self.duration_ms > 1:
@@ -511,10 +482,17 @@ class WaveformScrubber(QWidget):
         # --- MODE 2: BAR WAVEFORM ---
         elif self.display_mode == 2:
             if getattr(self, 'has_real_data', False):
-                from player.panels.footer.waveform_renderer import render_waveform_bars
-                render_waveform_bars(
-                    painter, width, height,
-                    self.samples, self.total_samples,
+                from player.panels.footer.waveform_renderer import build_waveform_path, draw_waveform_bars
+
+                if (self._bar_path is None
+                        or self._bar_path_dims != (width, height)
+                        or self._bar_path_samples is not self.samples):
+                    self._bar_path = build_waveform_path(width, height, self.samples, self.total_samples)
+                    self._bar_path_dims = (width, height)
+                    self._bar_path_samples = self.samples
+
+                draw_waveform_bars(
+                    painter, self._bar_path, width, height,
                     self.position_ms, self.duration_ms,
                     self.master_color
                 )

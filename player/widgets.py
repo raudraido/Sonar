@@ -1712,7 +1712,10 @@ class LeftPanelCoverProvider(QQuickImageProvider):
         which = image_id.split("/")[0]
         src = self._current if which == "current" else self._old
 
-        size = self.SIZE
+        # Render at the source pixmap's own resolution (never upscale) — it's
+        # already sized generously (see update_background_threaded) so QML
+        # only ever scales this down to fit artTargetSize.
+        size = min(src.width(), src.height()) if (src is not None and not src.isNull()) else self.SIZE
         out = QImage(size, size, QImage.Format.Format_ARGB32)
         out.fill(Qt.GlobalColor.transparent)
         p = QPainter(out)
