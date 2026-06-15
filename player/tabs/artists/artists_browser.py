@@ -1,23 +1,19 @@
 import random
 import re
 import time
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-                             QListWidgetItem, QStackedWidget,
-                             QLabel, QScrollArea,
-                             QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView,
-                             QStyledItemDelegate, QStyle)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget)
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRect, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QFont, QPainterPath, QPen, QFontMetrics, QPolygon
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtProperty, QTimer, QPoint, QRectF, QThread, QEvent, QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl, QMetaObject
+from PyQt6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtQuick import QQuickImageProvider
 
-from player.widgets import CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, ArrowButton, AlbumIconProvider, AlbumDetailCoverProvider
+from player.widgets import CoverImageProvider, QMLGridWrapper, QMLMiddleClickScroller, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider
 from player.qml_search import SearchController, GridSearchKeyFilter, set_window_shortcuts_enabled
 from player import resource_path
 from player.workers import GridCoverWorker
 
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, resolve_menu_hover, SmoothScroller, WheelForwarder, CoverDecodeWorker
+from player.mixins.visuals import resolve_menu_hover, CoverDecodeWorker
 
 
 class ArtistPlayWorker(QThread): # Fetches all tracks matching an artist (incl. as albumArtist, splitting multi-artist strings), sorted by album/disc/track number for playback.
@@ -378,297 +374,99 @@ class TrackLoaderWorker(QThread): # Fetches the track list for a single album an
             print(f"[TrackLoaderWorker] Error fetching album {self.album_id}: {e}")
             self.tracks_ready.emit([], self.album_id)
 
-class PopularTrackDelegate(QStyledItemDelegate): # Render track items with cover art, title, and hover/selection effects.
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.accent_color = "#ffffff"
-
-    def update_color(self, color):
-        self.accent_color = color
-
-    def _theme(self):
-        p = self.parent()
-        w = p.window() if p and hasattr(p, 'window') else None
-        return getattr(w, 'theme', None)
-
-    def _primary_px(self):
-        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
-
-    def _primary_color(self):
-        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
-
-    def paint(self, painter, option, index):
-        painter.save()
-        is_selected = option.state & QStyle.StateFlag.State_Selected
-        is_hovered = option.state & QStyle.StateFlag.State_MouseOver
-
-        if index.column() == 1 and (is_hovered or is_selected):
-            view = option.widget
-            vp_w = view.viewport().width() if view else option.rect.width()
-            # The SongListWidget has no scrollbar; check parent QScrollArea instead
-            sb_w = 0
-            p = view.parentWidget() if view else None
-            while p:
-                if isinstance(p, QScrollArea):
-                    sb = p.verticalScrollBar()
-                    if sb and sb.isVisible():
-                        sb_w = sb.width()
-                    break
-                p = p.parentWidget()
-            right_inset = max(1, 8 - sb_w)
-            row_rect = QRectF(8, option.rect.y(), vp_w - 8 - right_inset, option.rect.height())
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(resolve_menu_hover(self._theme())))
-            painter.drawRoundedRect(row_rect, 6, 6)
-
-        if index.column() == 1:
-            track = index.data(Qt.ItemDataRole.UserRole)
-            if not track:
-                painter.restore()
-                return
-
-            rect = option.rect
-            
-            # 2. Draw Cover Art
-            icon = index.data(Qt.ItemDataRole.DecorationRole)
-            cover_size = 40
-            margin = (rect.height() - cover_size) // 2
-            cover_rect = QRect(rect.x() + 5, rect.y() + margin, cover_size, cover_size)
-            
-            if icon and not icon.isNull():
-                pixmap = icon.pixmap(cover_size, cover_size)
-                path = QPainterPath()
-                path.addRoundedRect(QRectF(cover_rect), 4, 4) 
-                painter.setClipPath(path)
-                painter.drawPixmap(cover_rect, pixmap)
-                painter.setClipping(False)
-            else:
-                painter.setBrush(QColor("#222"))
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawRoundedRect(cover_rect, 4, 4)
-
-            # 3. Draw Title (Vertically Centered, No Subtitle)
-            text_x = cover_rect.right() + 15
-            title = track.get('title', 'Unknown')
-            
-            f = QFont(); f.setPixelSize(self._primary_px())
-            painter.setFont(f)
-
-            if is_selected or is_hovered:
-                painter.setPen(QColor(self.accent_color))
-            else:
-                painter.setPen(QColor(self._primary_color()))
-                
-            title_rect = QRect(text_x, rect.y(), rect.width() - text_x, rect.height())
-            
-            fm = painter.fontMetrics()
-            elided_title = fm.elidedText(title, Qt.TextElideMode.ElideRight, title_rect.width() - 10)
-            painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
-            
-        else:
-            super().paint(painter, option, index)
-            
-        painter.restore()
-
-class AlbumLinkDelegate(QStyledItemDelegate): # Render album links with hover effects and underlining when hovered.
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.hovered_row = -1
-        self.accent_color = "#ffffff"
-
-    def update_color(self, color):
-        self.accent_color = color
-
-    def _theme(self):
-        p = self.parent()
-        w = p.window() if p and hasattr(p, 'window') else None
-        return getattr(w, 'theme', None)
-
-    def _primary_px(self):
-        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
-
-    def _primary_color(self):
-        t = self._theme(); return getattr(t, 'font_color_primary', '#dddddd') if t else '#dddddd'
-    
-    def set_hovered(self, row):
-        self.hovered_row = row
-
-    def paint(self, painter, option, index):
-        painter.save()
-        is_selected = option.state & QStyle.StateFlag.State_Selected
-        is_row_hovered = option.state & QStyle.StateFlag.State_MouseOver
-        is_cell_hovered = (index.row() == self.hovered_row)
-        
-        font = QFont(); font.setPixelSize(self._primary_px())
-
-        if is_cell_hovered:
-            font.setUnderline(True)
-            painter.setPen(QColor(self.accent_color))
-        elif is_row_hovered or is_selected:
-            painter.setPen(QColor(self.accent_color))
-        else:
-            painter.setPen(QColor(self._primary_color())) 
-            
-        painter.setFont(font)
-        
-        text = index.data(Qt.ItemDataRole.DisplayRole)
-        if text:
-            rect = option.rect
-            text_rect = QRect(rect.x() + 5, rect.y(), rect.width() - 10, rect.height())
-            
-            fm = painter.fontMetrics()
-            elided_text = fm.elidedText(str(text), Qt.TextElideMode.ElideRight, text_rect.width())
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_text)
-        
-        painter.restore()
-
-class SongListWidget(QTreeWidget): # Display a list of songs with cover art, title, album, and duration; supports hover effects and emits signals on interactions.
-    play_track = pyqtSignal(dict)
-    album_clicked = pyqtSignal(dict) 
+class TrackListModel(QAbstractListModel): # Model backing the "Popular" tracks QML list: track number, title, album, duration, cover id, and the raw song dict.
+    TRACK_NUMBER_ROLE = Qt.ItemDataRole.UserRole + 1
+    TITLE_ROLE        = Qt.ItemDataRole.UserRole + 2
+    ALBUM_ROLE        = Qt.ItemDataRole.UserRole + 3
+    DURATION_ROLE     = Qt.ItemDataRole.UserRole + 4
+    COVER_ID_ROLE     = Qt.ItemDataRole.UserRole + 5
+    RAW_DATA_ROLE     = Qt.ItemDataRole.UserRole + 6
 
     def __init__(self):
         super().__init__()
-        self.setHeaderLabels(["#", "Track", "Album", "🕒"])
-        self.setHeaderHidden(True) 
-        self.setRootIsDecorated(False)
-        self.setIndentation(0)
-        
-        # 1. FORCE Qt to allow StrongFocus on both the widget and viewport!
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.viewport().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        
-        self.setMouseTracking(True)
-        self.viewport().setMouseTracking(True)
-        
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.itemDoubleClicked.connect(self.on_item_double_clicked)
-        self.itemClicked.connect(self.on_item_single_clicked) 
-        
-        self.setFixedHeight(0) 
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        
-        self.track_delegate = PopularTrackDelegate(self)
-        self.setItemDelegateForColumn(1, self.track_delegate)
-        
-        self.album_delegate = AlbumLinkDelegate(self)
-        self.setItemDelegateForColumn(2, self.album_delegate)
-        
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(1, 350)
-        self.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setAllColumnsShowFocus(False)
+        self.tracks = []
 
-        self.setColumnWidth(0, 45) 
-        self.setColumnWidth(3, 70)
-        
-        self.update_style("#ffffff")
+    def rowCount(self, parent=QModelIndex()): return len(self.tracks)
 
-    def mouseMoveEvent(self, event):
-        index = self.indexAt(event.pos())
-        # If hovering over column 2 (Album), trigger the underline!
-        if index.isValid() and index.column() == 2:
-            self.album_delegate.set_hovered(index.row())
-            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
-            self.album_delegate.set_hovered(-1)
-            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-            
-        self.viewport().update() # Force an instant visual refresh
-        super().mouseMoveEvent(event)
-        
-    def leaveEvent(self, event):
-        self.album_delegate.set_hovered(-1)
-        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-        self.viewport().update()
-        super().leaveEvent(event)
+    def data(self, index, role):
+        if not index.isValid(): return None
+        t = self.tracks[index.row()]
+        if role == self.TRACK_NUMBER_ROLE: return index.row() + 1
+        if role == self.TITLE_ROLE: return t.get('title') or 'Unknown'
+        if role == self.ALBUM_ROLE: return t.get('album') or ''
+        if role == self.DURATION_ROLE: return t.get('duration') or ''
+        if role == self.COVER_ID_ROLE: return t.get('coverId_forced') or t.get('coverArt') or t.get('albumId') or ''
+        if role == self.RAW_DATA_ROLE: return t
+        return None
 
-    def currentChanged(self, current, previous):
-        super().currentChanged(current, previous)
-        self.viewport().update()
+    def roleNames(self):
+        return {
+            self.TRACK_NUMBER_ROLE: b"trackNumber",
+            self.TITLE_ROLE: b"trackTitle",
+            self.ALBUM_ROLE: b"trackAlbum",
+            self.DURATION_ROLE: b"trackDuration",
+            self.COVER_ID_ROLE: b"coverId",
+            self.RAW_DATA_ROLE: b"rawData",
+        }
 
-    def update_style(self, accent_color):
-        self.track_delegate.update_color(accent_color)
-        self.album_delegate.update_color(accent_color)
+    def set_tracks(self, tracks):
+        self.beginResetModel()
+        self.tracks = list(tracks)
+        self.endResetModel()
 
-        theme = getattr(self.window(), 'theme', None) if self.window() else None
-        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
-        pri_size  = getattr(theme, 'font_size_primary', 14) if theme else 14
+    def update_cover(self, cover_id):
+        forced_id = f"{cover_id}?t={time.time()}"
+        for i, t in enumerate(self.tracks):
+            raw = str(t.get('coverArt') or t.get('albumId') or '')
+            if raw == cover_id:
+                t['coverId_forced'] = forced_id
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
 
-        self.setStyleSheet(f"""
-            QTreeWidget {{
-                background: transparent;
-                border: none;
-                outline: none;
-            }}
-            QTreeWidget::item {{
-                height: 44px;
-                color: {pri_color};
-                font-size: {pri_size}px;
-                border: none;
-                outline: 0;
-            }}
-            QTreeWidget::item:hover {{
-                background: transparent;
-                color: {accent_color};
-                border: none;
-                outline: 0;
-            }}
-            QTreeWidget::item:selected {{
-                background: transparent;
-                color: {pri_color};
-                border: none;
-                outline: 0;
-            }}
-        """)
-        self.viewport().update()
+class PopularTrackCoverProvider(QQuickImageProvider): # Serves rounded-rect track covers for the "Popular" QML list, with a class-level cache shared across loads.
 
-    def populate(self, songs, cover_worker=None, pending_items=None):
-        self.clear()
-        from PyQt6.QtGui import QFont
-        from PyQt6.QtCore import Qt
-        theme = getattr(self.window(), 'theme', None) if self.window() else None
-        pri_size = getattr(theme, 'font_size_primary', 14) if theme else 14
-        normal_font = QFont(); normal_font.setPixelSize(pri_size)
-        
-        for i, s in enumerate(songs):
-            item = QTreeWidgetItem([str(i+1), "", s.get('album', ''), s.get('duration', '')])
-            item.setData(0, Qt.ItemDataRole.UserRole, s)
-            item.setData(1, Qt.ItemDataRole.UserRole, s) 
-            
-            item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
-            item.setFont(0, normal_font)
-            item.setTextAlignment(3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            item.setFont(3, normal_font)
-            
-            self.addTopLevelItem(item)
-            
-            if cover_worker and pending_items is not None:
-                cid = s.get('coverArt') or s.get('albumId')
-                if cid:
-                    if cid not in pending_items:
-                        pending_items[cid] = []
-                    pending_items[cid].append(item)
-                    cover_worker.queue_cover(cid, priority=True)
-        
-        row_h = 44
-        total_h = (len(songs) * row_h) + 20
-        self.setFixedHeight(total_h)
+    _cache = {}
 
-    def on_item_single_clicked(self, item, col):
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        if data and col == 2:
-            self.album_clicked.emit(data)
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
 
-    def on_item_double_clicked(self, item, col):
-        data = item.data(0, Qt.ItemDataRole.UserRole)
+    def requestImage(self, id, _requestedSize):
+        from PyQt6.QtGui import QImage, QPainter, QPainterPath
+        from PyQt6.QtCore import QRectF
+        real_id = id.split("?t=")[0]
+        data = self._cache.get(real_id)
+        size = 80
+        img = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
         if data:
-            self.play_track.emit(data)
+            source = QImage()
+            source.loadFromData(data)
+            if not source.isNull():
+                source = source.scaled(size, size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation)
+                painter = QPainter(img)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(0, 0, size, size), 8, 8)
+                painter.setClipPath(path)
+                painter.drawImage(0, 0, source)
+                painter.end()
+        return img, img.size()
+
+class TrackListBridge(QObject): # Bridge for signals between the "Popular" tracks QML list and Python.
+    selectIndex   = pyqtSignal(int)
+    trackClicked  = pyqtSignal(int)
+    albumClicked  = pyqtSignal(int)
+
+    @pyqtSlot(int)
+    def emitTrackClicked(self, idx):
+        self.trackClicked.emit(idx)
+
+    @pyqtSlot(int)
+    def emitAlbumClicked(self, idx):
+        self.albumClicked.emit(idx)
 
 class SectionCoverProvider(QQuickImageProvider): # Serves album covers for the artist detail grids, with a class-level cache to share loaded images across all sections.
     
@@ -702,23 +500,131 @@ class SectionCoverProvider(QQuickImageProvider): # Serves album covers for the a
                 painter.end()
         return img, img.size()
 
-class SectionGridBridge(QObject): # Bridge for signals between the QML section grids and the Python code; also reports content height changes for dynamic resizing.
-    accentColorChanged        = pyqtSignal(str)
-    selectIndex               = pyqtSignal(int)
-    itemClicked               = pyqtSignal(int)
-    playClicked               = pyqtSignal(int)
-    artistNameClicked         = pyqtSignal(str, str)  # name, artist_id
-    contentHeightChanged      = pyqtSignal(int)
-    fontSizePrimaryChanged    = pyqtSignal(int)
-    fontSizeSecondaryChanged  = pyqtSignal(int)
-    fontColorPrimaryChanged   = pyqtSignal(str)
-    fontColorSecondaryChanged = pyqtSignal(str)
-    skeletonBaseColorChanged  = pyqtSignal(str)
-    explicitWidthChanged      = pyqtSignal(int)
+class SectionGridBridge(QObject): # Single shared bridge for all album-section grids: signals/slots carry a leading sectionRow (the chunk's row index in ArtistSectionsModel) alongside the item index.
+    selectIndex       = pyqtSignal(int, int)  # sectionRow, itemIndex
+    itemClicked       = pyqtSignal(int, int)
+    playClicked       = pyqtSignal(int, int)
+    artistNameClicked = pyqtSignal(str, str)  # name, artist_id
 
-    def __init__(self, model):
+    @pyqtSlot(int, int)
+    def emitItemClicked(self, section_row, idx):
+        self.itemClicked.emit(section_row, idx)
+
+    @pyqtSlot(int, int)
+    def emitPlayClicked(self, section_row, idx):
+        self.playClicked.emit(section_row, idx)
+
+    @pyqtSlot(str, str)
+    def emitArtistNameClicked(self, name, artist_id=""):
+        self.artistNameClicked.emit(name, artist_id)
+
+class ArtistSectionsModel(QAbstractListModel): # One row per album-section chunk (Albums/Singles/Appears On, split into _QML_CHUNK-sized pieces): sectionTitle/sectionCount are only set on a chunk's first row, and albumModel is that chunk's AlbumModel, bound directly by the QML GridView delegate.
+    TITLE_ROLE       = Qt.ItemDataRole.UserRole + 1
+    COUNT_ROLE       = Qt.ItemDataRole.UserRole + 2
+    ALBUM_MODEL_ROLE = Qt.ItemDataRole.UserRole + 3
+
+    def __init__(self):
         super().__init__()
-        self.model = model
+        self.rows = []  # [{'title': str, 'count': int, 'model': AlbumModel}, ...]
+
+    def rowCount(self, parent=QModelIndex()): return len(self.rows)
+
+    def data(self, index, role):
+        if not index.isValid(): return None
+        row = self.rows[index.row()]
+        if role == self.TITLE_ROLE: return row['title']
+        if role == self.COUNT_ROLE: return row['count']
+        if role == self.ALBUM_MODEL_ROLE: return row['model']
+        return None
+
+    def roleNames(self):
+        return {
+            self.TITLE_ROLE: b"sectionTitle",
+            self.COUNT_ROLE: b"sectionCount",
+            self.ALBUM_MODEL_ROLE: b"albumModel",
+        }
+
+    def set_sections(self, rows):
+        self.beginResetModel()
+        self.rows = rows
+        self.endResetModel()
+
+class ArtistRowModel(QAbstractListModel): # Model backing the related-artists QML strip: name, circular cover id, and the raw artist dict.
+    NAME_ROLE     = Qt.ItemDataRole.UserRole + 1
+    COVER_ID_ROLE = Qt.ItemDataRole.UserRole + 2
+    RAW_DATA_ROLE = Qt.ItemDataRole.UserRole + 3
+
+    def __init__(self):
+        super().__init__()
+        self.artists = []
+
+    def rowCount(self, parent=QModelIndex()): return len(self.artists)
+
+    def data(self, index, role):
+        if not index.isValid(): return None
+        a = self.artists[index.row()]
+        if role == self.NAME_ROLE: return a.get('name') or a.get('title') or ''
+        if role == self.COVER_ID_ROLE: return a.get('coverId_forced') or a.get('cover_id') or ''
+        if role == self.RAW_DATA_ROLE: return a
+        return None
+
+    def roleNames(self):
+        return {
+            self.NAME_ROLE: b"artistName",
+            self.COVER_ID_ROLE: b"coverId",
+            self.RAW_DATA_ROLE: b"rawData",
+        }
+
+    def set_artists(self, artists):
+        self.beginResetModel()
+        self.artists = list(artists)
+        self.endResetModel()
+
+    def update_cover(self, cover_id):
+        forced_id = f"{cover_id}?t={time.time()}"
+        for i, a in enumerate(self.artists):
+            raw = str(a.get('cover_id') or a.get('coverArt') or a.get('id') or '')
+            if raw == cover_id:
+                a['coverId_forced'] = forced_id
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.COVER_ID_ROLE])
+
+class RelatedArtistCoverProvider(QQuickImageProvider): # Serves circular artist photos for the related-artists strip, with a class-level cache shared across loads.
+
+    _cache = {}
+
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+
+    def requestImage(self, id, _requestedSize):
+        from PyQt6.QtGui import QImage, QPainter, QPainterPath
+        from PyQt6.QtCore import QRectF
+        real_id = id.split("?t=")[0]
+        data = self._cache.get(real_id)
+        size = 220
+        img = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        if data:
+            source = QImage()
+            source.loadFromData(data)
+            if not source.isNull():
+                source = source.scaled(size, size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation)
+                painter = QPainter(img)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                path = QPainterPath()
+                path.addEllipse(QRectF(0, 0, size, size))
+                painter.setClipPath(path)
+                painter.drawImage(0, 0, source)
+                painter.end()
+        return img, img.size()
+
+class RelatedArtistsBridge(QObject): # Bridge for signals between the related-artists QML strip and Python.
+    selectIndex  = pyqtSignal(int)
+    itemClicked  = pyqtSignal(int)
+    playClicked  = pyqtSignal(int)
 
     @pyqtSlot(int)
     def emitItemClicked(self, idx):
@@ -727,430 +633,6 @@ class SectionGridBridge(QObject): # Bridge for signals between the QML section g
     @pyqtSlot(int)
     def emitPlayClicked(self, idx):
         self.playClicked.emit(idx)
-
-    @pyqtSlot(str, str)
-    def emitArtistNameClicked(self, name, artist_id=""):
-        self.artistNameClicked.emit(name, artist_id)
-
-    @pyqtSlot(float)
-    def reportContentHeight(self, h):
-        self.contentHeightChanged.emit(max(1, int(h) + 1))
-
-class QMLAlbumSectionWidget(QWidget): # Widget for an album section in the artist detail view, using a QML GridView for smooth resizing and dynamic content.
-    
-    album_clicked       = pyqtSignal(dict)
-    play_album          = pyqtSignal(dict)
-    artist_name_clicked = pyqtSignal(str, str)  # name, artist_id
-
-    def __init__(self, title, count, albums):
-        super().__init__()
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 5, 0, 10)
-        outer.setSpacing(5)
-
-        # ── title bar ──────────────────────────────────────────────────────
-        title_container = QWidget()
-        self.title_layout = QHBoxLayout(title_container)
-        self.title_layout.setContentsMargins(10, 0, 10, 0)
-        self.title_layout.setSpacing(10)
-        self.title_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-        self.lbl_count = QLabel(str(count))
-        self.lbl_count.setFixedHeight(22)
-        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_count.setStyleSheet(
-            "color: #aaa; background: transparent; border: 1px solid #444;"
-            " border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-
-        self.title_layout.addWidget(self.lbl_title)
-        self.title_layout.addWidget(self.lbl_count)
-        self.title_layout.addStretch()
-        outer.addWidget(title_container)
-        title_container.setVisible(bool(title))
-
-        # ── QML grid ───────────────────────────────────────────────────────
-        # QQuickView in a window container renders at the monitor's real
-        # refresh rate, unlike QQuickWidget which caps at ~60Hz regardless
-        # of display Hz.
-        self.qml_widget = QMLGridWrapper()
-        self.qml_widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        self.qml_widget.setMinimumHeight(10)
-        # QQuickView defaults to a white clear color — match the section
-        # background to avoid a white flash while the QML loads.
-        self._set_qml_widget_color(QColor(14, 14, 14))
-        outer.addWidget(self.qml_widget)
-
-        self.album_model = AlbumModel()
-        self.bridge = SectionGridBridge(self.album_model)
-
-        self.bridge.itemClicked.connect(self._on_item_clicked)
-        self.bridge.playClicked.connect(self._on_play_clicked)
-        self.bridge.artistNameClicked.connect(self.artist_name_clicked)
-
-        engine = self.qml_widget.engine()
-        self._cover_provider = SectionCoverProvider()
-        engine.addImageProvider("sectioncovers", self._cover_provider)
-
-        ctx = self.qml_widget.rootContext()
-        ctx.setContextProperty("sectionAlbumModel", self.album_model)
-        ctx.setContextProperty("sectionBridge", self.bridge)
-
-        self.qml_widget.setSource(QUrl.fromLocalFile(resource_path("player/tabs/artists/artist_section_grid.qml")))
-        from PyQt6.QtCore import QTimer as _QTimer
-        def _emit_section_typography():
-            theme = getattr(self.window(), 'theme', None)
-            if theme:
-                self.bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
-                self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
-                self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
-                self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
-                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-        _QTimer.singleShot(0, _emit_section_typography)
-
-        # facade so legacy code doing `row.list_widget.count()` etc. still works
-        self.list_widget = _SectionListFacade(self)
-        self.current_index = 0
-
-        self.populate(albums)
-
-    def items_per_row(self):
-        avail = max(1, self.qml_widget.width() - 40)  # leftMargin + rightMargin = 40
-        return max(1, int(avail / (180 + 20)))         # baseItemSize + itemGap*2
-
-    def select(self, idx):
-        count = self.album_model.rowCount()
-        if count == 0:
-            return
-        idx = max(0, min(idx, count - 1))
-        self.current_index = idx
-        self.bridge.selectIndex.emit(idx)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        w = event.size().width()
-        if w != event.oldSize().width() and w > 0:
-            self.bridge.explicitWidthChanged.emit(w)
-            self._set_height(w)
-
-    def _set_height(self, w=None):
-        if w is None:
-            w = self.qml_widget.width()
-        if w <= 0:
-            return
-        n = self.album_model.rowCount()
-        if n == 0:
-            return
-        avail     = max(1, w - 4 - 4)          # leftMargin + rightMargin
-        per_row   = max(1, int(avail // 200))   # baseItemSize(180) + itemGap*2(20)
-        cell_w    = int(avail // per_row)
-        cell_h    = cell_w + 70                 # matches QML cellHeight: widthPerItem + 70
-        n_rows    = (n + per_row - 1) // per_row
-        h         = n_rows * cell_h + 4 + 4    # topMargin + bottomMargin
-        self.qml_widget.setFixedHeight(max(10, h))
-
-    def _on_item_clicked(self, idx):
-        if 0 <= idx < len(self.album_model.albums):
-            self.album_clicked.emit(self.album_model.albums[idx])
-
-    def _on_play_clicked(self, idx):
-        if 0 <= idx < len(self.album_model.albums):
-            self.play_album.emit(self.album_model.albums[idx])
-
-    def set_bg_color(self, c: str):
-        self._bg_color = c
-        r, g, b = (int(x) for x in c.split(','))
-        self._set_qml_widget_color(QColor(r, g, b))
-
-    def _set_qml_widget_color(self, color: QColor):
-        self.qml_widget.setClearColor(color)
-
-    def set_accent_color(self, color):
-        self.bridge.accentColorChanged.emit(color)
-        theme = getattr(self.window(), 'theme', None)
-        if theme:
-            self.bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
-            self.bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
-            self.bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
-            self.bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
-            self.bridge.skeletonBaseColorChanged.emit(
-                getattr(theme, 'skeleton_base', '#282828'))
-            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-            self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-
-    def populate(self, albums):
-        # Normalise so AlbumModel's cover_id key is always populated
-        normalised = []
-        for a in albums:
-            d = dict(a)
-            if not d.get('cover_id'):
-                d['cover_id'] = d.get('coverArt') or d.get('id') or ''
-            normalised.append(d)
-        self.album_model.beginResetModel()
-        self.album_model.albums = normalised
-        self.album_model.endResetModel()
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, self._set_height)
-
-    def apply_cover(self, cover_id, image_data):
-        SectionCoverProvider._cache[cover_id] = image_data
-        self.album_model.update_cover(cover_id)
-
-class _SectionListFacade: # Adapter so QMLAlbumSectionWidget exposes the same list_widget API (count, setFocus, setCurrentRow, visualItemRect, etc.) as QListWidget-based rows, letting shared section-navigation code treat both uniformly.
-
-    def __init__(self, section: QMLAlbumSectionWidget):
-        self._s = section
-
-    def count(self):
-        return len(self._s.album_model.albums)
-
-    def setFocus(self, reason=Qt.FocusReason.OtherFocusReason):
-        self._s.qml_widget.setFocus(reason)
-        self._s.bridge.selectIndex.emit(0)
-
-    def setCurrentRow(self, row):
-        self._s.bridge.selectIndex.emit(max(0, row))
-
-    def clearSelection(self):
-        pass
-
-    def installEventFilter(self, obj):
-        self._s.qml_widget.installEventFilter(obj)
-
-    def viewport(self):
-        return self._s.qml_widget
-
-    # visualItemRect is only used for scroll-to-item; return the section top instead
-    def visualItemRect(self, _item):
-        return QRect(0, 0, self._s.qml_widget.width(), self._s.qml_widget.height() // max(1, self.count()))
-
-    def item(self, _idx):
-        return None
-
-    def currentRow(self):
-        return self._s.current_index
-
-class CircularArtistDelegate(QStyledItemDelegate): # Render artist cards with circular photos, hover effects, and names below, for the related artists strip.
-  
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.master_color = QColor("#1db954")
-
-    def set_master_color(self, color):
-        self.master_color = QColor(color)
-
-    def _theme(self):
-        p = self.parent()
-        w = p.window() if p and hasattr(p, 'window') else None
-        return getattr(w, 'theme', None)
-
-    def _primary_px(self):
-        t = self._theme(); return getattr(t, 'font_size_primary', 14) if t else 14
-
-    def _primary_color(self):
-        t = self._theme(); return getattr(t, 'font_color_primary', '#eeeeee') if t else '#eeeeee'
-
-    def paint(self, painter, option, index):
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        rect     = option.rect
-        size     = rect.width() - 20
-        img_rect = QRect(rect.x() + 10, rect.y() + 10, size, size)
-
-        is_hovered  = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-
-        # --- circular clip (same pattern as GridItemDelegate) ---
-        clip = QPainterPath()
-        clip.addEllipse(img_rect.x(), img_rect.y(), img_rect.width(), img_rect.height())
-
-        painter.save()
-        painter.setClipPath(clip)
-
-        # Draw image
-        icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if icon and not icon.isNull():
-            pix = icon.pixmap(size, size)
-            painter.drawPixmap(img_rect.x() + (size - pix.width()) // 2,
-                               img_rect.y() + (size - pix.height()) // 2, pix)
-        else:
-            painter.setBrush(QColor("#333333"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(img_rect)
-
-        # Dark hover overlay inside clip
-        if is_hovered or is_selected:
-            painter.setBrush(QColor(0, 0, 0, 120))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(img_rect)
-
-            # Play button (smaller than album cards)
-            center    = img_rect.center()
-            play_size = min(40, size // 3)
-            play_rect = QRect(0, 0, play_size, play_size)
-            play_rect.moveCenter(center)
-            painter.setBrush(self.master_color)
-            painter.drawEllipse(play_rect)
-
-            tri = play_size // 3
-            p1 = QPoint(center.x() - tri // 3, center.y() - tri // 2)
-            p2 = QPoint(center.x() - tri // 3, center.y() + tri // 2)
-            p3 = QPoint(center.x() + tri // 2 + 2, center.y())
-            painter.setBrush(QColor("#111111"))
-            painter.drawPolygon(QPolygon([p1, p2, p3]))
-
-        painter.restore()  # end clip
-
-        # Accent ring drawn OUTSIDE clip so full pen width is visible
-        if is_hovered or is_selected:
-            painter.setPen(QPen(self.master_color, 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(img_rect.adjusted(-1, -1, 1, 1))
-
-        # Artist name below (unclipped)
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if data:
-            name = data.get('name') or data.get('title') or ''
-            text_color = self.master_color.name() if (is_hovered or is_selected) else self._primary_color()
-            painter.setPen(QColor(text_color))
-            font = painter.font()
-            font.setBold(True)
-            font.setPixelSize(self._primary_px())
-            painter.setFont(font)
-            fm = QFontMetrics(font)
-            text_y = img_rect.bottom() + 10
-            text_w = rect.width() - 10
-            painter.drawText(
-                QRect(rect.x() + 5, text_y, text_w, 20),
-                Qt.AlignmentFlag.AlignHCenter,
-                fm.elidedText(name, Qt.TextElideMode.ElideRight, text_w)
-            )
-
-        painter.restore()
-
-class RelatedArtistRowWidget(QWidget): # A horizontally scrollable strip of related artists, showing circular photos with names below, and left/right arrows for navigation; max 10 items.
-   
-    artist_clicked = pyqtSignal(dict)
-
-    CELL_W = 220
-
-    def __init__(self, title, artists):
-        super().__init__()
-        self._artists = artists
-        self._btn_left = None
-        self._btn_right = None
-
-        cell_h = self.CELL_W + 50
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 5, 0, 10)
-        layout.setSpacing(5)
-
-        # Title row
-        title_row = QWidget()
-        title_layout = QHBoxLayout(title_row)
-        title_layout.setContentsMargins(10, 0, 10, 0)
-        self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet("color: white; font-weight: bold; font-size: 20px;")
-        self.lbl_count = QLabel(str(len(artists)))
-        self.lbl_count.setFixedHeight(22)
-        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_count.setStyleSheet("color: #aaa; background: transparent; border: 1px solid #444; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-        self._accent_color = "#888888"
-        self._btn_left  = ArrowButton("left",  self._accent_color)
-        self._btn_right = ArrowButton("right", self._accent_color)
-
-        self._btn_left.clicked.connect(lambda: self._scroll_by(-self.CELL_W))
-        self._btn_right.clicked.connect(lambda: self._scroll_by(self.CELL_W))
-
-        title_layout.addWidget(self.lbl_title)
-        title_layout.addWidget(self.lbl_count)
-        title_layout.addStretch()
-        title_layout.addWidget(self._btn_left)
-        title_layout.addWidget(self._btn_right)
-        layout.addWidget(title_row)
-
-        self.list_widget = QListWidget()
-        self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-        self.list_widget.setFlow(QListWidget.Flow.LeftToRight)
-        self.list_widget.setMovement(QListWidget.Movement.Static)
-        self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.list_widget.setWrapping(False)
-        self.list_widget.setMouseTracking(True)
-        self.list_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list_widget.installEventFilter(self)
-        self.list_widget.setIconSize(QSize(self.CELL_W, self.CELL_W))
-        self.list_widget.setGridSize(QSize(self.CELL_W, cell_h))
-        self.list_widget.setFixedHeight(cell_h + 12)
-        self.list_widget.setStyleSheet("""
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item:hover { background: #1a1a1a; }
-            QListWidget::item:selected { background: transparent; }
-        """)
-
-        self.delegate = CircularArtistDelegate(self.list_widget)
-        self.list_widget.setItemDelegate(self.delegate)
-
-        placeholder = QPixmap(self.CELL_W, self.CELL_W)
-        placeholder.fill(QColor("#333"))
-        placeholder_icon = QIcon(placeholder)
-
-        for artist in artists:
-            item = QListWidgetItem()
-            item.setIcon(placeholder_icon)
-            item.setData(Qt.ItemDataRole.UserRole, artist)
-            item.setSizeHint(QSize(self.CELL_W, cell_h))
-            self.list_widget.addItem(item)
-
-        self.list_widget.horizontalScrollBar().valueChanged.connect(self._update_arrow_buttons)
-        self.list_widget.horizontalScrollBar().rangeChanged.connect(self._update_arrow_buttons)
-
-        layout.addWidget(self.list_widget)
-
-        from PyQt6.QtCore import QTimer as _QTimer
-        def _apply_title_color():
-            theme = getattr(self.window(), 'theme', None)
-            if theme:
-                self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-                self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-        _QTimer.singleShot(0, _apply_title_color)
-
-    def _scroll_by(self, delta):
-        sb = self.list_widget.horizontalScrollBar()
-        sb.setValue(sb.value() + delta)
-
-    def _update_arrow_buttons(self, *_):
-        sb = self.list_widget.horizontalScrollBar()
-        self._btn_left.setEnabled(sb.value() > sb.minimum())
-        self._btn_right.setEnabled(sb.value() < sb.maximum())
-
-    def set_accent_color(self, color):
-        self._accent_color = color
-        self._btn_left.set_color(color)
-        self._btn_right.set_color(color)
-        self.delegate.set_master_color(color)
-        theme = getattr(self.window(), 'theme', None)
-        if theme:
-            self.lbl_title.setStyleSheet(f"color: {theme.font_color_primary}; font-weight: bold; font-size: 20px;")
-            self.lbl_count.setStyleSheet(f"color: {theme.font_color_primary}; background: transparent; border: 1px solid {theme.border_color}; border-radius: 4px; padding: 0px 8px; font-size: 12px; font-weight: bold;")
-
-    def eventFilter(self, source, event):
-        if source is self.list_widget and event.type() == event.Type.Wheel:
-            delta = event.angleDelta()
-            scroll = delta.x() if delta.x() != 0 else delta.y()
-            self.list_widget.horizontalScrollBar().setValue(
-                self.list_widget.horizontalScrollBar().value() - scroll
-            )
-            return True
-        return super().eventFilter(source, event)
 
 class _ArtistPhotoOverlay(QWidget): # A full-screen tinted overlay showing the artist photo large and centered.
 
@@ -1219,14 +701,11 @@ class _ArtistLoadingOverlay(QWidget): # Opaque overlay + spinner shown over the 
     _SIZE = 52  # spinner diameter
 
     def __init__(self, parent_view):
-        # Top-level frameless window, same pattern as _ArtistPhotoOverlay:
-        # the header/about card/section grids are QQuickView-backed
-        # (createWindowContainer), whose native windows always paint above
-        # regular sibling QWidgets regardless of z-order/raise_() -- a
-        # WA_NativeWindow sibling can't reliably stay on top once more of
-        # those native windows are created later (each new artist's section
-        # grids). A top-level WA_AlwaysStackOnTop window sits above all of
-        # them unconditionally.
+        # Top-level frameless window, same pattern as _ArtistPhotoOverlay
+        # (UI_MANIFEST.md Pattern A): the page is QQuickView-backed
+        # (createWindowContainer), whose native window always paints above
+        # regular sibling QWidgets regardless of z-order/raise_(). A
+        # top-level WA_AlwaysStackOnTop window sits above it unconditionally.
         super().__init__(None,
             Qt.WindowType.Tool |
             Qt.WindowType.FramelessWindowHint |
@@ -1259,14 +738,11 @@ class _ArtistLoadingOverlay(QWidget): # Opaque overlay + spinner shown over the 
             self.update()
 
     def sync_geometry(self):
-        # Cover the body area below the header (which stays visible and
-        # populated immediately in load_artist), in global coordinates since
-        # this is now a top-level window.
+        # Cover the whole page, in global coordinates since this is now a
+        # top-level window.
         view = self._parent_view
-        top_left = view.header.mapTo(view, QPoint(0, view.header.height()))
-        y = max(0, top_left.y())
-        global_pt = view.mapToGlobal(QPoint(0, y))
-        self.setGeometry(global_pt.x(), global_pt.y(), view.width(), max(0, view.height() - y))
+        top_left = view.mapToGlobal(QPoint(0, 0))
+        self.setGeometry(top_left.x(), top_left.y(), view.width(), view.height())
 
     def start(self):
         self.sync_geometry()
@@ -1323,7 +799,7 @@ class ArtistDetailCoverProvider(AlbumDetailCoverProvider): # Provides the artist
         path.addEllipse(QRectF(pad, pad, art, art))
         return path
 
-class ArtistDetailBridge(QObject): # Bridge for the artist detail header QML (artist_detail.qml): forwards button clicks (play/like/lastfm/wikipedia/photo zoom) to ArtistRichDetailView, reports content height for dynamic resizing, drives QML tooltips, and pushes theme/typography/color signals to QML.
+class ArtistDetailBridge(QObject): # Bridge for the artist detail header card in artist_detail_page.qml: forwards button clicks (play/like/lastfm/wikipedia/photo zoom) to ArtistRichDetailView, drives QML tooltips, and pushes theme/typography/color/bio/stats signals to QML.
     # → QML
     accentColorChanged        = pyqtSignal(str)
     hoverColorChanged         = pyqtSignal(str)
@@ -1363,14 +839,6 @@ class ArtistDetailBridge(QObject): # Bridge for the artist detail header QML (ar
     @pyqtSlot()
     def photoClicked(self):
         self._view._show_photo_zoom()
-
-    @pyqtSlot(float)
-    def reportHeight(self, h: float):
-        self._view._on_qml_height_changed(h)
-
-    @pyqtSlot(float)
-    def reportAboutHeight(self, h: float):
-        self._view._on_about_qml_height_changed(h)
 
     @pyqtSlot(str, int, int, int)
     def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
@@ -1412,37 +880,23 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
     artist_clicked = pyqtSignal(dict)
     artist_favorite_toggled = pyqtSignal(bool)
     
+    _QML_CHUNK = 80  # Max albums per AlbumModel chunk — keeps each texture well under GPU limits
+
     def __init__(self):
         super().__init__()
 
         self.current_accent = "#888888"
         self._decode_worker = CoverDecodeWorker(self)
         self._decode_worker.decoded.connect(self._on_cover_decoded)
-        self._decode_worker.start() 
-        
+        self._decode_worker.start()
+
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("DetailBackground")
         self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        self.scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        self.content_widget = QWidget()
-        self.content_widget.setObjectName('_ac')
-        self.content_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.content_widget.setStyleSheet('#_ac { background: transparent; }')
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 0, 0, 50)
-        self.content_layout.setSpacing(10)
-
-        # HEADER + ABOUT — full QML (artist_detail.qml)
         self._artist_liked = False
         self._artist_stats_text = "Loading..."
         self._cur_photo_pixmap = None
@@ -1450,122 +904,70 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
         self._photo_provider = ArtistDetailCoverProvider()
         self._artist_icon_provider = AlbumIconProvider()
-        self._artist_bridge = ArtistDetailBridge(self)
+        self._section_cover_provider = SectionCoverProvider()
+        self._popular_track_cover_provider = PopularTrackCoverProvider()
+        self._related_artist_cover_provider = RelatedArtistCoverProvider()
 
-        # QQuickView in a window container renders at the monitor's real
-        # refresh rate, unlike QQuickWidget which caps at ~60Hz regardless
-        # of display Hz.
+        self._artist_bridge = ArtistDetailBridge(self)
+        self._section_bridge = SectionGridBridge()
+        self._track_list_bridge = TrackListBridge()
+        self._related_artists_bridge = RelatedArtistsBridge()
+
+        self.track_model = TrackListModel()
+        self.related_artist_model = ArtistRowModel()
+        self.sections_model = ArtistSectionsModel()
+
+        # Single QQuickView for the whole page — QQuickView in a window
+        # container renders at the monitor's real refresh rate, unlike
+        # QQuickWidget which caps at ~60Hz regardless of display Hz, and
+        # internal scrolling is handled by MomentumScroll in QML instead of
+        # repositioning a forest of native child windows.
         self._qml = QMLGridWrapper()
-        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
+        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        # QQuickView defaults to a white clear color, and the QML root Rectangle's
-        # height can briefly lag behind the widget's own height (set via reportHeight)
-        # while content is loading. Match the panel background so any gap reads as
-        # background instead of a white flash.
-        self._set_header_qml_color(QColor(14, 14, 14))
+        self._set_qml_clear_color(QColor(14, 14, 14))
 
         engine = self._qml.engine()
-        engine.addImageProvider("artistdetailcover", self._photo_provider)
-        engine.addImageProvider("albumicons",         self._artist_icon_provider)
+        engine.addImageProvider("artistdetailcover",   self._photo_provider)
+        engine.addImageProvider("albumicons",          self._artist_icon_provider)
+        engine.addImageProvider("sectioncovers",       self._section_cover_provider)
+        engine.addImageProvider("populartrackcovers",  self._popular_track_cover_provider)
+        engine.addImageProvider("relatedartistcovers", self._related_artist_cover_provider)
 
         ctx = self._qml.rootContext()
         ctx.setContextProperty("artistBridge", self._artist_bridge)
+        ctx.setContextProperty("sectionBridge", self._section_bridge)
+        ctx.setContextProperty("trackListBridge", self._track_list_bridge)
+        ctx.setContextProperty("trackListModel", self.track_model)
+        ctx.setContextProperty("relatedArtistsBridge", self._related_artists_bridge)
+        ctx.setContextProperty("relatedArtistModel", self.related_artist_model)
+        ctx.setContextProperty("sectionsModel", self.sections_model)
 
-        self._qml.setSource(QUrl.fromLocalFile(resource_path("player/tabs/artists/artist_detail.qml")))
+        self._qml.setSource(QUrl.fromLocalFile(resource_path("player/tabs/artists/artist_detail_page.qml")))
 
-        _header_wrapper = QWidget()
-        _header_wrapper.setObjectName('_hw')
-        _header_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _header_wrapper.setStyleSheet('#_hw { background: transparent; }')
-        _hw_lo = QVBoxLayout(_header_wrapper)
-        _hw_lo.setContentsMargins(0, 0, 0, 0)
-        _hw_lo.setSpacing(0)
-        _hw_lo.addWidget(self._qml)
+        self.layout.addWidget(self._qml)
 
-        self.header = _header_wrapper
-        self.content_layout.addWidget(self.header)
+        self._track_list_bridge.trackClicked.connect(self._on_track_clicked)
+        self._track_list_bridge.albumClicked.connect(self._on_popular_album_clicked)
+        self._section_bridge.itemClicked.connect(self._on_section_item_clicked)
+        self._section_bridge.playClicked.connect(self._on_section_play_clicked)
+        self._section_bridge.artistNameClicked.connect(self._on_section_artist_name_clicked)
+        self._related_artists_bridge.itemClicked.connect(self._on_related_artist_item_clicked)
+        self._related_artists_bridge.playClicked.connect(self._on_related_artist_play_clicked)
 
-        # ABOUT / BIO CARD — its own QML so the header above stays a constant
-        # height across artists (no bio-driven resize jumps); this card's
-        # height still depends on bio length, but it lives in the body, hidden
-        # until _reveal_content like the album sections.
-        self._about_qml = QMLGridWrapper()
-        self._about_qml.setResizeMode(QQuickWidget.ResizeMode.SizeViewToRootObject)
-        self._about_qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._set_qml_clear_color(self._about_qml, QColor(14, 14, 14))
+        self._qml.installEventFilter(self)
 
-        about_ctx = self._about_qml.rootContext()
-        about_ctx.setContextProperty("artistBridge", self._artist_bridge)
-        self._about_qml.setSource(QUrl.fromLocalFile(resource_path("player/tabs/artists/artist_about.qml")))
-
-        _about_wrapper = QWidget()
-        _about_wrapper.setObjectName('_aw')
-        _about_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _about_wrapper.setStyleSheet('#_aw { background: transparent; }')
-        _aw_lo = QVBoxLayout(_about_wrapper)
-        _aw_lo.setContentsMargins(0, 0, 0, 0)
-        _aw_lo.setSpacing(0)
-        _aw_lo.addWidget(self._about_qml)
-
-        self.about_card = _about_wrapper
-        self.about_card.hide()
-        self.content_layout.addWidget(self.about_card)
-
-        # POPULAR TRACKS
-        self.lbl_top_tracks = QLabel("Popular")
-        self.lbl_top_tracks.setStyleSheet("color: white; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
-        self.lbl_top_tracks.hide()
-        self.content_layout.addWidget(self.lbl_top_tracks)
-
-        self.song_list = SongListWidget()
-        self.song_list.play_track.connect(self.play_track.emit)
-        self.song_list.album_clicked.connect(self._on_popular_album_clicked)
-        self.song_list.installEventFilter(self)
-        self.song_list.viewport().installEventFilter(self)
-        self.song_list.hide()
-        self.content_layout.addWidget(self.song_list)
-
-        self.sections_container = QWidget()
-        self.sections_layout = QVBoxLayout(self.sections_container)
-        self.sections_layout.setContentsMargins(0, 0, 0, 0)
-        self.sections_layout.setSpacing(0)
-
-        self.content_layout.addWidget(self.sections_container)
-
-        # RELATED ARTISTS ROW — populated from getArtistInfo2 similarArtist list
-        self.related_artists_row = None  # created lazily in set_related_artists
-
-        self.content_layout.addStretch()
-        
-        self.scroll.setWidget(self.content_widget)
-        self.layout.addWidget(self.scroll)
-        # Drive the scroll easing off the header QQuickView's real vsync
-        # (>60Hz) instead of a fixed 16ms QTimer, matching the smooth
-        # scrolling already used in the album/artist grids.
-        self._smooth_scroller = SmoothScroller(self.scroll, vsync_source=self._qml.quickWindow())
-
-        # The header/about QML are createWindowContainer native surfaces,
-        # which don't propagate Wheel events to the outer QScrollArea like
-        # regular child widgets do — redirect them to the smooth scroller.
-        self._wheel_forwarder = WheelForwarder(self._smooth_scroller, self)
-        self._qml.installEventFilter(self._wheel_forwarder)
-        self._about_qml.installEventFilter(self._wheel_forwarder)
-
-        # Opaque overlay + centered spinner shown over the body while the page
-        # is loading. The header (name, stats, pre-loaded cover) appears
-        # immediately in load_artist; everything below it (stats card, bio,
-        # sections, related artists) gets built and settles to its final size
-        # while hidden behind this overlay, so the body goes straight from
-        # "spinner" to "finished" with no half-built intermediate state.
+        # Opaque overlay + centered spinner shown over the page while it
+        # loads, hiding the in-progress layout until everything settles.
         self._loading_overlay = _ArtistLoadingOverlay(self)
         self._loading_overlay.set_bg_color(self._bg_qcolor())
         self._spinner_pending = False
-        self._pending_reveal = []
-        self._reveal_waiting = set()
 
-        # For the artist view, song_list has FocusPolicy.NoFocus so no child
-        # widget steals keyboard events. We can simply override keyPressEvent
-        # on this widget itself — but we also need it to be able to receive focus.
+        self._nav_chain_idx = 0
+        self._nav_item_idx = 0
+
+        # This widget receives keyboard focus directly; all key handling for
+        # the page happens in eventFilter() on the single QML view.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def resizeEvent(self, event):
@@ -1573,295 +975,98 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         if self._loading_overlay.isVisible():
             self._loading_overlay.sync_geometry()
 
-    def _on_popular_album_clicked(self, data):
-        
+    def _on_track_clicked(self, idx):
+        if 0 <= idx < len(self.track_model.tracks):
+            self.play_track.emit(self.track_model.tracks[idx])
+
+    def _on_popular_album_clicked(self, idx):
+        if not (0 <= idx < len(self.track_model.tracks)):
+            return
+        data = self.track_model.tracks[idx]
         alb_data = {
-            'id': data.get('albumId'), 
-            'title': data.get('album'), 
+            'id': data.get('albumId'),
+            'title': data.get('album'),
             'artist': data.get('albumArtist') or data.get('artist'),
             'coverArt': data.get('coverArt') or data.get('albumId'),
             'cover_id': data.get('coverArt') or data.get('albumId')
         }
         if alb_data['id']:
-            self.album_clicked.emit(alb_data)  
- 
+            self.album_clicked.emit(alb_data)
+
+    def _on_section_item_clicked(self, section_row, idx):
+        albums = self.sections_model.rows[section_row]['model'].albums
+        if 0 <= idx < len(albums):
+            self.album_clicked.emit(albums[idx])
+
+    def _on_section_play_clicked(self, section_row, idx):
+        albums = self.sections_model.rows[section_row]['model'].albums
+        if 0 <= idx < len(albums):
+            self.play_album.emit(albums[idx])
+
+    def _on_section_artist_name_clicked(self, name, artist_id):
+        self.artist_clicked.emit({'name': name, 'id': artist_id or None})
+
+    def _on_related_artist_item_clicked(self, idx):
+        artists = self.related_artist_model.artists
+        if 0 <= idx < len(artists):
+            data = artists[idx]
+            self._on_related_artist_clicked({'id': data.get('id'), 'name': data.get('name', '')})
+
+    def _on_related_artist_play_clicked(self, idx):
+        artists = self.related_artist_model.artists
+        if 0 <= idx < len(artists):
+            self._play_related_artist_tracks(artists[idx].get('name', ''))
+
     def eventFilter(self, source, event):
-        # --- RELATED ARTISTS: handle click directly on viewport ---
-        related = getattr(self, 'related_artists_row', None)
-        if related and source is related.list_widget.viewport():
-            if event.type() == QEvent.Type.MouseButtonRelease:
-                item = related.list_widget.itemAt(event.position().toPoint())
-                if item:
-                    data = item.data(Qt.ItemDataRole.UserRole)
-                    if data:
-                        artist_data = {'id': data.get('id'), 'name': data.get('name', '')}
-                        # Detect play zone (center circle) vs rest of card
-                        visual_rect = related.list_widget.visualItemRect(item)
-                        cell_w = RelatedArtistRowWidget.CELL_W
-                        img_rect = QRect(visual_rect.x() + 10, visual_rect.y() + 10, cell_w - 20, cell_w - 20)
-                        center = img_rect.center()
-                        play_size = min(60, img_rect.width() // 2)
-                        click_pos = event.position().toPoint()
-                        dist = ((click_pos.x() - center.x())**2 + (click_pos.y() - center.y())**2) ** 0.5
-                        in_play_zone = dist <= play_size / 2
-
-                        if in_play_zone:
-                            def _play(d=artist_data):
-                                client = getattr(self, 'client', None)
-                                if not client: return
-                                w = ArtistPlayWorker(client, d.get('name', ''))
-                                w.tracks_ready.connect(self.play_multiple_tracks.emit)
-                                w.start()
-                                self._related_play_worker = w
-                            QTimer.singleShot(0, _play)
-                        else:
-                            def _navigate(d=artist_data):
-                                browser = getattr(self, '_browser', None)
-                                if browser:
-                                    browser.show_artist_details(d)
-                                else:
-                                    self.artist_clicked.emit(d)
-                            QTimer.singleShot(0, _navigate)
-            return False
-
-        if event.type() == QEvent.Type.KeyPress:
-            # --- 1. HANDLE POPULAR TRACKS MOVEMENT ---
-            if source in (self.song_list, self.song_list.viewport()): # Catch BOTH!
-                key = event.key()
-                tree = self.song_list # Always command the main widget
-                
-                if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
-                    current_item = tree.currentItem()
-                    current_idx = tree.indexOfTopLevelItem(current_item) if current_item else -1
-                    
-                    if key == Qt.Key.Key_Down:
-                        if current_idx < tree.topLevelItemCount() - 1:
-                            # Move down and force the visual highlight
-                            next_idx = 0 if current_idx == -1 else current_idx + 1
-                            next_item = tree.topLevelItem(next_idx)
-                            tree.setCurrentItem(next_item)
-                            next_item.setSelected(True) 
-                            
-                            # THE CAMERA FIX: Smoothly scroll down to keep the track visible!
-                            rect = tree.visualItemRect(next_item)
-                            pt = tree.viewport().mapTo(self.content_widget, rect.topLeft())
-                            self.scroll.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                            
-                            return True
-                        else:
-                            # Jump seamlessly to the first album grid!
-                            for i in range(self.sections_layout.count()):
-                                row = self.sections_layout.itemAt(i).widget()
-                                if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                                    tree.clearSelection()
-                                    tree.setCurrentItem(None)
-                                    row.list_widget.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                                    row.list_widget.setCurrentRow(0)
-                                    
-                                    rect = row.list_widget.visualItemRect(row.list_widget.item(0))
-                                    pt = row.list_widget.viewport().mapTo(self.content_widget, rect.topLeft())
-                                    self.scroll.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                                    return True
-                                    
-                    elif key == Qt.Key.Key_Up:
-                        if current_idx > 0:
-                            # Move up and force the visual highlight
-                            prev_item = tree.topLevelItem(current_idx - 1)
-                            tree.setCurrentItem(prev_item)
-                            prev_item.setSelected(True) 
-                            
-                            # Smoothly scroll up to keep the track visible!
-                            rect = tree.visualItemRect(prev_item)
-                            pt = tree.viewport().mapTo(self.content_widget, rect.topLeft())
-                            self.scroll.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                            
-                            return True
-                        else:
-                            self.scroll.verticalScrollBar().setValue(0)
-                            return True
-                            
-                elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                    if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.play_current_artist_tracks()
-                        return True
-
-                    curr_item = tree.currentItem()
-                    if curr_item:
-                        data = curr_item.data(0, Qt.ItemDataRole.UserRole)
-                        if data: self.play_track.emit(data)
-                    return True
-
+        if event.type() == QEvent.Type.KeyPress and self._qml._owns(source):
+            chain = self._nav_chain()
+            if not chain:
                 return super().eventFilter(source, event)
-            
-        
-            
-            # --- 2. HANDLE ALBUM GRIDS (QListWidget) MOVEMENT ---
-            if isinstance(source, QListWidget):
-                key = event.key()
-                
-                if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
-                    old_row = source.currentRow()
-                    
-                    def check_jump_and_scroll():
-                        new_row = source.currentRow()
-                        
-                        def do_scroll(target_grid, target_idx):
-                            item = target_grid.item(target_idx)
-                            if item:
-                                rect = target_grid.visualItemRect(item)
-                                pt = target_grid.viewport().mapTo(self.content_widget, rect.topLeft())
-                                center_y = pt.y() + rect.height() // 2
-                                y_margin = rect.height() // 2 + 40
-                                self.scroll.ensureVisible(pt.x(), center_y, 0, y_margin)
 
-                        if old_row == new_row:
-                            lists = []
-                            for i in range(self.sections_layout.count()):
-                                r = self.sections_layout.itemAt(i).widget()
-                                if r and hasattr(r, 'list_widget') and r.list_widget.count() > 0:
-                                    lists.append(r.list_widget)
-                            related = getattr(self, 'related_artists_row', None)
-                            if related and related.list_widget.count() > 0:
-                                lists.append(related.list_widget)
-                                    
-                            if source in lists:
-                                current_idx = lists.index(source)
-                                next_idx = current_idx + (1 if key in (Qt.Key.Key_Down, Qt.Key.Key_Right) else -1)
-                                
-                                if 0 <= next_idx < len(lists):
-                                    source.clearSelection() 
-                                    next_grid = lists[next_idx]
-                                    next_grid.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                                    
-                                    target_row = 0
-                                    if key == Qt.Key.Key_Right: target_row = 0
-                                    elif key == Qt.Key.Key_Left: target_row = next_grid.count() - 1
-                                    elif key == Qt.Key.Key_Down:
-                                        old_x = source.visualItemRect(source.item(old_row)).x()
-                                        best_dist = float('inf')
-                                        for i in range(min(15, next_grid.count())): 
-                                            dist = abs(next_grid.visualItemRect(next_grid.item(i)).x() - old_x)
-                                            if dist < best_dist: best_dist = dist; target_row = i
-                                    elif key == Qt.Key.Key_Up:
-                                        old_x = source.visualItemRect(source.item(old_row)).x()
-                                        last_idx = next_grid.count() - 1
-                                        last_y = next_grid.visualItemRect(next_grid.item(last_idx)).y()
-                                        best_dist = float('inf'); target_row = last_idx
-                                        for i in range(last_idx, -1, -1):
-                                            rect = next_grid.visualItemRect(next_grid.item(i))
-                                            if rect.y() < last_y: break 
-                                            dist = abs(rect.x() - old_x)
-                                            if dist < best_dist: best_dist = dist; target_row = i
-                                                
-                                    next_grid.setCurrentRow(target_row)
-                                    do_scroll(next_grid, target_row)
-                                    return
-                                    
-                                # --- THE BRIDGE: Jumping UP from the very first Album Grid! ---
-                                elif next_idx < 0 and key == Qt.Key.Key_Up:
-                                    # If Popular Tracks exist, seamlessly jump up into them!
-                                    if not self.song_list.isHidden() and self.song_list.topLevelItemCount() > 0:
-                                        source.clearSelection()
-                                        self.song_list.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                                        # Highlight the very last popular track
-                                        last_item = self.song_list.topLevelItem(self.song_list.topLevelItemCount() - 1)
-                                        self.song_list.setCurrentItem(last_item)
-                                        last_item.setSelected(True)
-                                        
-                                        rect = self.song_list.visualItemRect(last_item)
-                                        pt = self.song_list.viewport().mapTo(self.content_widget, rect.topLeft())
-                                        self.scroll.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                                    else:
-                                        self.scroll.verticalScrollBar().setValue(0)
-                                    return
-                                    
-                                elif next_idx >= len(lists) and key == Qt.Key.Key_Down:
-                                    self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
-                                    return
-                        
-                        do_scroll(source, new_row)
+            chain_idx = max(0, min(self._nav_chain_idx, len(chain) - 1))
+            entry = chain[chain_idx]
+            item_idx = max(0, min(self._nav_item_idx, entry['count'] - 1))
+            key = event.key()
 
-                    QTimer.singleShot(0, check_jump_and_scroll)
-                    return False 
-                    
-                elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                    if event.isAutoRepeat(): return True
-                    if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.play_current_artist_tracks(); return True
-                    curr_item = source.currentItem()
-                    if curr_item:
-                        data = curr_item.data(Qt.ItemDataRole.UserRole)
-                        if data:
-                            related = getattr(self, 'related_artists_row', None)
-                            if related and source is related.list_widget:
-                                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                                    w = ArtistPlayWorker(self.client, data.get('name', ''))
-                                    w.tracks_ready.connect(self.play_multiple_tracks.emit)
-                                    w.start()
-                                    self._related_play_worker = w
-                                else:
-                                    self.artist_clicked.emit({'id': data.get('id'), 'name': data.get('name', '')})
-                            elif event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                                self.play_album.emit(data)
-                            else:
-                                self.album_clicked.emit(data)
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if event.isAutoRepeat():
                     return True
-
-            # --- 3. HANDLE QML ALBUM SECTION GRIDS ---
-            section = None
-            for s in self._get_qml_sections():
-                if source is s.qml_widget:
-                    section = s
-                    break
-            if section is not None:
-                key = event.key()
-                ipr = section.items_per_row()
-                count = section.album_model.rowCount()
-                idx = section.current_index
-                if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
-                    col = idx % ipr
-                    cur_row = idx // ipr
-                    last_row = (count - 1) // ipr
-
-                    if key == Qt.Key.Key_Right:
-                        if idx < count - 1:
-                            section.select(idx + 1)
-                            self._qml_scroll_to_cell(section, section.current_index // ipr)
-                        return True
-                    elif key == Qt.Key.Key_Left:
-                        if idx > 0:
-                            section.select(idx - 1)
-                            self._qml_scroll_to_cell(section, section.current_index // ipr)
-                        return True
-                    elif key == Qt.Key.Key_Down:
-                        if cur_row < last_row:
-                            section.select(min(idx + ipr, count - 1))
-                            self._qml_scroll_to_cell(section, section.current_index // ipr)
-                        else:
-                            self._qml_jump_next(section, col)
-                        return True
-                    elif key == Qt.Key.Key_Up:
-                        if cur_row > 0:
-                            section.select(idx - ipr)
-                            self._qml_scroll_to_cell(section, section.current_index // ipr)
-                        else:
-                            self._qml_jump_prev(section, col)
-                        return True
-                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                    if event.isAutoRepeat(): return True
-                    if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-                        self.play_current_artist_tracks(); return True
-                    if 0 <= idx < count:
-                        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                            self.play_album.emit(section.album_model.albums[idx])
-                        else:
-                            self.album_clicked.emit(section.album_model.albums[idx])
+                if event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+                    self.play_current_artist_tracks()
                     return True
-                if key == Qt.Key.Key_Space:
-                    if event.isAutoRepeat(): return True
-                    if 0 <= idx < count:
-                        self.play_album.emit(section.album_model.albums[idx])
+                self._activate_nav_entry(entry, item_idx, event.modifiers())
+                return True
+
+            if key == Qt.Key.Key_Space:
+                if event.isAutoRepeat():
                     return True
+                self._activate_nav_entry(entry, item_idx, Qt.KeyboardModifier.ShiftModifier)
+                return True
+
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+                ipr = max(1, entry['ipr'])
+                count = entry['count']
+                col = item_idx % ipr
+                cur_row = item_idx // ipr
+                last_row = (count - 1) // ipr
+
+                if key == Qt.Key.Key_Right:
+                    if item_idx < count - 1:
+                        self._select_nav_entry(chain_idx, item_idx + 1)
+                elif key == Qt.Key.Key_Left:
+                    if item_idx > 0:
+                        self._select_nav_entry(chain_idx, item_idx - 1)
+                elif key == Qt.Key.Key_Down:
+                    if cur_row < last_row:
+                        self._select_nav_entry(chain_idx, min(item_idx + ipr, count - 1))
+                    else:
+                        self._jump_to_chain_entry(chain, chain_idx, 1, col)
+                elif key == Qt.Key.Key_Up:
+                    if cur_row > 0:
+                        self._select_nav_entry(chain_idx, item_idx - ipr)
+                    else:
+                        self._jump_to_chain_entry(chain, chain_idx, -1, col)
+                return True
 
         return super().eventFilter(source, event)
 
@@ -1876,22 +1081,14 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
     def set_bg_color(self, c: str):
         self._bg_color = c
         self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
-        for i in range(self.sections_layout.count()):
-            row = self.sections_layout.itemAt(i).widget()
-            if row and hasattr(row, 'set_bg_color'):
-                row.set_bg_color(c)
+        r, g, b = (int(x) for x in c.split(','))
+        self._set_qml_clear_color(QColor(r, g, b))
+        self._loading_overlay.set_bg_color(QColor(r, g, b))
 
     def set_accent_color(self, color):
-
         self.current_accent = color
 
         self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
-        
-        scrollbar_style = f"""
-            QScrollArea {{ border: none; background: transparent; }}
-            {scrollbar_css(color)}
-        """
-        self.scroll.setStyleSheet(scrollbar_style)
 
         theme = getattr(self.window(), 'theme', None)
         self._artist_bridge.accentColorChanged.emit(color)
@@ -1918,24 +1115,10 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                 r, g, b = 14, 14, 14
                 panel_hex = '#0e0e0e'
             self._artist_bridge.panelBgChanged.emit(panel_hex)
-            self._set_header_qml_color(QColor(r, g, b))
-            self._set_qml_clear_color(self._about_qml, QColor(r, g, b))
+            self._set_qml_clear_color(QColor(r, g, b))
             self._loading_overlay.set_bg_color(QColor(r, g, b))
 
-        if not hasattr(self, '_scroll_reveal'):
-            self._scroll_reveal = install_scroll_reveal(self.scroll.viewport(), self.scroll.verticalScrollBar())
-        self._scroll_reveal.color = color
-
-        pri_color = getattr(theme, 'font_color_primary', '#dddddd') if theme else '#dddddd'
-        if hasattr(self, 'lbl_top_tracks'):
-            self.lbl_top_tracks.setStyleSheet(f"color: {pri_color}; font-weight: bold; font-size: 20px; margin-left: 12px; margin-top: 10px;")
         self._loading_overlay.set_spinner_color(color)
-
-        for i in range(self.sections_layout.count()):
-            row = self.sections_layout.itemAt(i).widget()
-            if row and hasattr(row, 'set_accent_color'):
-                row.set_accent_color(color)
-        self.song_list.update_style(color)
 
     def set_header_image(self, pixmap):
         from PyQt6.QtCore import QBuffer, QByteArray
@@ -1970,45 +1153,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         if pix and not pix.isNull():
             _ArtistPhotoOverlay(pix, self.window())
 
-    def _on_qml_height_changed(self, h):
-        print(f"[REVEAL] _on_qml_height_changed({h!r}) at {time.time():.3f}  "
-              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
-              f"waiting={getattr(self, '_reveal_waiting', None)!r}")
-        self._qml.setFixedHeight(max(1, round(h)))
-        # The header's native QQuickWindow can leave a stale strip of the
-        # previous frame at the new edge when its container is resized
-        # (e.g. when the about card/sections arrive below it and the page
-        # relayouts) -- force a repaint at the new size. Safe here: _qml is
-        # always visible, unlike the hidden section QMLGridWrappers where
-        # forcing update() previously caused them to expose early.
-        qw = self._qml.quickWindow()
-        if qw is not None:
-            qw.update()
-
-    def _on_about_qml_height_changed(self, h):
-        print(f"[REVEAL] _on_about_qml_height_changed({h!r}) at {time.time():.3f}  "
-              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
-              f"waiting={getattr(self, '_reveal_waiting', None)!r}")
-        self._about_qml.setFixedHeight(max(1, round(h)))
-        self._last_about_height = h
-        if getattr(self, '_spinner_pending', False) and 'bio' in getattr(self, '_reveal_waiting', set()):
-            # The bio's height-report can fire more than once in quick succession
-            # (the "Show more" truncation check forces a second layout pass), so
-            # don't trust the first report — wait until the height hasn't changed
-            # again for a short moment before treating the About card as settled.
-            QTimer.singleShot(150, lambda hh=h: self._check_about_height_settled(hh))
-
-    def _check_about_height_settled(self, h):
-        print(f"[REVEAL] _check_about_height_settled({h!r}) at {time.time():.3f}  "
-              f"last_about_height={getattr(self, '_last_about_height', None)!r}")
-        if getattr(self, '_last_about_height', None) == h:
-            self._mark_reveal_ready('bio')
-
-    def _set_header_qml_color(self, color: QColor):
-        self._set_qml_clear_color(self._qml, color)
-
-    def _set_qml_clear_color(self, qml_widget, color: QColor):
-        qml_widget.setClearColor(color)
+    def _set_qml_clear_color(self, color: QColor):
+        self._qml.setClearColor(color)
 
     def _bg_qcolor(self):
         try:
@@ -2018,125 +1164,79 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
         return QColor(r, g, b)
 
     def set_related_artists(self, similar_artists):
-        # Remove old row if present
-        if self.related_artists_row is not None:
-            self.content_layout.removeWidget(self.related_artists_row)
-            self.related_artists_row.deleteLater()
-            self.related_artists_row = None
-
         if not similar_artists:
+            self.related_artist_model.set_artists([])
             return
 
-        # Cap at 10
+        # Cap at 10, normalise to the fields ArtistRowModel/QML expect
         similar_artists = similar_artists[:10]
-
-        # Normalise: ensure each dict has 'title' for the delegate's name display
         normalised = []
         for a in similar_artists:
             normalised.append({
                 'id': a.get('id'),
                 'name': a.get('name', ''),
-                'title': a.get('name', ''),
-                'coverArt': a.get('coverArt') or a.get('id'),
-                '_is_artist': True,
+                'cover_id': a.get('coverArt') or a.get('id') or '',
             })
+        self.related_artist_model.set_artists(normalised)
 
-        row = RelatedArtistRowWidget("Related Artists", normalised)
-        row.set_accent_color(self.current_accent)
-        row.list_widget.installEventFilter(self)
-        row.list_widget.viewport().installEventFilter(self)
-
-        # Register list items in pending_items so apply_cover can find them,
-        # then queue the cover fetch
         worker = getattr(self, 'cover_worker', None)
-        for i, a in enumerate(normalised):
-            cover_id = a.get('coverArt')
+        for a in normalised:
+            cover_id = a.get('cover_id')
             if not cover_id:
                 continue
-            item = row.list_widget.item(i)
-            if item:
-                self.pending_items.setdefault(cover_id, []).append(item)
+            self.pending_qml_sections.setdefault(cover_id, []).append((RelatedArtistCoverProvider._cache, self.related_artist_model))
             if worker:
                 worker.queue_cover(cover_id)
 
-        # Insert before the stretch (second-to-last item)
-        insert_pos = self.content_layout.count() - 1
-        self.content_layout.insertWidget(insert_pos, row)
-        self.related_artists_row = row
+    def _on_related_artist_clicked(self, data):
+        browser = getattr(self, '_browser', None)
+        if browser:
+            browser.show_artist_details(data)
+        else:
+            self.artist_clicked.emit(data)
+
+    def _play_related_artist_tracks(self, name):
+        client = getattr(self, 'client', None)
+        if not client or not name:
+            return
+        self._related_play_worker = ArtistPlayWorker(client, name)
+        self._related_play_worker.tracks_ready.connect(self.play_multiple_tracks.emit)
+        self._related_play_worker.start()
 
     def set_top_songs(self, songs):
-        if songs:
-            from PyQt6.QtWidgets import QApplication
-            current_focus = QApplication.focusWidget()
-            
-            was_idle = False
-            first_album_grid = None
-            for i in range(self.sections_layout.count()):
-                row = self.sections_layout.itemAt(i).widget()
-                if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                    first_album_grid = row.list_widget
-                    break
-            
-            
-            if first_album_grid and current_focus == first_album_grid and first_album_grid.currentRow() <= 0:
-                was_idle = True
-            elif current_focus in (self, self.scroll, self.scroll.widget(), None) or (current_focus and current_focus.parent() == self.header):
-                was_idle = True
-            
-            self.lbl_top_tracks.show()
-            self.song_list.show()
-            
-            worker = getattr(self, 'cover_worker', None)
-            self.song_list.populate(songs, worker, getattr(self, 'pending_items', None))
-            
-            
-            if was_idle:
-                if first_album_grid:
-                    first_album_grid.clearSelection()
-                    first_album_grid.setCurrentRow(-1) # Kill the blue box on the album
-                
-                self.song_list.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                first_item = self.song_list.topLevelItem(0)
-                if first_item:
-                    self.song_list.setCurrentItem(first_item)
-                    first_item.setSelected(True)
-                self.scroll.verticalScrollBar().setValue(0) 
-            elif current_focus: 
-                current_focus.setFocus()
-        else:
-            self.lbl_top_tracks.hide()
-            self.song_list.hide()
+        self.track_model.set_tracks(list(songs))
+        if not songs:
+            return
+        worker = getattr(self, 'cover_worker', None)
+        for t in songs:
+            cid = t.get('coverArt') or t.get('albumId') or ''
+            if cid:
+                self.pending_qml_sections.setdefault(cid, []).append((PopularTrackCoverProvider._cache, self.track_model))
+                if worker:
+                    worker.queue_cover(cid)
 
     def clear_sections(self):
-        while self.sections_layout.count():
-            child = self.sections_layout.takeAt(0)
-            w = child.widget()
-            if w:
-                if hasattr(w, '_timer'):
-                    w._timer.stop()
-                # row.qml_widget is a QMLGridWrapper (createWindowContainer):
-                # its native window keeps rendering its last frame — possibly
-                # above the loading overlay — until deleteLater() actually
-                # runs. Hide it immediately to unmap that native window now.
-                w.hide()
-                w.deleteLater()
+        self.sections_model.set_sections([])
 
-    # Max albums per QML widget — keeps each texture well under GPU limits
-    _QML_CHUNK = 80
-
-    def add_section(self, title, albums, cover_worker, pending_items):
-        if not albums: return []
+    def add_section(self, title, albums, cover_worker):
+        if not albums:
+            return []
 
         sorted_albums = sorted(albums, key=lambda x: (int(x.get('playCount', 0)), str(x.get('year', '0000'))), reverse=True)
+
+        # Normalise so AlbumModel's cover_id key is always populated — raw
+        # Subsonic album dicts only carry coverArt/id, not cover_id.
+        normalised = []
+        for a in sorted_albums:
+            d = dict(a)
+            if not d.get('cover_id'):
+                d['cover_id'] = d.get('coverArt') or d.get('id') or ''
+            normalised.append(d)
+        sorted_albums = normalised
 
         # Split into chunks to avoid exceeding GPU texture size limits
         chunk_size = self._QML_CHUNK
         chunks = [sorted_albums[i:i + chunk_size] for i in range(0, len(sorted_albums), chunk_size)]
-
-        # Precompute each row's height now (using the scroll viewport's known
-        # width) so it's correctly sized the moment it's added — no separate
-        # async resize-driven height pop after the fact.
-        content_w = self.scroll.viewport().width()
 
         rows = []
         for chunk_idx, chunk in enumerate(chunks):
@@ -2144,124 +1244,112 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             chunk_title = title if chunk_idx == 0 else ""
             chunk_count = len(sorted_albums) if chunk_idx == 0 else 0
 
-            row = QMLAlbumSectionWidget(chunk_title, chunk_count, chunk)
-            if hasattr(self, '_bg_color'):
-                row.set_bg_color(self._bg_color)
-            row.set_accent_color(self.current_accent)
-            row.album_clicked.connect(self.album_clicked.emit)
-            row.play_album.connect(self.play_album.emit)
-            row.artist_name_clicked.connect(lambda name, aid: self.artist_clicked.emit({'name': name, 'id': aid or None}))
-            row.qml_widget.installEventFilter(self)
-            row.qml_widget.installEventFilter(self._wheel_forwarder)
-            if content_w > 0:
-                row._set_height(w=content_w)
-            # Stay hidden from the moment it's added: _on_content_ready hides
-            # everything in `pending` afterwards, but that's one event-loop
-            # turn later -- in between, this row (and its QMLGridWrapper's
-            # native window) would briefly become visible and get mapped
-            # above the loading overlay/spinner, which can leave it stuck
-            # above the overlay even after being hidden again.
-            row.hide()
-            self.sections_layout.addWidget(row)
-            rows.append(row)
+            model = AlbumModel()
+            model.set_albums(chunk)
+            rows.append({'title': chunk_title, 'count': chunk_count, 'model': model})
 
-            # Queue covers and track which section owns them
-            for album in row.album_model.albums:
+            for album in chunk:
                 cid = album.get('cover_id') or ''
                 if cid:
-                    self.pending_qml_sections.setdefault(cid, []).append(row)
+                    self.pending_qml_sections.setdefault(cid, []).append((SectionCoverProvider._cache, model))
                     if cover_worker:
                         cover_worker.queue_cover(cid)
 
-        if self.sections_layout.count() <= len(chunks):
-            QTimer.singleShot(100, self.auto_focus)
-
         return rows
-        
-    def _get_qml_sections(self):
-        sections = []
-        for i in range(self.sections_layout.count()):
-            w = self.sections_layout.itemAt(i).widget()
-            if isinstance(w, QMLAlbumSectionWidget):
-                sections.append(w)
-        return sections
 
-    def _qml_scroll_to_cell(self, section, row_index):
-        def _do():
-            ipr = section.items_per_row()
-            avail = max(1, section.qml_widget.width() - 40)
-            cell_h = int(avail / ipr + 70)
-            cell_y = 10 + row_index * cell_h
-            pt = section.qml_widget.mapTo(self.content_widget, QPoint(0, cell_y))
-            self.scroll.ensureVisible(pt.x(), pt.y() + cell_h // 2, 0, cell_h // 2 + 20)
-        QTimer.singleShot(0, _do)
+    def _items_per_row(self):
+        avail = max(1, self._qml.width() - 8)
+        return max(1, int(avail // 200))
 
-    def _qml_jump_next(self, from_section, col):
-        sections = self._get_qml_sections()
-        if from_section not in sections:
+    def _nav_chain(self):
+        """Ordered list of focusable sections on this page: popular tracks,
+        then each album-section chunk, then related artists. Each entry is a
+        lightweight descriptor — the actual selection/scroll happens in QML
+        via the *Bridge.selectIndex signals."""
+        chain = []
+        if self.track_model.rowCount() > 0:
+            chain.append({'kind': 'tracks', 'count': self.track_model.rowCount(), 'ipr': 1})
+        ipr = self._items_per_row()
+        for i, row in enumerate(self.sections_model.rows):
+            count = row['model'].rowCount()
+            if count > 0:
+                chain.append({'kind': 'section', 'count': count, 'ipr': ipr, 'section_row': i})
+        related_count = self.related_artist_model.rowCount()
+        if related_count > 0:
+            chain.append({'kind': 'related', 'count': related_count, 'ipr': related_count})
+        return chain
+
+    def _select_nav_entry(self, chain_idx, item_idx):
+        chain = self._nav_chain()
+        if not chain:
             return
-        idx = sections.index(from_section)
-        if idx + 1 < len(sections):
-            nxt = sections[idx + 1]
-            target = min(col, nxt.album_model.rowCount() - 1)
-            nxt.select(target)
-            nxt.qml_widget.setFocus(Qt.FocusReason.OtherFocusReason)
-            self._qml_scroll_to_cell(nxt, 0)
-        else:
-            related = getattr(self, 'related_artists_row', None)
-            if related and related.list_widget.count() > 0:
-                related.list_widget.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                related.list_widget.setCurrentRow(min(col, related.list_widget.count() - 1))
+        chain_idx = max(0, min(chain_idx, len(chain) - 1))
+        entry = chain[chain_idx]
+        item_idx = max(0, min(item_idx, entry['count'] - 1))
+        self._nav_chain_idx = chain_idx
+        self._nav_item_idx = item_idx
+
+        if entry['kind'] == 'tracks':
+            self._track_list_bridge.selectIndex.emit(item_idx)
+        elif entry['kind'] == 'section':
+            self._section_bridge.selectIndex.emit(entry['section_row'], item_idx)
+        elif entry['kind'] == 'related':
+            self._related_artists_bridge.selectIndex.emit(item_idx)
+
+    def _activate_nav_entry(self, entry, item_idx, modifiers):
+        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        if entry['kind'] == 'tracks':
+            if not (0 <= item_idx < len(self.track_model.tracks)):
+                return
+            if shift:
+                self._on_popular_album_clicked(item_idx)
             else:
-                self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+                self._on_track_clicked(item_idx)
+        elif entry['kind'] == 'section':
+            albums = self.sections_model.rows[entry['section_row']]['model'].albums
+            if not (0 <= item_idx < len(albums)):
+                return
+            if shift:
+                self.play_album.emit(albums[item_idx])
+            else:
+                self.album_clicked.emit(albums[item_idx])
+        elif entry['kind'] == 'related':
+            artists = self.related_artist_model.artists
+            if not (0 <= item_idx < len(artists)):
+                return
+            data = artists[item_idx]
+            if shift:
+                self._play_related_artist_tracks(data.get('name', ''))
+            else:
+                self._on_related_artist_clicked({'id': data.get('id'), 'name': data.get('name', '')})
 
-    def _qml_jump_prev(self, from_section, col):
-        sections = self._get_qml_sections()
-        if from_section not in sections:
+    def _jump_to_chain_entry(self, chain, from_idx, direction, col):
+        target_idx = from_idx + direction
+        if not (0 <= target_idx < len(chain)):
+            self._invoke_qml('scrollToTop' if direction < 0 else 'scrollToBottom')
             return
-        idx = sections.index(from_section)
-        if idx > 0:
-            prev = sections[idx - 1]
-            count = prev.album_model.rowCount()
-            ipr = prev.items_per_row()
-            last_row = (count - 1) // ipr
-            target = min(last_row * ipr + col, count - 1)
-            prev.select(target)
-            prev.qml_widget.setFocus(Qt.FocusReason.OtherFocusReason)
-            self._qml_scroll_to_cell(prev, last_row)
-        elif not self.song_list.isHidden() and self.song_list.topLevelItemCount() > 0:
-            self.song_list.setFocus(Qt.FocusReason.OtherFocusReason)
-            last_item = self.song_list.topLevelItem(self.song_list.topLevelItemCount() - 1)
-            self.song_list.setCurrentItem(last_item)
-            last_item.setSelected(True)
-            rect = self.song_list.visualItemRect(last_item)
-            pt = self.song_list.viewport().mapTo(self.content_widget, rect.topLeft())
-            self.scroll.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
+        target = chain[target_idx]
+        ipr = max(1, target['ipr'])
+        count = target['count']
+        if direction > 0:
+            landing = min(col, ipr - 1, count - 1)
         else:
-            self.scroll.verticalScrollBar().setValue(0)
+            last_row = (count - 1) // ipr
+            landing = min(last_row * ipr + col, count - 1)
+        self._select_nav_entry(target_idx, max(0, landing))
+
+    def _invoke_qml(self, method_name):
+        root = self._qml.rootObject()
+        if root is not None:
+            QMetaObject.invokeMethod(root, method_name)
 
     def auto_focus(self):
-           
-        
-        if not self.song_list.isHidden() and self.song_list.topLevelItemCount() > 0:
-            self.song_list.setFocus(Qt.FocusReason.ShortcutFocusReason)
-            first_item = self.song_list.topLevelItem(0)
-            if first_item:
-                self.song_list.setCurrentItem(first_item)
-                first_item.setSelected(True)
-            self.scroll.verticalScrollBar().setValue(0)
-            return
-            
-        # Otherwise, fall back to focusing the first album grid
-        for i in range(self.sections_layout.count()):
-            row = self.sections_layout.itemAt(i).widget()
-            if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                row.list_widget.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                row.list_widget.setCurrentRow(0)
-                # Ensure the scrollbar resets to the absolute top
-                self.scroll.verticalScrollBar().setValue(0)
-                break
-       
+        chain = self._nav_chain()
+        if chain:
+            self._select_nav_entry(0, 0)
+        self._invoke_qml('scrollToTop')
+        self._qml.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
     def _safe_discard_worker(self, worker):
         if not worker: return
         if not hasattr(self, '_worker_graveyard'):
@@ -2289,29 +1377,21 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
     def load_artist(self, artist_data):
         # Always start a freshly-loaded artist page from the top, regardless
-        # of where the previous artist's view was scrolled to. If a smooth-scroll
-        # animation is mid-flight, stop it and reset its target too -- otherwise
-        # it keeps animating back toward the old (pre-reset) position.
-        smoother = getattr(self, '_smooth_scroller', None)
-        if smoother:
-            smoother._stop_animation()
-            smoother._wheel_velocity = 0.0
-        self.scroll.verticalScrollBar().setValue(0)
+        # of where the previous artist's view was scrolled to.
+        self._invoke_qml('scrollToTop')
 
-        self.pending_items = {}
-        self.pending_qml_sections = {}  # cover_id -> [QMLAlbumSectionWidget]
+        self.pending_qml_sections = {}  # cover_id -> [(provider_cache, model), ...]
         self.current_artist_name = artist_data.get('name', 'Unknown')
         self.current_artist_id = artist_data.get('id')
         self._artist_liked = bool(artist_data.get('starred'))
 
         # 1. EMPTY PAGE + SPINNER — an opaque overlay covers the whole page first,
-        # so nothing (old content, half-built new content, mid-resize header)
-        # is visible while everything settles. _reveal_content hides it once
-        # the header/bio/sections have all reached their final size at once.
+        # so nothing (old content, half-built new content) is visible while
+        # everything settles. _reveal_content hides it once the new content
+        # is in place.
         print(f"[TIMING-UI] load_artist({self.current_artist_name!r}, id={self.current_artist_id}) at {time.time():.3f}")
         self._set_stats("Loading...")
         self.set_bio("")
-        self.about_card.hide()
         self.set_top_songs([])
         self.set_related_artists([])
         self.clear_sections()
@@ -2346,16 +1426,10 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
     def _on_content_ready(self, info, main_albums, singles, top_songs, appears_on):
         """Fires once everything for the page — albums, top songs, bio/similar,
         and appears-on — has arrived. Builds the whole body in its final shape
-        in one pass: no sections popping in or stats changing afterward."""
+        in one pass: the page reveals once QML has had a frame to settle."""
         print(f"[TIMING-UI] _on_content_ready({self.current_artist_name!r}) at {time.time():.3f}  "
               f"main_albums={len(main_albums)}  singles={len(singles)}  top_songs={len(top_songs)}  "
               f"appears={len(appears_on)}  has_bio={'biography' in info}")
-
-        # Pieces of the page that finish asynchronously (header photo fetch,
-        # QML reporting its new height for the bio) — the reveal waits until
-        # every one of these has reported in, instead of guessing at timing.
-        self._reveal_waiting = set()
-        has_bio = False
 
         if info:
             self._artist_liked = bool(info.get('starred'))
@@ -2370,10 +1444,8 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                 if prev and prev.isRunning():
                     try: prev.done.disconnect()
                     except: pass
-                self._reveal_waiting.add('image')
                 self._header_img_worker = _ImageWorker(artist_img_url)
                 self._header_img_worker.done.connect(self.set_header_image)
-                self._header_img_worker.done.connect(lambda *_: self._mark_reveal_ready('image'))
                 self._header_img_worker.start()
 
             cover_src = info.get('coverArt') or info.get('id')
@@ -2383,9 +1455,6 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
                     self.cover_worker.queue_cover(cover_src, priority=True)
                 self._exact_artist_image = False
 
-            has_bio = bool(info.get('biography'))
-            if has_bio:
-                self._reveal_waiting.add('bio')
             if 'biography' in info:
                 self.set_bio(info['biography'])
 
@@ -2404,77 +1473,24 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
 
         self.set_top_songs(top_songs)
 
-        # Each QML album-section widget is built (and pre-sized in add_section)
-        # but hidden immediately, then revealed together with everything else
-        # in _reveal_content — instead of popping in one-by-one as each is built.
-        pending = []
-        # The About card lives in its own QML so its bio-driven height settles
-        # off-screen, alongside the album sections, instead of jumping the
-        # (constant-height) header above it.
-        if has_bio:
-            pending.append(self.about_card)
         worker = getattr(self, 'cover_worker', None)
-        if main_albums:  pending += self.add_section("Albums",      main_albums, worker, self.pending_items)
-        if singles:      pending += self.add_section("Singles & EPs", singles,   worker, self.pending_items)
-        if appears_on:   pending += self.add_section("Appears on & Compilations", appears_on, worker, self.pending_items)
-        for w in pending:
-            w.hide()
+        rows = []
+        if main_albums:  rows += self.add_section("Albums",      main_albums, worker)
+        if singles:      rows += self.add_section("Singles & EPs", singles,   worker)
+        if appears_on:   rows += self.add_section("Appears on & Compilations", appears_on, worker)
+        self.sections_model.set_sections(rows)
 
-        self._pending_reveal = pending
         self._spinner_pending = True
-
-        print(f"[REVEAL] _on_content_ready done at {time.time():.3f}  "
-              f"waiting_for={self._reveal_waiting!r}  pending_widgets={len(pending)}")
-
-        if self._reveal_waiting:
-            # Waiting on the header photo and/or the QML bio height-report —
-            # _mark_reveal_ready() fires _reveal_content() once every piece is
-            # in. Safety net in case one of them never reports back.
-            QTimer.singleShot(3000, self._reveal_content)
-        else:
-            QTimer.singleShot(0, self._reveal_content)
-
-    def _mark_reveal_ready(self, key):
-        print(f"[REVEAL] _mark_reveal_ready({key!r}) at {time.time():.3f}  "
-              f"was_waiting={self._reveal_waiting!r}  spinner_pending={getattr(self, '_spinner_pending', None)}")
-        self._reveal_waiting.discard(key)
-        if not self._reveal_waiting:
-            self._reveal_content()
+        print(f"[REVEAL] _on_content_ready done at {time.time():.3f}")
+        QTimer.singleShot(0, self._reveal_content)
 
     def _reveal_content(self):
-        print(f"[REVEAL] _reveal_content() called at {time.time():.3f}  "
-              f"spinner_pending={getattr(self, '_spinner_pending', None)}  "
-              f"still_waiting={getattr(self, '_reveal_waiting', None)!r}  "
-              f"pending_widgets={len(getattr(self, '_pending_reveal', []))}")
         if not self._spinner_pending:
-            print("[REVEAL]   -> already revealed, skipping")
             return
         self._spinner_pending = False
-        self._reveal_waiting = set()
-        for w in getattr(self, '_pending_reveal', []):
-            print(f"[REVEAL]   -> showing {w!r}")
-            w.show()
-        self._pending_reveal = []
-        self._try_set_focus()
-        # The widgets just shown above contain QMLGridWrapper native windows
-        # that are being mapped/rendered for the first time. Newly-mapped
-        # native windows get placed above every other top-level window
-        # (including this WA_AlwaysStackOnTop overlay) the instant they're
-        # mapped -- re-raise the overlay so it covers them again, then give
-        # them a couple of frames to render their first real frame before
-        # pulling the overlay away.
-        self._loading_overlay.raise_()
-        QTimer.singleShot(60, self._loading_overlay.stop)
-        print(f"[REVEAL]   -> reveal complete, overlay hiding shortly, at {time.time():.3f}")
-
-    def _try_set_focus(self):
-        """Focus first item in first section if no focus is already set."""
-        for i in range(self.sections_layout.count()):
-            row = self.sections_layout.itemAt(i).widget()
-            if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                row.list_widget.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                row.list_widget.setCurrentRow(0)
-                break
+        self.auto_focus()
+        self._loading_overlay.stop()
+        print(f"[REVEAL] reveal complete at {time.time():.3f}")
 
     def _toggle_artist_like(self):
         self._artist_liked = not self._artist_liked
@@ -2523,41 +1539,25 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
    
     def apply_cover(self, cover_id, image_data):
         is_header  = getattr(self, 'current_header_cover_id', None) == str(cover_id)
-        has_items  = cover_id in getattr(self, 'pending_items', {})
         has_qml    = cover_id in getattr(self, 'pending_qml_sections', {})
 
-        if not (is_header or has_items or has_qml):
+        if not (is_header or has_qml):
             return
 
         # QML sections only need raw bytes — store sync (instant)
         if has_qml:
-            for section in self.pending_qml_sections[cover_id]:
-                try:
-                    section.apply_cover(cover_id, image_data)
-                except Exception:
-                    pass
+            for cache_dict, model in self.pending_qml_sections[cover_id]:
+                cache_dict[cover_id] = image_data
+                model.update_cover(cover_id)
             del self.pending_qml_sections[cover_id]
 
         # Pixmap work (decode + scale) goes to background thread
-        if is_header or has_items:
+        if is_header:
             self._decode_worker.enqueue(cover_id, image_data, side=400)
 
     def _on_cover_decoded(self, cover_id: str, img):
-        from PyQt6.QtGui import QPixmap, QIcon
+        from PyQt6.QtGui import QPixmap
         pix  = QPixmap.fromImage(img)
-        icon = QIcon(pix)
-
-        if cover_id in getattr(self, 'pending_items', {}):
-            from PyQt6.QtWidgets import QTreeWidgetItem
-            for item in self.pending_items[cover_id]:
-                try:
-                    if isinstance(item, QTreeWidgetItem):
-                        item.setIcon(1, icon)
-                    else:
-                        item.setIcon(icon)
-                except Exception:
-                    pass
-            del self.pending_items[cover_id]
 
         if getattr(self, 'current_header_cover_id', None) == str(cover_id):
             self.set_header_image(pix)

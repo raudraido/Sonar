@@ -99,31 +99,9 @@ class KeyboardMixin:
             elif stack_idx == 1 and hasattr(current_widget, 'detail_view'):
                 tl = getattr(current_widget.detail_view, 'track_list', None)
                 if tl: active_tree = tl.tree
-            elif stack_idx == 2 and hasattr(current_widget, 'artist_view'):
-                from PyQt6.QtWidgets import QListWidget
-                focus_w = QApplication.focusWidget()
-                
-                # Check if a list ALREADY has focus
-                if isinstance(focus_w, QListWidget):
-                    active_grid = focus_w
-                else:
-                    # THE FIX 3: If focus was lost to the background, forcefully find the first active album row!
-                    active_grid = None
-                    for lw in self._artist_view_lists(current_widget):
-                        active_grid = lw
-                        active_grid.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                        if active_grid.currentRow() < 0:
-                            active_grid.setCurrentRow(0)
-                        break
-                    
-                    # If we STILL didn't find one (empty artist), fallback to just clicking the main play button
-                    if not active_grid:
-                        if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
-                                event.modifiers() & Qt.KeyboardModifier.ShiftModifier and
-                                not event.isAutoRepeat()):
-                            current_widget.artist_view.btn_play.animateClick()
-                            event.accept()
-                            return
+            # stack_idx == 2 (artist_view) is the single-QML ArtistRichDetailView,
+            # which owns all of its own keyboard navigation via its eventFilter
+            # installed on its QML widget — nothing to do here.
         elif hasattr(current_widget, 'tree'):
             active_tree = current_widget.tree
         
@@ -153,22 +131,6 @@ class KeyboardMixin:
                     # Inject the key press directly to avoid Qt bubbling bugs
                     active_grid.keyPressEvent(event)
                     
-                    new_row = active_grid.currentRow()
-                    
-                    # Magic Jump between category rows inside Artist Detail View!
-                    if old_row == new_row and key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-                        if hasattr(current_widget, 'artist_view') and hasattr(current_widget.stack, 'currentIndex') and current_widget.stack.currentIndex() == 2:
-                            lists = self._artist_view_lists(current_widget)
-
-                            if active_grid in lists:
-                                current_idx = lists.index(active_grid)
-                                next_idx = current_idx + (1 if key == Qt.Key.Key_Down else -1)
-                                if 0 <= next_idx < len(lists):
-                                    active_grid.clearSelection() # Clean up old highlight
-                                    next_grid = lists[next_idx]
-                                    next_grid.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                                    next_grid.setCurrentRow(0) # Jump to the beginning of the next row
-                                    
                     event.accept()
                     return
                 else:
@@ -193,25 +155,19 @@ class KeyboardMixin:
                         
                         # SHIFT + ENTER: Play the highlighted Grid Item immediately!
                         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                            if current_widget is self.album_browser: 
-                                self.play_whole_album(data) 
-                            elif current_widget is self.artist_browser: 
-                                if stack_idx == 0: 
-                                    artist_name = data.get('name') or data.get('artist')
-                                    if artist_name:
-                                        self.play_artist_by_name(artist_name)
-                                elif stack_idx == 2: 
-                                    self.play_whole_album(data)
-                                    
+                            if current_widget is self.album_browser:
+                                self.play_whole_album(data)
+                            elif current_widget is self.artist_browser and stack_idx == 0:
+                                artist_name = data.get('name') or data.get('artist')
+                                if artist_name:
+                                    self.play_artist_by_name(artist_name)
+
                         # REGULAR ENTER: Navigate to the detail view
                         else:
-                            if current_widget is self.album_browser: 
+                            if current_widget is self.album_browser:
                                 self.navigate_to_album(data)
-                            elif current_widget is self.artist_browser: 
-                                if stack_idx == 0:
-                                    self.navigate_to_artist(data)
-                                elif stack_idx == 2:
-                                    self.navigate_to_album(data)
+                            elif current_widget is self.artist_browser and stack_idx == 0:
+                                self.navigate_to_artist(data)
                 event.accept()
                 return
 
@@ -406,21 +362,6 @@ class KeyboardMixin:
                     self.generic_tooltip.hide()
                     
         return super().eventFilter(source, event)
-    
-    def _artist_view_lists(self, current_widget):
-        """Returns all navigable QListWidgets in the artist detail view, in order."""
-        lists = []
-        av = getattr(current_widget, 'artist_view', None)
-        if not av:
-            return lists
-        for i in range(av.sections_layout.count()):
-            row = av.sections_layout.itemAt(i).widget()
-            if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                lists.append(row.list_widget)
-        related = getattr(av, 'related_artists_row', None)
-        if related and related.list_widget.count() > 0:
-            lists.append(related.list_widget)
-        return lists
 
     def focusNextPrevChild(self, next):
         """Globally disables the Tab and Shift+Tab keys from randomly moving focus between widgets!"""

@@ -187,21 +187,18 @@ so QML-grid pages and QWidget-list pages feel identical.
 `createWindowContainer`'s native child window does **not** propagate
 unhandled `QEvent.Wheel` to parent widgets the way a regular child widget
 does. Any time a `QMLGridWrapper` sits *inside* a `QScrollArea` (rather than
-*being* the scroll area itself — e.g. `ArtistRichDetailView`'s header, about
-card, and section grids inside its outer `QScrollArea`), install a
-`WheelForwarder` on it:
+*being* the scroll area itself), install a `WheelForwarder` on it:
 
 ```python
 self._smooth_scroller = SmoothScroller(self.scroll, vsync_source=self._qml.quickWindow())
 self._wheel_forwarder = WheelForwarder(self._smooth_scroller, self)
 self._qml.installEventFilter(self._wheel_forwarder)
-self._about_qml.installEventFilter(self._wheel_forwarder)
-row.qml_widget.installEventFilter(self._wheel_forwarder)  # per section
 ```
 
 This is **not** needed when the `QMLGridWrapper` *is* the whole scrollable
-surface (album/artist/playlist grids) — those handle their own wheel via the
-QML pattern in §2 above.
+surface (album/artist/playlist grids, `ArtistRichDetailView`'s single-page
+`artist_detail_page.qml`) — those handle their own wheel via the QML pattern
+in §2 above.
 
 **Gotcha — duplicate wheel events**: `QMLGridWrapper.installEventFilter()`
 registers the filter on *three* underlying QObjects (the wrapper itself,
@@ -222,9 +219,10 @@ or be covered by, a `QMLGridWrapper` needs one of these two fixes:
 
 ### Pattern A — top-level `Tool` window (for overlays that must appear ABOVE QML)
 
-Used by `_CoverOverlay` (`player/tabs/now_playing/now_playing_info.py:405`)
-and `_ArtistPhotoOverlay` (`player/tabs/artists/artists_browser.py:1154`).
-Convert the overlay from a child `QWidget` to a top-level frameless window:
+Used by `_CoverOverlay` (`player/tabs/now_playing/now_playing_info.py:405`),
+`_ArtistPhotoOverlay` and `_ArtistLoadingOverlay`
+(`player/tabs/artists/artists_browser.py`). Convert the overlay from a child
+`QWidget` to a top-level frameless window:
 
 ```python
 super().__init__(None,
@@ -249,10 +247,9 @@ self.show(); self.raise_(); self.activateWindow(); self.setFocus()
 
 ### Pattern B — `WA_NativeWindow` (for small overlays that must sit ON TOP of QML within the same window)
 
-Used by `LeftPanel`'s nav `ArrowButton`s (`player/widgets.py:2113`) and
-`ArtistRichDetailView`'s `_loading_overlay`/`_loading_spinner`. Promote the
-overlay widget to a native window so normal `raise_()`/z-order works against
-the `QMLGridWrapper`'s container:
+Used by `LeftPanel`'s nav `ArrowButton`s (`player/widgets.py:2113`). Promote
+the overlay widget to a native window so normal `raise_()`/z-order works
+against the `QMLGridWrapper`'s container:
 
 ```python
 widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)

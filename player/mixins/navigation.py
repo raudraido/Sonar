@@ -765,11 +765,8 @@ class NavigationMixin:
                 tl = getattr(current_widget.detail_view, 'track_list', None)
                 if tl: success = focus_tree(tl.tree)
             elif stack_idx == 2 and hasattr(current_widget, 'artist_view'):
-                for i in range(current_widget.artist_view.sections_layout.count()):
-                    row = current_widget.artist_view.sections_layout.itemAt(i).widget()
-                    if row and hasattr(row, 'list_widget') and row.list_widget.count() > 0:
-                        success = focus_grid(row.list_widget)
-                        break
+                current_widget.artist_view.auto_focus()
+                success = True
         else:
             success = True
 

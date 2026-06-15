@@ -22,17 +22,25 @@ import QtQuick
 //       }
 //   }
 //
-// For a plain Flickable with no extra margins, minContentY/maxContentY can
+// For a plain Flickable with no extra margins, minContent/maxContent can
 // be left at their defaults (0 / contentHeight - height). For a ListView
 // with a header (originY != 0), bind both to target.originY-based bounds.
+//
+// Set horizontal: true to drive target.contentX instead of contentY (e.g.
+// a horizontal ListView) — minContent/maxContent then refer to the X axis.
 Item {
     id: root
 
     required property Flickable target
-    property real minContentY: 0
-    property real maxContentY: Math.max(minContentY, target.contentHeight - target.height)
+    property bool horizontal: false
+    property real minContent: 0
+    property real maxContent: Math.max(minContent, (horizontal ? target.contentWidth - target.width : target.contentHeight - target.height))
 
-    property real wheelVelocity: 0   // px/sec, +down/-up
+    // Deprecated aliases kept for existing vertical call sites.
+    property alias minContentY: root.minContent
+    property alias maxContentY: root.maxContent
+
+    property real wheelVelocity: 0   // px/sec, +down/-up (or +right/-left when horizontal)
 
     anchors.fill: parent
     // Sit behind the Flickable's content (header/delegates): this Item is
@@ -48,12 +56,13 @@ Item {
         onTriggered: {
             var dt = frameTime
             if (dt <= 0) return
-            var newY = root.target.contentY + root.wheelVelocity * dt
-            if (newY <= root.minContentY) {
-                newY = root.minContentY
+            var current = root.horizontal ? root.target.contentX : root.target.contentY
+            var newPos = current + root.wheelVelocity * dt
+            if (newPos <= root.minContent) {
+                newPos = root.minContent
                 root.wheelVelocity = 0
-            } else if (newY >= root.maxContentY) {
-                newY = root.maxContentY
+            } else if (newPos >= root.maxContent) {
+                newPos = root.maxContent
                 root.wheelVelocity = 0
             } else {
                 root.wheelVelocity *= Math.pow(0.5, dt / scrollTuning.decayHalfLife)
@@ -63,10 +72,14 @@ Item {
                     // pixel as the sub-pixel-positioned images/rects,
                     // instead of settling ~0.5px apart and popping by 1px
                     // once the glide stops.
-                    newY = Math.round(newY)
+                    newPos = Math.round(newPos)
                 }
             }
-            root.target.contentY = newY
+            if (root.horizontal) {
+                root.target.contentX = newPos
+            } else {
+                root.target.contentY = newPos
+            }
         }
     }
 
