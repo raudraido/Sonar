@@ -155,11 +155,12 @@ class LiveArtistDetailWorker(QThread): # Fetches everything for ONE artist's det
                     except Exception as e:
                         print(f"[TIMING]   get_artist_info_native FAILED: {e}")
 
-                # If native already has the bio (it normally returns similar artists in
-                # the same response too), don't block on subsonic's getArtistInfo2 —
-                # that call can trigger a slow live Last.fm round-trip on a cache miss.
-                # Only wait for it as a fallback when native came back empty.
-                if native_result.get('biography'):
+                # If native already has both the bio and similar artists, don't block
+                # on subsonic's getArtistInfo2 — that call can trigger a slow live
+                # Last.fm round-trip on a cache miss. Otherwise wait for it (it was
+                # already started in parallel above), since it's the only source
+                # that reliably returns similarArtist on this server.
+                if native_result.get('biography') and native_result.get('similarArtist'):
                     sub = {}
                 else:
                     sub_done.wait()
