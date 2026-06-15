@@ -224,14 +224,14 @@ Rectangle {
                             color: root.textPrimary
                             font.pixelSize: 28; font.bold: true
                             wrapMode: Text.WordWrap
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
                         }
 
                         Text {
                             text: root.artistStats
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.bold: true
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
                         }
 
                         // ── Action buttons ─────────────────────────────────
@@ -403,7 +403,7 @@ Rectangle {
                         text: "About " + root.artistName
                         color: root.textPrimary
                         font.pixelSize: 20; font.bold: true
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.family: root.fontFamily
                     }
 
                     Text {
@@ -412,7 +412,7 @@ Rectangle {
                         text: root.bioText
                         color: root.textSecondary
                         font.pixelSize: root.fontSizeSecondary
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.family: root.fontFamily
                         wrapMode: Text.WordWrap
                         lineHeight: 1.4
                         maximumLineCount: root.bioCollapsed ? 10 : 100000
@@ -437,7 +437,7 @@ Rectangle {
                         text: root.bioCollapsed ? "Show more" : "Show less"
                         color: root.textSecondary
                         font.pixelSize: root.fontSizeSecondary
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.family: root.fontFamily
                         visible: bioMeasure.truncated
 
                         MouseArea {
@@ -465,7 +465,7 @@ Rectangle {
                     text: "Popular"
                     color: root.textPrimary
                     font.pixelSize: 20; font.bold: true
-                    font.family: root.fontFamily; renderType: Text.NativeRendering
+                    font.family: root.fontFamily
                 }
 
                 ListView {
@@ -513,7 +513,6 @@ Rectangle {
                             text: trackNumber
                             color: root.textSecondary
                             font.pixelSize: root.fontSizePrimary
-                            renderType: Text.NativeRendering
                         }
 
                         Rectangle {
@@ -547,7 +546,6 @@ Rectangle {
                             color: rowRoot.isHighlighted ? root.accentColor : root.textPrimary
                             font.pixelSize: root.fontSizePrimary
                             elide: Text.ElideRight
-                            renderType: Text.NativeRendering
                         }
 
                         Text {
@@ -561,7 +559,6 @@ Rectangle {
                             font.pixelSize: root.fontSizeSecondary
                             font.underline: albumArea.containsMouse
                             elide: Text.ElideRight
-                            renderType: Text.NativeRendering
 
                             MouseArea {
                                 id: albumArea
@@ -583,7 +580,6 @@ Rectangle {
                             text: trackDuration
                             color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary
-                            renderType: Text.NativeRendering
                         }
 
                         MouseArea {
@@ -639,7 +635,7 @@ Rectangle {
                         text: sectionTitle
                         color: root.textPrimary
                         font.pixelSize: 20; font.bold: true
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.family: root.fontFamily
                     }
 
                     Rectangle {
@@ -657,7 +653,7 @@ Rectangle {
                             text: sectionCount
                             color: root.textPrimary
                             font.pixelSize: 12; font.bold: true
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
                         }
                     }
                 }
@@ -810,7 +806,6 @@ Rectangle {
                                 font.pixelSize: root.fontSizePrimary
                                 font.bold: true
                                 elide: Text.ElideRight
-                                renderType: Text.NativeRendering
                             }
 
                             Flow {
@@ -832,7 +827,6 @@ Rectangle {
                                         text: modelData
                                         color: isSep ? "#777" : (hov ? root.accentColor : root.textSecondary)
                                         font.pixelSize: root.fontSizeSecondary
-                                        renderType: Text.NativeRendering
                                         Rectangle {
                                             visible: !parent.isSep && parent.hov
                                             y: parent.baselineOffset + 2
@@ -864,7 +858,6 @@ Rectangle {
                                 color: root.textSecondary
                                 font.pixelSize: root.fontSizeSecondary
                                 elide: Text.ElideRight
-                                renderType: Text.NativeRendering
                             }
                         }
 
@@ -926,7 +919,7 @@ Rectangle {
                         text: "Related Artists"
                         color: root.textPrimary
                         font.pixelSize: 20; font.bold: true
-                        font.family: root.fontFamily; renderType: Text.NativeRendering
+                        font.family: root.fontFamily
                     }
 
                     Rectangle {
@@ -944,7 +937,7 @@ Rectangle {
                             text: relatedList.count
                             color: root.textPrimary
                             font.pixelSize: 12; font.bold: true
-                            font.family: root.fontFamily; renderType: Text.NativeRendering
+                            font.family: root.fontFamily
                         }
                     }
                 }
@@ -1150,7 +1143,6 @@ Rectangle {
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
                         elide: Text.ElideRight
-                        renderType: Text.NativeRendering
                     }
 
                     MouseArea {

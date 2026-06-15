@@ -1,6 +1,8 @@
 import QtQuick
 
 Item {
+    id: skeletonRoot
+
     property int    pillCount: 2
     property string baseColor: "#2a2a2a"
     property int    cardIndex: 0
@@ -23,7 +25,7 @@ Item {
             color:        "white"
             opacity:      0
             SequentialAnimation on opacity {
-                running: true; loops: -1
+                running: skeletonRoot.visible; loops: -1
                 NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
                 NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
             }
@@ -52,7 +54,7 @@ Item {
                     color:        "white"
                     opacity:      0
                     SequentialAnimation on opacity {
-                        running: true; loops: -1
+                        running: skeletonRoot.visible; loops: -1
                         NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
                         NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
                     }
