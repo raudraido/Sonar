@@ -1,46 +1,22 @@
 import json
+import threading
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QStackedWidget, QListWidget, QListWidgetItem,
-                             QScrollArea, QPushButton, QApplication)
-from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QThread, QTimer,
-                          QAbstractListModel, QModelIndex, pyqtSlot, QObject, QUrl, QPoint)
-from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, menu_hover, apply_menu_palette, resolve_menu_hover, SmoothScroller
+                             QStackedWidget, QApplication)
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QTimer,
+                          QAbstractListModel, QModelIndex, pyqtSlot, pyqtProperty,
+                          QObject, QUrl, QPoint, QSettings)
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtQuick import QQuickView
 from PyQt6.QtQuickWidgets import QQuickWidget
-from PyQt6.QtQuick import QQuickImageProvider
+from player.mixins.visuals import resolve_menu_hover
 
-from player.widgets import CoverImageProvider, QMLGridWrapper
+from PyQt6.QtQuick import QQuickImageProvider
+from player.widgets import CoverImageProvider, QMLGridWrapper, AlbumDetailCoverProvider, AlbumIconProvider, themed_shadow_menu, popup_menu_at_global
 from player import resource_path
 from player.workers import GridCoverWorker
-from player.components.shared_widgets import PaginationFooter, SmartSearchContainer, ToggleSwitch
-from player.tabs.tracks.tracks_browser import TracksBrowser
-
-from PyQt6.QtGui import QPainterPath
-
-class RoundedCoverLabel(QLabel):
-    def __init__(self, radius=12, parent=None):
-        super().__init__(parent)
-        self._radius = radius
-
-    def paintEvent(self, event):
-        pix = self.pixmap()
-        if not pix or pix.isNull():
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, self.width(), self.height(), self._radius, self._radius)
-            painter.fillPath(path, QColor("#222"))
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, self.width(), self.height(), self._radius, self._radius)
-        painter.setClipPath(path)
-        scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                            Qt.TransformationMode.SmoothTransformation)
-        x = (scaled.width()  - self.width())  // 2
-        y = (scaled.height() - self.height()) // 2
-        painter.drawPixmap(-x, -y, scaled)
+from player.components.shared_widgets import SmartSearchContainer
+from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
+from player.scroll_tuning import scroll_tuning
 
 class PlaylistModel(QAbstractListModel):
     TITLE_ROLE    = Qt.ItemDataRole.UserRole + 1
@@ -160,554 +136,656 @@ class DragDropHelper(QObject):
     sig_drag_moved = pyqtSignal(QPoint)
     sig_drag_ended = pyqtSignal()
 
-class PlaylistDetailView(QWidget):
-    play_clicked = pyqtSignal()
-    shuffle_clicked = pyqtSignal()
-    
+# ── Playlist detail — QML-based (mirrors AlbumDetailView) ─────────────────────
+
+class _TrackThumbProvider(QQuickImageProvider):
+    """Serves per-track thumbnails from CoverCache, fetching from the network on cache miss.
+    requestImage is called on a QML background thread so network I/O here is safe."""
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self._client = None
+
+    def set_client(self, client):
+        self._client = client
+
+    def requestImage(self, cid, _requestedSize):
+        from PyQt6.QtGui import QImage
+        from player.components.cover_cache import CoverCache, THUMB_SIZE
+        data = CoverCache.instance().get_thumb(cid)
+        if not data and self._client:
+            try:
+                data = self._client.get_cover_art(cid, size=THUMB_SIZE)
+                if data:
+                    CoverCache.instance().save_thumb(cid, data)
+            except Exception:
+                pass
+        if data:
+            img = QImage()
+            img.loadFromData(data)
+            if not img.isNull():
+                return img, img.size()
+        empty = QImage(1, 1, QImage.Format.Format_ARGB32)
+        empty.fill(Qt.GlobalColor.transparent)
+        return empty, empty.size()
+
+
+class PlaylistDetailTrackModel(QAbstractListModel):
+    TRACK_IDX      = Qt.ItemDataRole.UserRole + 1
+    TRACK_ID       = Qt.ItemDataRole.UserRole + 2
+    TRACK_NUMBER   = Qt.ItemDataRole.UserRole + 3
+    TRACK_TITLE    = Qt.ItemDataRole.UserRole + 4
+    ARTIST_NAME    = Qt.ItemDataRole.UserRole + 5
+    IS_FAVORITE    = Qt.ItemDataRole.UserRole + 6
+    DURATION_STR   = Qt.ItemDataRole.UserRole + 7
+    PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 8
+    TRACK_GENRE    = Qt.ItemDataRole.UserRole + 9
+    COVER_ART_ID   = Qt.ItemDataRole.UserRole + 10
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.current_playlist_id = None
-        self.current_accent = "#0066cc"
-        self.current_tracks = []
-        
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setObjectName("DetailBackground")
-        self.setStyleSheet("#DetailBackground { background-color: rgba(12, 12, 12, 0.3); border-radius: 0; }")
-        
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        from PyQt6.QtWidgets import QFrame
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QWidget#ScrollContent { background: transparent; }
-        """)
-        
-        self.content_widget = QWidget()
-        self.content_widget.setObjectName("ScrollContent")
-        self.content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        
-        self.layout = QVBoxLayout(self.content_widget)
-        self.layout.setContentsMargins(8, 8, 0, 20)
-        self.layout.setSpacing(20)
+        self._rows = []
 
-        # --- HEADER ---
-        header_container = QWidget()
-        header_layout = QHBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 0, 8, 0)
-        header_layout.setSpacing(25)
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._rows)
 
-        self.cover_label = RoundedCoverLabel(radius=12)
-        self.cover_label.setFixedSize(220, 220)
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._rows):
+            return None
+        r = self._rows[index.row()]
+        if role == self.TRACK_IDX:      return r.get('_idx', 0)
+        if role == self.TRACK_ID:       return r.get('_id', '')
+        if role == self.TRACK_NUMBER:   return r.get('_num', '')
+        if role == self.TRACK_TITLE:    return r.get('_title', '')
+        if role == self.ARTIST_NAME:    return r.get('_artist', '')
+        if role == self.IS_FAVORITE:    return r.get('_fav', False)
+        if role == self.DURATION_STR:   return r.get('_dur', '')
+        if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
+        if role == self.TRACK_GENRE:    return r.get('_genre', '')
+        if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
+        return None
 
-        meta_container = QWidget()
-        meta_layout = QVBoxLayout(meta_container)
-        meta_layout.setContentsMargins(0, 10, 0, 10)
-        meta_layout.setSpacing(5)
+    def roleNames(self):
+        return {
+            self.TRACK_IDX:      b"trackIdx",
+            self.TRACK_ID:       b"trackId",
+            self.TRACK_NUMBER:   b"trackNumber",
+            self.TRACK_TITLE:    b"trackTitle",
+            self.ARTIST_NAME:    b"artistName",
+            self.IS_FAVORITE:    b"isFavorite",
+            self.DURATION_STR:   b"durationStr",
+            self.PLAY_COUNT_STR: b"playCountStr",
+            self.TRACK_GENRE:    b"trackGenre",
+            self.COVER_ART_ID:   b"coverArtId",
+        }
 
-        self.lbl_title = QLabel("Playlist Title")
-        self.lbl_title.setStyleSheet("color: white; font-weight: 900; font-size: 36px;")
-        self.lbl_title.setWordWrap(True)
+    def set_tracks(self, tracks: list):
+        rows = []
+        for idx, t in enumerate(tracks):
+            raw_star = t.get('starred', False)
+            is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
+            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            secs     = dur_ms // 1000
+            plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
+            num      = str(t.get('track') or (idx + 1))
+            genre_raw = t.get('genre', '') or ''
+            for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
+                genre_raw = genre_raw.replace(sep, ' • ')
+            genre_parts = [g.strip() for g in genre_raw.split(' • ') if g.strip()]
+            rows.append({
+                '_idx':      idx,
+                '_id':       str(t.get('id', '')),
+                '_num':      num,
+                '_title':    t.get('title', ''),
+                '_artist':   t.get('artist', ''),
+                '_fav':      is_fav,
+                '_dur':      f"{secs // 60}:{secs % 60:02d}",
+                '_plays':    plays,
+                '_genre':    ' • '.join(genre_parts[:3]),
+                '_cover_id': str(t.get('coverArt') or t.get('albumId') or ''),
+            })
+        self.beginResetModel()
+        self._rows = rows
+        self.endResetModel()
 
-        self.lbl_meta = QLabel("Loading...")
-        self.lbl_meta.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
+    def update_favorite(self, track_idx: int, is_fav: bool):
+        for i, r in enumerate(self._rows):
+            if r.get('_idx') == track_idx:
+                r['_fav'] = is_fav
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
+                break
 
-        info_row = QWidget()
-        info_row_layout = QHBoxLayout(info_row)
-        info_row_layout.setContentsMargins(0, 0, 0, 0)
-        info_row_layout.setSpacing(10)
+    def move_track(self, from_idx: int, to_idx: int):
+        if from_idx == to_idx: return
+        n = len(self._rows)
+        if not (0 <= from_idx < n) or not (0 <= to_idx < n): return
+        dest = to_idx + 1 if from_idx < to_idx else to_idx
+        self.beginMoveRows(QModelIndex(), from_idx, from_idx, QModelIndex(), dest)
+        item = self._rows.pop(from_idx)
+        self._rows.insert(to_idx, item)
+        self.endMoveRows()
 
-        self.lbl_artist = QLabel("Owner")
-        self.lbl_artist.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
 
-        self.lbl_public = QLabel("Public")
-        self.lbl_public.setStyleSheet("color: #aaa; font-weight: bold; font-size: 13px;")
+class PlaylistDetailBridge(QObject):
+    # → QML theme
+    accentColorChanged        = pyqtSignal(str)
+    hoverColorChanged         = pyqtSignal(str)
+    skeletonColorChanged      = pyqtSignal(str)
+    cardBgChanged             = pyqtSignal(str)
+    cardBorderChanged         = pyqtSignal(str)
+    panelBgChanged            = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
+    fontFamilyChanged         = pyqtSignal(str)
+    # → QML data
+    playlistDataChanged       = pyqtSignal(str, str, str, str)  # title, owner, meta, covId
+    coverIdChanged            = pyqtSignal(str)
+    publicStateChanged        = pyqtSignal(bool)
+    playingStatusChanged      = pyqtSignal(str, bool)
+    selectedTrackChanged      = pyqtSignal(int)
+    scrollToModelRow          = pyqtSignal(int)
+    scrollToTopOfView         = pyqtSignal()
+    scrollToBottomOfView      = pyqtSignal()
+    # → QML column visibility
+    showTrackChanged          = pyqtSignal(bool)
+    showTitleChanged          = pyqtSignal(bool)
+    showArtistChanged         = pyqtSignal(bool)
+    showFavChanged            = pyqtSignal(bool)
+    showGenreChanged          = pyqtSignal(bool)
+    showDurChanged            = pyqtSignal(bool)
+    showPlaysChanged          = pyqtSignal(bool)
 
-        self.toggle_public = ToggleSwitch(self.current_accent)
-        self.toggle_public.setChecked(False)
-        self.toggle_public.toggled.connect(self._on_public_toggled)
+    def __init__(self, view):
+        super().__init__()
+        self._view = view
+        self._selected_trkidx = -1
+        self.search = SearchController(
+            on_active_changed=lambda active: view._set_window_shortcuts_enabled(not active))
 
-        info_row_layout.addWidget(self.lbl_artist)
-        info_row_layout.addWidget(self.lbl_public)
-        info_row_layout.addWidget(self.toggle_public)
-        info_row_layout.addStretch()
-        
-        btn_row = QWidget()
-        btn_layout = QHBoxLayout(btn_row)
-        btn_layout.setContentsMargins(0, 15, 0, 0)
-        btn_layout.setSpacing(15)
-        
-        self.btn_play = QPushButton()
-        self.btn_play.setFixedSize(60, 60) 
-        self.btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus) 
-        
-        self.btn_shuffle = QPushButton()
-        self.btn_shuffle.setFixedSize(40, 40)
-        self.btn_shuffle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_shuffle.setFocusPolicy(Qt.FocusPolicy.NoFocus) 
-        self.btn_shuffle.setStyleSheet("QPushButton { outline: none; background: transparent; border: 2px solid #555; border-radius: 20px; } QPushButton:hover { border-color: white; }")
-        
-        from PyQt6.QtGui import QIcon
-        from PyQt6.QtCore import QSize
+    @pyqtProperty(QObject, constant=True)
+    def searchCtl(self):
+        return self.search
+
+    @pyqtSlot()
+    def playClicked(self):
+        self._view.play_clicked.emit()
+
+    @pyqtSlot()
+    def shuffleClicked(self):
+        self._view.shuffle_clicked.emit()
+
+    @pyqtSlot()
+    def togglePublic(self):
+        self._view._toggle_public()
+
+    @pyqtSlot()
+    def favHeaderClicked(self):
+        pass  # playlists have no per-view fav-sort
+
+    @pyqtSlot(int)
+    def navigateRow(self, delta: int):
+        rows = self._view._track_model._rows
+        if not rows:
+            return
+        st = self.search.text.lower()
+        if st:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows)
+                   if st in r.get('_title', '').lower()
+                   or st in r.get('_artist', '').lower()
+                   or st in r.get('_genre', '').lower()]
+        else:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows)]
+        if not nav:
+            return
+        pos = next((p for p, (_, idx) in enumerate(nav) if idx == self._selected_trkidx), -1)
+        if pos == -1:
+            new_pos = 0 if delta > 0 else len(nav) - 1
+        else:
+            new_pos = pos + delta
+            if new_pos < 0:
+                self.scrollToTopOfView.emit()
+                return
+            if new_pos >= len(nav):
+                self.scrollToBottomOfView.emit()
+                return
+        mr, ti = nav[new_pos]
+        self._selected_trkidx = ti
+        self.selectedTrackChanged.emit(ti)
+        self.scrollToModelRow.emit(mr)
+
+    @pyqtSlot()
+    def playSelected(self):
+        if self._selected_trkidx >= 0:
+            self._view.track_play_signal.emit(self._view._tracks, self._selected_trkidx)
+
+    @pyqtSlot(int)
+    def trackPlayClicked(self, track_idx: int):
+        tracks = self._view._tracks
+        if 0 <= track_idx < len(tracks):
+            self._selected_trkidx = track_idx
+            self.selectedTrackChanged.emit(track_idx)
+            self._view.track_play_signal.emit(tracks, track_idx)
+
+    @pyqtSlot(str)
+    def trackArtistClicked(self, name: str):
+        self._view.track_artist_clicked.emit(name)
+
+    @pyqtSlot(str)
+    def trackGenreClicked(self, genre: str):
+        self._view.genre_clicked.emit(genre)
+
+    @pyqtSlot(int)
+    def trackFavoriteClicked(self, track_idx: int):
+        tracks = self._view._tracks
+        if not (0 <= track_idx < len(tracks)):
+            return
+        track   = tracks[track_idx]
+        raw     = track.get('starred', False)
+        cur_fav = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+        new_fav = not cur_fav
+        track['starred'] = new_fav
+        self._view._track_model.update_favorite(track_idx, new_fav)
+        self._view.favorite_toggled.emit(str(track.get('id', '')), new_fav)
+        client = getattr(self._view, 'client', None)
+        if client:
+            threading.Thread(
+                target=lambda: client.set_favorite(track.get('id'), new_fav),
+                daemon=True).start()
+
+    @pyqtSlot(int, float, float)
+    def trackContextMenuRequested(self, track_idx: int, global_x: float, global_y: float):
+        self._view._show_track_context_menu_at(track_idx, int(global_x), int(global_y))
+
+    @pyqtSlot(str, int, int, int)
+    def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
+        t = getattr(self, '_tip_hide_timer', None)
+        if t and t.isActive():
+            t.stop()
+        for w in QApplication.topLevelWidgets():
+            tf = getattr(w, '_tooltip_filter', None)
+            if tf:
+                tf._qml_mode = True
+                tf._ensure_tip().show_at(cx, above_y, below_y, text)
+                break
+
+    @pyqtSlot()
+    def hideTooltip(self):
+        def _do_hide():
+            for w in QApplication.topLevelWidgets():
+                tf = getattr(w, '_tooltip_filter', None)
+                if tf:
+                    tf._qml_mode = False
+                    if tf._tip and tf._tip.isVisible():
+                        tf._tip.hide()
+                    break
+        t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(_do_hide)
+        t.start(120)
+        self._tip_hide_timer = t
+
+    @pyqtSlot(result='QVariantList')
+    def getColWidths(self):
+        saved = QSettings().value('playlist_detail/track_col_widths')
+        if isinstance(saved, dict):
+            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)),
+                    int(saved.get('dur', 72)), int(saved.get('plays', 60)), int(saved.get('genre', 140))]
+        return [160, 68, 72, 60, 140]
+
+    @pyqtSlot(int, int, int, int, int)
+    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int, genre: int):
+        QSettings().setValue('playlist_detail/track_col_widths',
+                             {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
+
+    @pyqtSlot(result='QVariantList')
+    def getColVisibility(self):
+        saved = QSettings().value('playlist_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        return [bool(saved.get('track',  True)),  bool(saved.get('title',  True)),
+                bool(saved.get('artist', True)),  bool(saved.get('fav',    True)),
+                bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
+                bool(saved.get('plays',  True))]
+
+    @pyqtSlot(float, float)
+    def burgerClicked(self, gx: float, gy: float):
+        saved = QSettings().value('playlist_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        cols = [
+            ('track',  'Track',    self.showTrackChanged),
+            ('title',  'Title',    self.showTitleChanged),
+            ('artist', 'Artist',   self.showArtistChanged),
+            ('fav',    'Favorite', self.showFavChanged),
+            ('genre',  'Genre',    self.showGenreChanged),
+            ('dur',    'Duration', self.showDurChanged),
+            ('plays',  'Plays',    self.showPlaysChanged),
+        ]
+        menu = themed_shadow_menu(self._view)
+        for key, label, sig in cols:
+            vis = bool(saved.get(key, True))
+            text = ('✓  ' if vis else '    ') + label
+            menu.add_action(text, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s))
+        popup_menu_at_global(menu, int(gx), int(gy))
+
+    def _set_col_vis(self, key: str, visible: bool, signal):
+        saved = QSettings().value('playlist_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        saved[key] = visible
+        QSettings().setValue('playlist_detail/col_visibility', saved)
+        signal.emit(visible)
+
+    @pyqtSlot(int, int)
+    def reorderTrack(self, from_idx: int, to_idx: int):
+        view   = self._view
+        tracks = view._tracks
+        if not (0 <= from_idx < len(tracks)) or not (0 <= to_idx < len(tracks)):
+            return
+        track = tracks.pop(from_idx)
+        tracks.insert(to_idx, track)
+        view._track_model.move_track(from_idx, to_idx)
+        if self._selected_trkidx == from_idx:
+            self._selected_trkidx = to_idx
+            self.selectedTrackChanged.emit(to_idx)
+        pl_id  = view.current_playlist_id
+        client = getattr(view, 'client', None)
+        if pl_id and client:
+            n   = len(tracks)
+            ids = [str(t.get('id', '')) for t in tracks]
+            threading.Thread(target=_persist_track_reorder,
+                             args=(client, pl_id, n, ids), daemon=True).start()
+
+    @pyqtSlot()
+    def favHeaderClicked(self):
+        pass  # future: sort by favourite
+
+
+def _persist_track_reorder(client, pl_id, original_len, new_ids):
+    try:
+        client.update_playlist_tracks(pl_id, original_len, new_ids)
+    except Exception as e:
+        print(f"PlaylistDetail: reorder persist failed: {e}")
+
+
+class _PlaylistKeyFilter(SearchKeyFilter):
+    def __init__(self, bridge, qml_widget, parent=None):
+        super().__init__(bridge.search, on_navigate=self._navigate, parent=parent)
+        self._b   = bridge
+        self._qml = qml_widget
+
+    def _navigate(self, event):
+        key  = event.key()
+        mods = event.modifiers()
+        b    = self._b
+        if key == Qt.Key.Key_Down:
+            b.navigateRow(1);  return True
+        if key == Qt.Key.Key_Up:
+            b.navigateRow(-1); return True
+        if key == Qt.Key.Key_PageDown:
+            b.navigateRow(max(5, self._qml.height() // 42)); return True
+        if key == Qt.Key.Key_PageUp:
+            b.navigateRow(-max(5, self._qml.height() // 42)); return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if mods & Qt.KeyboardModifier.ControlModifier:
+                b.playClicked(); return True
+            if b._selected_trkidx >= 0:
+                b.playSelected(); return True
+        if key == Qt.Key.Key_Escape and b._selected_trkidx >= 0:
+            b._selected_trkidx = -1
+            b.selectedTrackChanged.emit(-1)
+            return True
+        return False
+
+
+class PlaylistDetailView(QWidget):
+    play_clicked         = pyqtSignal()
+    shuffle_clicked      = pyqtSignal()
+    track_play_signal    = pyqtSignal(list, int)
+    track_artist_clicked = pyqtSignal(str)
+    favorite_toggled     = pyqtSignal(str, bool)
+    genre_clicked        = pyqtSignal(str)
+    play_next_signal     = pyqtSignal(dict)
+    queue_track_signal   = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.client               = None
+        self.current_playlist_id  = None
+        self._tracks: list        = []
+        self._is_public           = False
+        self._bg_color            = '14,14,14'
+
+        self._track_model        = PlaylistDetailTrackModel()
+        self._cover_provider     = AlbumDetailCoverProvider()
+        self._icon_provider      = AlbumIconProvider()
+        self._track_thumb_prov   = _TrackThumbProvider()
+        self._bridge             = PlaylistDetailBridge(self)
+
+        self._qml_view = QQuickView()
+        self._qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        self._qml = QWidget.createWindowContainer(self._qml_view, self)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        self._key_filter = _PlaylistKeyFilter(self._bridge, self._qml)
+        self._qml.installEventFilter(self._key_filter)
+        self._qml_view.installEventFilter(self._key_filter)
+
+        engine = self._qml_view.engine()
+        engine.addImageProvider("playlistdetailcover", self._cover_provider)
+        engine.addImageProvider("playlisttrackcovers", self._track_thumb_prov)
+        engine.addImageProvider("playlisticons",       self._icon_provider)
+        engine.addImageProvider("albumicons",          self._icon_provider)  # SearchBar.qml hardcodes albumicons
+
+        ctx = self._qml_view.rootContext()
+        ctx.setContextProperty("playlistTrackModel",  self._track_model)
+        ctx.setContextProperty("playlistDetailBridge", self._bridge)
+        ctx.setContextProperty("scrollTuning",         scroll_tuning)
+
+        self._qml_view.setSource(QUrl.fromLocalFile(
+            resource_path("player/tabs/playlists/playlist_detail.qml")))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._qml)
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    @property
+    def current_tracks(self) -> list:
+        return self._tracks
+
+    def load_playlist(self, data: dict):
+        self.current_playlist_id = data.get('id')
+        self._is_public = bool(data.get('public', False))
+        title  = data.get('title') or data.get('name') or 'Unknown Playlist'
+        owner  = data.get('owner', '')
+
+        self._bridge.search.reset()
+        self._bridge._selected_trkidx = -1
+        self._bridge.selectedTrackChanged.emit(-1)
+        self._bridge.playlistDataChanged.emit(title, owner, "Loading...", '')
+        self._bridge.publicStateChanged.emit(self._is_public)
+        self._track_model.set_tracks([])
+        self._tracks = []
+
+        # Cover — try cache first
+        cid = str(data.get('cover_id') or data.get('coverArt') or '')
+        if cid:
+            from player.components.cover_cache import CoverCache
+            img = CoverCache.instance().get_full(cid) or CoverCache.instance().get_thumb(cid)
+            if img:
+                self._cover_provider.cache[cid] = img
+                self._bridge.coverIdChanged.emit(cid)
+            threading.Thread(target=lambda: self._fetch_cover(cid), daemon=True).start()
+
+    def populate_tracks(self, playlist_data: dict, tracks: list):
+        self._tracks = tracks
+        self._track_model.set_tracks(tracks)
+        if self.client:
+            self._track_thumb_prov.set_client(self.client)
+        self._bridge._selected_trkidx = -1
+        self._bridge.selectedTrackChanged.emit(-1)
+
+        title  = playlist_data.get('title') or playlist_data.get('name') or 'Unknown Playlist'
+        owner  = playlist_data.get('owner', '')
+        dur    = sum(t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000 for t in tracks)
+        secs   = dur // 1000
+        hrs, rem = divmod(secs, 3600)
+        mins = rem // 60
+        time_str = f"{hrs} hr {mins} min" if hrs else f"{mins} min"
+        meta = f"{len(tracks)} songs • {time_str}"
+
+        cid = str(playlist_data.get('cover_id') or playlist_data.get('coverArt') or '')
+        self._bridge.playlistDataChanged.emit(title, owner, meta, cid)
+        self._bridge.publicStateChanged.emit(bool(playlist_data.get('public', False)))
+        self._is_public = bool(playlist_data.get('public', False))
+
+        if cid and cid not in self._cover_provider.cache:
+            threading.Thread(target=lambda: self._fetch_cover(cid), daemon=True).start()
+
+    def _fetch_cover(self, cid: str):
         try:
-            from player import resource_path
-            self.btn_play.setIcon(QIcon(resource_path("img/play.png")))
-            self.btn_play.setIconSize(QSize(15, 15)) 
-        except: pass
-        
-        self.btn_play.clicked.connect(self.play_clicked.emit)
-        self.btn_shuffle.clicked.connect(self.shuffle_clicked.emit)
-        
-        btn_layout.addWidget(self.btn_play)
-        btn_layout.addWidget(self.btn_shuffle)
-        btn_layout.addStretch()
-        
-        meta_layout.addWidget(self.lbl_title)
-        meta_layout.addWidget(self.lbl_meta)
-        meta_layout.addWidget(info_row)
-        meta_layout.addWidget(btn_row)
-        meta_layout.addStretch()
-        
-        header_layout.addWidget(self.cover_label)
-        header_layout.addWidget(meta_container)
-        
-        self.layout.addWidget(header_container)
+            client = getattr(self, 'client', None)
+            if not client:
+                return
+            data = client.get_cover_art(cid)
+            if data:
+                self._cover_provider.cache[cid] = data
+                from player.components.cover_cache import CoverCache
+                CoverCache.instance().save_full(cid, data)
+                self._bridge.coverIdChanged.emit(cid)
+        except Exception as e:
+            print(f"[PlaylistDetailView] cover fetch error: {e}")
 
-        # --- TRACKS BROWSER ---
-        self.track_list = TracksBrowser(None)
-        self.track_list.set_album_mode(True)
-        self.track_list.tree.header().filter_sort_disabled = True
-        self.track_list.tree.setColumnWidth(7, 80)
-        if hasattr(self.track_list, 'refresh_btn'):
-            self.track_list.refresh_btn.hide()
-        self.track_list.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
-        self.layout.addWidget(self.track_list)
-        self.layout.addStretch() 
-        
-        # DRAG & DROP INJECTION
-        import types
-        from PyQt6.QtWidgets import QAbstractItemView, QTreeWidget
-        from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QCursor
-        from PyQt6.QtCore import QRect, QPoint
-        
-        tree = self.track_list.tree
-        tree.setDragEnabled(True)
-        tree.setAcceptDrops(True)
-        tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        tree.setDropIndicatorShown(True)
-        tree.setDragDropOverwriteMode(False)
-        tree.setDefaultDropAction(Qt.DropAction.MoveAction)
-        
-        self.drag_helper = DragDropHelper(self)
-        tree.drag_helper = self.drag_helper
-        
-        def mousePressEvent(self, event):
-            self._drag_start_pos = event.position().toPoint()
-            QTreeWidget.mousePressEvent(self, event)
-
-        def startDrag(self, supportedActions):
-            items = self.selectedItems()
-            if not items: return
-            item_rect = self.visualItemRect(items[0])
-            full_row_rect = QRect(0, item_rect.y(), self.viewport().width(), item_rect.height())
-            captured = self.viewport().grab(full_row_rect)
-
-            final = QPixmap(captured.size())
-            final.fill(Qt.GlobalColor.transparent)
-            p = QPainter(final)
-            p.setOpacity(0.8)
-            p.fillRect(final.rect(), QColor(25, 25, 25, 255))
-            p.drawPixmap(0, 0, captured)
-            p.end()
-
-            row_tl = self.viewport().mapTo(self, full_row_rect.topLeft())
-            click = self._drag_start_pos if hasattr(self, '_drag_start_pos') else self.mapFromGlobal(QCursor.pos())
-            self._hot_spot_vector = click - row_tl
-            global_start = self.mapToGlobal(row_tl)
-
-            self.drag_helper.sig_drag_started.emit(final, global_start)
-            
-            drag = QDrag(self)
-            drag.setMimeData(self.mimeData(items))
-            drag.setHotSpot(self._hot_spot_vector)
-            drag.exec(supportedActions)
-            self.drag_helper.sig_drag_ended.emit()
-
-        def dragMoveEvent(self, event):
-            pos = event.position().toPoint()
-            target = pos - getattr(self, '_hot_spot_vector', QPoint(0,0))
-            self.drag_helper.sig_drag_moved.emit(self.mapToGlobal(target))
-            QTreeWidget.dragMoveEvent(self, event)
-            
-            
-            if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.OnItem:
-                event.ignore()
-
-        def dropEvent(self, event):
-            
-            if event.source() is self:
-                drop_target = self.itemAt(event.position().toPoint())
-                drop_index = self.indexOfTopLevelItem(drop_target) if drop_target else self.topLevelItemCount()
-                
-                indicator = self.dropIndicatorPosition()
-                if indicator == QAbstractItemView.DropIndicatorPosition.OnItem:
-                    event.ignore()
-                    return
-                elif indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                    drop_index += 1
-                
-                for item in self.selectedItems():
-                    idx = self.indexOfTopLevelItem(item)
-                    if idx != -1:
-                        if idx < drop_index:
-                            drop_index -= 1 # Adjust index because we are removing an item above it
-                        taken = self.takeTopLevelItem(idx)
-                        self.insertTopLevelItem(drop_index, taken)
-                        taken.setSelected(True) # Keep it highlighted after dropping!
-                        drop_index += 1
-                        
-                event.accept()
-                self.drag_helper.orderChanged.emit()
-            else:
-                QTreeWidget.dropEvent(self, event)
-
-        tree.mousePressEvent = types.MethodType(mousePressEvent, tree)
-        tree.startDrag = types.MethodType(startDrag, tree)
-        tree.dragMoveEvent = types.MethodType(dragMoveEvent, tree)
-        tree.dropEvent = types.MethodType(dropEvent, tree)
-        
-        self.drag_helper.orderChanged.connect(self.on_playlist_reordered)
-        # ----------------------------------------------------
-
-        # Finish setting up the single track list
-        self.scroll_area.setWidget(self.content_widget)
-        main_layout.addWidget(self.scroll_area)
-        SmoothScroller(self.scroll_area)
-        self.track_list.tree._ext_sb = self.scroll_area.verticalScrollBar()
-        self.track_list.tree.installEventFilter(self)
-
-        if hasattr(self.track_list, 'search_container'):
-            try: self.track_list.search_container.text_changed.disconnect()
-            except: pass
-            self.track_list.search_container.text_changed.connect(self.filter_local_tracks)
-
-    def on_playlist_reordered(self):
-        new_tracks = []
-        tree = self.track_list.tree
-        for i in range(tree.topLevelItemCount()):
-            item = tree.topLevelItem(i)
-            item.setText(0, str(i + 1)) # Instantly re-number the "#" column
-            
-            from PyQt6.QtCore import Qt
-            wrapped = item.data(0, Qt.ItemDataRole.UserRole)
-            if wrapped:
-                track = wrapped.get('data', wrapped) if isinstance(wrapped, dict) else wrapped
-                new_tracks.append(track)
-                
-        old_length = len(self.current_tracks)
-        self.current_tracks = new_tracks
-        
-        # Sync to Server in the background so the UI doesn't freeze
-        client = getattr(self.track_list, 'client', None)
-        if client and getattr(self, 'current_playlist_id', None):
-            track_ids = [t.get('id') for t in new_tracks if t.get('id')]
-            import threading
-            def save_order():
+    def _toggle_public(self):
+        new_state = not self._is_public
+        self._is_public = new_state
+        self._bridge.publicStateChanged.emit(new_state)
+        client = getattr(self, 'client', None)
+        pid    = self.current_playlist_id
+        if client and pid:
+            def _save():
                 try:
-                    client.update_playlist_tracks(self.current_playlist_id, old_length, track_ids)
+                    import requests
+                    params = client._get_auth_params()
+                    params['playlistId'] = pid
+                    params['public'] = 'true' if new_state else 'false'
+                    requests.get(f"{client.base_url}/rest/updatePlaylist",
+                                 params=params, timeout=10)
                 except Exception as e:
-                    print(f"Failed to save reordered playlist: {e}")
-            threading.Thread(target=save_order, daemon=True).start()
-    
-    def _on_public_toggled(self, checked):
-        client = getattr(self.track_list, 'client', None)
-        if not client or not self.current_playlist_id:
-            return
-        import threading
-        def _save():
-            try:
-                import requests
-                params = client._get_auth_params()
-                params['playlistId'] = self.current_playlist_id
-                params['public'] = 'true' if checked else 'false'
-                requests.get(f"{client.base_url}/rest/updatePlaylist", params=params, timeout=10)
-            except Exception as e:
-                print(f"Failed to update public state: {e}")
-        threading.Thread(target=_save, daemon=True).start()
+                    print(f"[PlaylistDetailView] toggle public error: {e}")
+            threading.Thread(target=_save, daemon=True).start()
 
-    def filter_local_tracks(self, text):
-        if not hasattr(self, 'current_tracks') or not self.current_tracks:
+    def _show_track_context_menu_at(self, track_idx: int, gx: int, gy: int):
+        if not (0 <= track_idx < len(self._tracks)):
             return
-            
-        query = text.lower().strip()
-        self.track_list.tree.setUpdatesEnabled(False)
-        self.track_list.tree.clear()
-        
-        for i, t in enumerate(self.current_tracks):
-            title = str(t.get('title', t.get('name', ''))).lower()
-            artist = str(t.get('artist', '')).lower()
-            album = str(t.get('album', '')).lower()
-            
-            # Show track if it matches, and preserve original track number (i + 1)
-            if query in title or query in artist or query in album:
-                if hasattr(self.track_list, 'create_track_item'):
-                    item = self.track_list.create_track_item(t, i + 1)
-                    self.track_list.tree.addTopLevelItem(item)
-                    
-        self.track_list.tree.setUpdatesEnabled(True)
-        
-        # Snap the height of the UI to fit the filtered results
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(50, self.adjust_tree_height)
-    
-    def eventFilter(self, source, event):
-        from PyQt6.QtCore import QEvent, Qt, QTimer
-        
-        if hasattr(self, 'track_list') and source is getattr(self.track_list, 'tree', None) and event.type() == QEvent.Type.KeyPress:
-            
-            # DETAIL VIEW LOCAL SEARCH
-            if event.text() == "/":
-                self.scroll_area.verticalScrollBar().setValue(0)
-                if hasattr(self.track_list, 'search_container'):
-                    self.track_list.search_container.show_search()
-                    QTimer.singleShot(50, self.track_list.search_container.search_input.setFocus)
-                return True 
-            
-            key = event.key()
-            
-            # DETAIL VIEW PLAY ALL (SHIFT+ENTER)
-            if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
-                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                self.btn_play.animateClick()
-                return True  
-                
-            # CAMERA TRACKING & EDGE SCROLLING
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                tree = self.track_list.tree
-                old_item = tree.currentItem()
-                old_idx = tree.indexOfTopLevelItem(old_item) if old_item else -1
-                
-                if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                    jump_size = 12 
-                    if key == Qt.Key.Key_PageDown:
-                        target_idx = min(tree.topLevelItemCount() - 1, old_idx + jump_size)
-                    else:
-                        target_idx = max(0, old_idx - jump_size)
-                        
-                    if target_idx >= 0:
-                        tree.setCurrentItem(tree.topLevelItem(target_idx))
-                
-                def check_scroll():
-                    new_item = tree.currentItem()
-                    new_idx = tree.indexOfTopLevelItem(new_item) if new_item else -1
-                    
-                    if old_idx == new_idx:
-                        if key in (Qt.Key.Key_Up, Qt.Key.Key_PageUp) and new_idx <= 0:
-                            self.scroll_area.verticalScrollBar().setValue(0)
-                            return
-                        elif key in (Qt.Key.Key_Down, Qt.Key.Key_PageDown) and new_idx >= tree.topLevelItemCount() - 1:
-                            self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
-                            return
-                    
-                    if new_item:
-                        rect = tree.visualItemRect(new_item)
-                        pt = tree.viewport().mapTo(self.content_widget, rect.topLeft())
-                        self.scroll_area.ensureVisible(pt.x(), pt.y() + rect.height() // 2, 0, 100)
-                        
-                if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-                    check_scroll()
-                    return True
-                    
-                QTimer.singleShot(0, check_scroll)
-                return False
-                
-        return super().eventFilter(source, event)
-    
+        track  = self._tracks[track_idx]
+        main   = self.window()
+        menu   = themed_shadow_menu(self, bg=getattr(self, '_bg_color', None))
+        track_id = str(track.get('id', ''))
+        artist   = track.get('artist', '')
+
+        menu.add_action('Play Now',
+                        lambda: self.track_play_signal.emit([track], 0),
+                        icon_path='img/sub_play.png')
+        menu.add_action('Play Next',
+                        lambda: main.play_track_next(track) if hasattr(main, 'play_track_next') else None,
+                        icon_path='img/sub_next.png')
+        menu.add_action('Add to Queue',
+                        lambda: main.add_track_to_queue(track) if hasattr(main, 'add_track_to_queue') else None,
+                        icon_path='img/queue.png')
+        menu.add_action('Go to Artist',
+                        lambda: self.track_artist_clicked.emit(artist) if artist else None,
+                        enabled=bool(artist), icon_path='img/sub_artist.png')
+        menu.add_action('Start Radio',
+                        lambda: main.start_radio(track) if hasattr(main, 'start_radio') else None,
+                        icon_path='img/radio.png')
+        playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
+        if track_id:
+            pl_items = [('New Playlist…', lambda: self._add_to_new_playlist(main, [track_id]), 'img/add.png')]
+            pl_items += [(f"{pl.get('name','Unnamed')}  ({pl.get('songCount','')})" if pl.get('songCount','') != '' else pl.get('name','Unnamed'),
+                          lambda pid=pl.get('id'): self._add_to_existing_playlist(main, pid, [track_id]),
+                          'img/playlist.png')
+                         for pl in playlists if pl.get('id')]
+            menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
+        tb = getattr(main, 'tracks_browser', None)
+        menu.add_action('Get Info',
+                        callback=(lambda: tb._show_track_info(track)) if tb else None,
+                        enabled=bool(tb), icon_path='img/info.png')
+        raw_star = track.get('starred', False)
+        is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
+        menu.add_action('Remove from Favorites' if is_fav else 'Add to Favorites',
+                        lambda i=track_idx: self._bridge.trackFavoriteClicked(i),
+                        color='#E91E63',
+                        icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
+        popup_menu_at_global(menu, gx, gy, window=main)
+
+    def _add_to_new_playlist(self, main, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client: return
+        from player.components.shared_widgets import NewPlaylistDialog
+        from PyQt6.QtWidgets import QDialog
+        accent = getattr(main, 'master_color', '#1DB954')
+        dialog = NewPlaylistDialog(self, accent_color=accent)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name = dialog.get_name()
+            if not name: return
+            def _worker():
+                try:
+                    new_id = client.create_playlist(name, public=dialog.is_public())
+                    if new_id: client.add_tracks_to_playlist(new_id, track_ids)
+                except Exception as e:
+                    print(f"PlaylistDetail: create playlist failed: {e}")
+            threading.Thread(target=_worker, daemon=True).start()
+
+    def _add_to_existing_playlist(self, main, pl_id, track_ids):
+        client = getattr(main, 'navidrome_client', None)
+        if not client: return
+        threading.Thread(
+            target=lambda: client.add_tracks_to_playlist(pl_id, track_ids),
+            daemon=True).start()
+
+    def _set_window_shortcuts_enabled(self, enabled: bool):
+        set_window_shortcuts_enabled(self, self._qml, enabled)
+
+    def update_playing_status(self, playing_id, is_playing: bool, _accent: str = ''):
+        self._last_playing_id = playing_id
+        self._last_is_playing = is_playing
+        if not playing_id and is_playing:
+            return
+        self._bridge.playingStatusChanged.emit(str(playing_id) if playing_id else '', is_playing)
+
     def set_bg_color(self, c: str):
         self._bg_color = c
-        self.setStyleSheet(f"#{self.objectName()} {{ background-color: rgb({c}); border-radius: 0; }}")
-        self.track_list.set_bg_color(c)
-
-    def set_accent_color(self, color):
-        self.current_accent = color
-        self.setStyleSheet(f"#DetailBackground {{ background-color: rgb({getattr(self, '_bg_color', '14,14,14')}); border-radius: 0; }}")
-        _theme = getattr(self.window(), 'theme', None)
-        _pri = getattr(_theme, 'font_color_primary',   '#ffffff') if _theme else '#ffffff'
-        _sec = getattr(_theme, 'font_color_secondary', '#aaaaaa') if _theme else '#aaaaaa'
-        self.lbl_title.setStyleSheet(f"color: {_pri}; font-weight: 900; font-size: 36px;")
-        self.lbl_meta.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
-        self.lbl_artist.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
-        self.lbl_public.setStyleSheet(f"color: {_sec}; font-weight: bold; font-size: 13px;")
-        self.toggle_public.accent_color = color
-        self.toggle_public.update()
-        
-        play_btn_style = f"""
-            QPushButton {{ background-color: {color}; border-radius: 30px; border: none; }} 
-            QPushButton:hover {{ background-color: white; }}
-        """
-        self.btn_play.setStyleSheet(play_btn_style)
-        
-        scrollbar_style = f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QWidget#ScrollContent {{ background: transparent; }}
-            {scrollbar_css(color, hide_horizontal=True)}
-        """
-        self.scroll_area.setStyleSheet(scrollbar_style)
-        if not hasattr(self, '_scroll_reveal'):
-            self._scroll_reveal = install_scroll_reveal(self.scroll_area.viewport(), self.scroll_area.verticalScrollBar())
-        self._scroll_reveal.color = color
-        self.track_list.set_accent_color(color)
-
-        if hasattr(self.track_list, 'search_container'):
-            _theme = getattr(self.window(), 'theme', None)
-            from player.mixins.visuals import resolve_menu_hover
-            self.track_list.search_container.apply_input_theme(
-                bg           = getattr(_theme, 'main_panel_bg',        '14,14,14') if _theme else '14,14,14',
-                border_color = getattr(_theme, 'border_color',         '#2a2a2a')  if _theme else '#2a2a2a',
-                border_width = getattr(_theme, 'border_width',         1)          if _theme else 1,
-                fg_primary   = getattr(_theme, 'font_color_primary',   '#dddddd')  if _theme else '#dddddd',
-                fg_secondary = getattr(_theme, 'font_color_secondary', '#999999')  if _theme else '#999999',
-                hover_color  = resolve_menu_hover(_theme),
-                accent_color = color,
-            )
-
-        import os
-        from PyQt6.QtGui import QPixmap, QPainter, QColor, QIcon
-        from PyQt6.QtCore import QSize
         try:
-            from player import resource_path
-            icon_path = resource_path("img/shuffle.png")
-            if os.path.exists(icon_path):
-                pixmap = QPixmap(icon_path)
-                colored = QPixmap(pixmap.size())
-                colored.fill(QColor(0,0,0,0))
-                painter = QPainter(colored)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-                painter.fillRect(colored.rect(), QColor(color))
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-                painter.drawPixmap(0, 0, pixmap)
-                painter.end()
-                self.btn_shuffle.setIcon(QIcon(colored))
-                self.btn_shuffle.setIconSize(QSize(22, 22))
-        except: pass
-
-    def adjust_tree_height(self):
-        try:
-            tree = self.track_list.tree
-            count = tree.topLevelItemCount()
-            if count == 0: return
-
-            header_h = tree.header().height()
-            rows_h = count * 75
-            natural_h = header_h + rows_h + 10
-
-            MAX_TREE_H = 800
-            capped_h = min(natural_h, MAX_TREE_H)
-
-            tree.setMinimumHeight(capped_h)
-            tree.setMaximumHeight(natural_h)
-            self.track_list.setMinimumHeight(capped_h + 10)
-            self.track_list.setMaximumHeight(natural_h + 60)
+            r, g, b = (int(x) for x in c.split(','))
+            self._qml_view.setColor(QColor(r, g, b))
         except Exception:
             pass
 
-    def populate_view(self, playlist_data, tracks):
-        
-        self.current_playlist_id = playlist_data.get('id')
-        self.current_tracks = tracks
+    def set_accent_color(self, color: str):
+        theme = getattr(self.window(), 'theme', None)
+        self._bridge.accentColorChanged.emit(color)
+        self._bridge.hoverColorChanged.emit(resolve_menu_hover(theme) if theme else '#555555')
+        if theme:
+            self._bridge.fontSizePrimaryChanged.emit(theme.font_size_primary)
+            self._bridge.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+            self._bridge.fontColorPrimaryChanged.emit(theme.font_color_primary)
+            self._bridge.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            self._bridge.fontFamilyChanged.emit(getattr(theme, 'app_font', ''))
+            self._bridge.skeletonColorChanged.emit(getattr(theme, 'skeleton_base', '#282828'))
+            self._bridge.cardBgChanged.emit(getattr(theme, 'now_playing_card_bg', '#1e1e1e'))
+            border = getattr(theme, 'border_color', '#2a2a2a')
+            if not getattr(theme, 'auto_border_from_accent', True):
+                border = getattr(theme, 'manual_border_color', '#2a2a2a')
+            self._bridge.cardBorderChanged.emit(border)
+            raw_bg = getattr(theme, 'main_panel_bg', '14,14,14')
+            try:
+                r, g, b = (int(x) for x in raw_bg.split(','))
+                self._bridge.panelBgChanged.emit('#{:02x}{:02x}{:02x}'.format(r, g, b))
+            except Exception:
+                self._bridge.panelBgChanged.emit('#0e0e0e')
 
-        # Wire up the ghost drag signals safely
-        main_win = self.window()
-        if hasattr(main_win, 'show_ghost_drag') and not getattr(self, '_ghost_connected', False):
-            self.drag_helper.sig_drag_started.connect(main_win.show_ghost_drag)
-            self.drag_helper.sig_drag_moved.connect(main_win.move_ghost_drag)
-            self.drag_helper.sig_drag_ended.connect(main_win.ghost_label.hide)
-            self._ghost_connected = True
-
-        title = playlist_data.get('title', playlist_data.get('name', 'Unknown Playlist'))
-        self.lbl_title.setText(title)
-
-        dur_raw = playlist_data.get('duration', 0)
-        try: dur = int(dur_raw)
-        except: dur = 0
-        hrs = dur // 3600
-        mins = (dur % 3600) // 60
-        time_str = f"{hrs} hr {mins} min" if hrs > 0 else f"{mins} min"
-        self.lbl_meta.setText(f"{len(tracks)} songs • {time_str}")
-        owner = playlist_data.get('owner', '')
-        self.lbl_artist.setText(f"Created by {owner} •" if owner else '')
-        self.toggle_public.blockSignals(True)
-        self.toggle_public.setChecked(bool(playlist_data.get('public', False)))
-        self.toggle_public.blockSignals(False)
-
-        # --- COVER ---
-        # open_playlist_detail already set it from cache if available.
-        # This is only a fallback for the rare case where the cover wasn't cached yet.
-        cid = str(playlist_data.get('cover_id') or playlist_data.get('coverArt') or '')
-        pending_cid = getattr(self, '_pending_cover_id', None)
-        if cid and cid == pending_cid:
-            cover_provider = getattr(self, '_cover_provider', None)
-            cover_worker   = getattr(self, '_cover_worker', None)
-            img_data = cover_provider.image_cache.get(cid) if cover_provider else None
-            if img_data:
-                pix = QPixmap()
-                pix.loadFromData(img_data)
-                if not pix.isNull():
-                    self.cover_label.setPixmap(pix)
-            elif cover_worker:
-                def _on_cover(dl_id, dl_data, _cid=cid):
-                    if str(dl_id) == _cid:
-                        pix = QPixmap()
-                        pix.loadFromData(dl_data)
-                        if not pix.isNull():
-                            self.cover_label.setPixmap(pix)
-                        try:
-                            cover_worker.cover_ready.disconnect(_on_cover)
-                        except Exception:
-                            pass
-                cover_worker.cover_ready.connect(_on_cover)
-                cover_worker.queue_cover(cid, priority=True)
-        
-           
-        if hasattr(self.track_list, 'on_worker_finished'):
-            self.track_list.on_worker_finished(tracks, len(tracks), 1, 1)
-
-        if hasattr(self.track_list, 'search_container'):
-            self.track_list.search_container.search_input.blockSignals(True)
-            self.track_list.search_container.search_input.clear()
-            self.track_list.search_container.search_input.blockSignals(False)
-            if hasattr(self.track_list.search_container, 'collapse'):
-                self.track_list.search_container.collapse()
-            
-        if hasattr(self.track_list, 'status_label'):
-            self.track_list.status_label.hide()
-            
-        if hasattr(self.track_list, 'search_container'):
-            if hasattr(self.track_list.search_container, 'hide_burger'):
-                self.track_list.search_container.hide_burger()
-            elif hasattr(self.track_list.search_container, 'burger_btn'):
-                self.track_list.search_container.burger_btn.hide()
-                
-        self.track_list.tree.setSortingEnabled(False)
-        self.track_list.tree.header().setSortIndicatorShown(False)
-        self.track_list.tree.header().setSectionsClickable(False)
-            
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self.adjust_tree_height)
-            
-        main_win = self.window()
-        if hasattr(main_win, 'update_indicator'):
-            main_win.update_indicator(scroll_to_current=False)
-            
-        
-        self.track_list.tree.setFocus(Qt.FocusReason.OtherFocusReason)
 
 class PlaylistsBrowser(QWidget):
     play_track_signal = pyqtSignal(dict)
@@ -799,13 +877,11 @@ class PlaylistsBrowser(QWidget):
         self.detail_view = PlaylistDetailView()
         self.detail_view.play_clicked.connect(self.play_current_playlist)
         self.detail_view.shuffle_clicked.connect(self.shuffle_current_playlist)
-        
-        # Route TracksBrowser Signals!
-        self.detail_view.track_list.play_track.connect(self.play_track_signal.emit)
-        self.detail_view.track_list.queue_track.connect(self.queue_track_signal.emit)
-        self.detail_view.track_list.play_next.connect(self.play_next_signal.emit)
-        self.detail_view.track_list.play_multiple_tracks.connect(self.play_album_signal.emit)
-        self.detail_view.track_list.switch_to_artist_tab.connect(self.switch_to_artist_tab.emit)
+        self.detail_view.track_play_signal.connect(
+            lambda tracks, idx: self.play_album_signal.emit([tracks[idx]] if 0 <= idx < len(tracks) else []))
+        self.detail_view.queue_track_signal.connect(self.queue_track_signal.emit)
+        self.detail_view.play_next_signal.connect(self.play_next_signal.emit)
+        self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab.emit)
         
         self.stack.addWidget(self.grid_view)
         self.stack.addWidget(self.detail_view)
@@ -1040,7 +1116,8 @@ class PlaylistsBrowser(QWidget):
        
     def set_client(self, client):
         self.client = client
-        self.detail_view.track_list.client = client
+        self.detail_view.client = client
+        self.detail_view._track_thumb_prov.set_client(client)
         if not self.cover_worker:
             self.cover_worker = GridCoverWorker(client)
             self.cover_worker.cover_ready.connect(self.apply_cover)
@@ -1106,13 +1183,14 @@ class PlaylistsBrowser(QWidget):
             self.play_album_signal.emit(tracks)
 
     def play_current_playlist(self):
-        if hasattr(self.detail_view, 'current_tracks') and self.detail_view.current_tracks:
-            self.play_album_signal.emit(self.detail_view.current_tracks)
+        tracks = getattr(self.detail_view, '_tracks', [])
+        if tracks:
+            self.play_album_signal.emit(tracks)
 
     def shuffle_current_playlist(self):
-        if hasattr(self.detail_view, 'current_tracks') and self.detail_view.current_tracks:
+        tracks = list(getattr(self.detail_view, '_tracks', []))
+        if tracks:
             import random
-            tracks = list(self.detail_view.current_tracks)
             random.shuffle(tracks)
             self.play_album_signal.emit(tracks)
 
@@ -1163,20 +1241,12 @@ class PlaylistsBrowser(QWidget):
 
         self.current_album_id = data.get('id')
 
-        # Image is already rendered in the grid — grab bytes from cache immediately
+        # Seed the cover provider cache from the grid's image cache before load_playlist
         cid = str(data.get('cover_id') or data.get('coverArt') or '')
         if cid and hasattr(self, 'cover_provider'):
             img_data = self.cover_provider.image_cache.get(cid)
             if img_data:
-                pix = QPixmap()
-                pix.loadFromData(img_data)
-                if not pix.isNull():
-                    self.detail_view.cover_label.setPixmap(pix)
-
-        # Pass resources to detail view in case cover isn't cached yet (e.g. first open)
-        self.detail_view._cover_provider = getattr(self, 'cover_provider', None)
-        self.detail_view._cover_worker   = getattr(self, 'cover_worker', None)
-        self.detail_view._pending_cover_id = cid
+                self.detail_view._cover_provider.cache[cid] = img_data
 
         if hasattr(self, 'main_layout'):
             for i in range(self.main_layout.count()):
@@ -1185,13 +1255,10 @@ class PlaylistsBrowser(QWidget):
                     widget.hide()
 
         self.stack.setCurrentIndex(1)
-        self.detail_view.scroll_area.verticalScrollBar().setValue(0)
-
-        if hasattr(self.detail_view.track_list, 'show_skeleton_loader'):
-            self.detail_view.track_list.show_skeleton_loader(10)
+        self.detail_view.load_playlist(data)
 
         self.tracks_worker = PlaylistTracksWorker(self.client, data)
-        self.tracks_worker.results_ready.connect(self.detail_view.populate_view)
+        self.tracks_worker.results_ready.connect(self.detail_view.populate_tracks)
         self.tracks_worker.start()
 
     def go_to_root(self, record_history=True):
