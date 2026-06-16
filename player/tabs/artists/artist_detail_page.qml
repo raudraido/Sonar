@@ -607,7 +607,19 @@ Rectangle {
                 function onSelectIndex(idx) {
                     if (idx >= 0 && idx < popularList.count) popularList.currentIndex = idx
                     popularList.forceActiveFocus()
-                    root.scrollToPopular()
+                    pageScroll.wheelVelocity = 0
+                    // Contain scroll: keep the selected track in view without snapping to section top.
+                    // mapToItem(pageList.contentItem, …) gives correct content-space coordinates
+                    // regardless of header height or originY offset.
+                    var trackTop = popularList.mapToItem(pageList.contentItem, 0, idx * popularList.rowHeight).y
+                    var trackBot = trackTop + popularList.rowHeight
+                    var viewTop  = pageList.contentY
+                    var viewBot  = pageList.contentY + pageList.height
+                    var maxY     = pageList.originY + Math.max(0, pageList.contentHeight - pageList.height)
+                    if (trackTop < viewTop)
+                        pageList.contentY = Math.max(pageList.originY, trackTop)
+                    else if (trackBot > viewBot)
+                        pageList.contentY = Math.min(maxY, trackBot - pageList.height)
                 }
             }
         }

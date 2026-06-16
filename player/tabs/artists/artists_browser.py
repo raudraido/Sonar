@@ -1344,11 +1344,13 @@ class ArtistRichDetailView(QWidget): # The single-artist detail page: a QML head
             QMetaObject.invokeMethod(root, method_name)
 
     def auto_focus(self):
+        # setFocus first (Qt focus + root.forceActiveFocus), then _select_nav_entry
+        # so popularList.forceActiveFocus() runs last and wins QML activeFocus.
+        self._qml.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._invoke_qml('scrollToTop')
         chain = self._nav_chain()
         if chain:
             self._select_nav_entry(0, 0)
-        self._invoke_qml('scrollToTop')
-        self._qml.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _safe_discard_worker(self, worker):
         if not worker: return
