@@ -182,6 +182,26 @@ Rectangle {
                     bridge.emitPlayClicked(Number(grid.currentIndex))
                     event.accepted = true
                 }
+            } else if (event.key === Qt.Key_Right) {
+                var nextR = Math.min(grid.currentIndex + 1, grid.count - 1)
+                grid.currentIndex = nextR
+                grid.positionViewAtIndex(nextR, GridView.Contain)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Left) {
+                var nextL = Math.max(grid.currentIndex - 1, 0)
+                grid.currentIndex = nextL
+                grid.positionViewAtIndex(nextL, GridView.Contain)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+                var nextD = Math.min(grid.currentIndex + grid.itemsPerRow, grid.count - 1)
+                grid.currentIndex = nextD
+                grid.positionViewAtIndex(nextD, GridView.Contain)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Up) {
+                var nextU = Math.max(grid.currentIndex - grid.itemsPerRow, 0)
+                grid.currentIndex = nextU
+                grid.positionViewAtIndex(nextU, GridView.Contain)
+                event.accepted = true
             } else if (event.key === Qt.Key_PageDown) {
                 var pgDownTarget = Math.min(grid.currentIndex + (grid.itemsPerRow * 5), grid.count - 1)
                 grid.currentIndex = pgDownTarget

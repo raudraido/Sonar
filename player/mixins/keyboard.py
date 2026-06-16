@@ -282,7 +282,15 @@ class KeyboardMixin:
                         self.spotlight.hide()
                     return True # Eat the event
 
-        # 2. GLOBAL TYPE-TO-SEARCH INTERCEPTOR
+        # 2. GLOBAL BACKSPACE → GO BACK
+        if e_type == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Backspace:
+            from PyQt6.QtWidgets import QLineEdit, QApplication
+            fw = QApplication.focusWidget()
+            if not isinstance(fw, QLineEdit) and not getattr(fw, '_search_active', False):
+                self.go_back()
+                return True
+
+        # 3. GLOBAL TYPE-TO-SEARCH INTERCEPTOR
         if e_type == QEvent.Type.KeyPress and not getattr(self, '_theme_builder_open', False) and hasattr(self, 'spotlight') and not self.spotlight.isVisible():
             from PyQt6.QtWidgets import QLineEdit, QApplication
             focus_widget = QApplication.focusWidget()
@@ -314,7 +322,7 @@ class KeyboardMixin:
                         self.spotlight.activateWindow()
                         return True
 
-        # 3. TOOLTIP LOGIC
+        # 4. TOOLTIP LOGIC
         if e_type == QEvent.Type.ToolTip:
             from PyQt6.QtWidgets import QWidget, QSlider, QApplication
             if isinstance(source, QWidget) and source.toolTip():

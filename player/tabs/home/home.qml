@@ -195,14 +195,20 @@ Rectangle {
                     // Scroll carousel + Flickable when keyboard selection moves to this row
                     Connections {
                         target: root
+                        function _snapToCol(col) {
+                            var pageW = rowItem.nCols * rowItem.cellW
+                            var page  = Math.floor(col / rowItem.nCols)
+                            var maxX  = Math.max(0, carousel.contentWidth - carousel.width)
+                            carousel.contentX = Math.min(maxX, page * pageW)
+                        }
                         function onSelectedColChanged() {
                             if (root.selectedRowId === rowItem.rowId && root.selectedCol >= 0)
-                                carousel.positionViewAtIndex(root.selectedCol, ListView.Contain)
+                                _snapToCol(root.selectedCol)
                         }
                         function onSelectedRowIdChanged() {
                             if (root.selectedRowId !== rowItem.rowId) return
                             if (root.selectedCol >= 0)
-                                carousel.positionViewAtIndex(root.selectedCol, ListView.Contain)
+                                _snapToCol(root.selectedCol)
                             var rTop = rowsColumn.y + rowItem.y
                             var rBot = rTop + rowItem.height
                             if (rTop < scroller.contentY)

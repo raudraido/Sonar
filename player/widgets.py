@@ -1962,6 +1962,11 @@ class QMLGridWrapper(QWidget):
 
     def setFocus(self, *args):
         self._container.setFocus(*args)
+        # createWindowContainer doesn't reliably activate QML focus on all
+        # platforms, so explicitly push activeFocus into the QML scene.
+        root = self._view.rootObject()
+        if root is not None:
+            root.forceActiveFocus()
 
     def hasFocus(self):
         return self._container.hasFocus()
