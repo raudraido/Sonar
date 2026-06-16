@@ -521,9 +521,10 @@ Rectangle {
                 x: 20; y: cardLid.y + 12
                 width: parent.width - 40; height: 36
 
-                // Burger button — column picker
+                // Burger button — column picker (right of search)
                 Item {
-                    anchors.left: parent.left
+                    id: burgerBtn
+                    anchors.right:          parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     width: 32; height: 32
 
@@ -533,7 +534,7 @@ Rectangle {
                     }
                     Image {
                         anchors.centerIn: parent; width: 18; height: 18
-                        source: "image://albumicons/burger_" + root.textSecondary.replace("#","")
+                        source: "image://albumicons/burger_" + root.accentColor.replace("#","")
                         cache: false; mipmap: true; smooth: true
                     }
                     MouseArea {
@@ -549,7 +550,7 @@ Rectangle {
 
                 SearchBar {
                     id: trackSearchBar
-                    anchors.right:  parent.right
+                    anchors.right:  burgerBtn.left
                     anchors.top:    parent.top
                     anchors.bottom: parent.bottom
                     accentColor:       root.accentColor
@@ -716,6 +717,7 @@ Rectangle {
             width: trackList.width
 
             property int    trkIdx:     model.trackIdx
+            property int    rowIdx:     index
             property string trkId:      model.trackId      || ""
             property string trkNum:     model.trackNumber  || ""
             property string trkTitle:   model.trackTitle   || ""
@@ -737,7 +739,7 @@ Rectangle {
             height: matchSearch ? 52 : 0
             visible: height > 0
             clip: false
-            opacity: root._isDragging && root._dragFromIdx === trkIdx ? 0.3 : 1.0
+            opacity: root._isDragging && root._dragFromIdx === rowIdx ? 0.3 : 1.0
             Behavior on opacity { NumberAnimation { duration: 100 } }
 
             // Card body continuation
@@ -771,7 +773,7 @@ Rectangle {
 
                         // Track number (visible when not hovering or playing)
                         Text {
-                            visible: isPlaying ? false : (!rowHov || (root._isDragging && root._dragFromIdx !== trkIdx))
+                            visible: isPlaying ? false : (!rowHov || (root._isDragging && root._dragFromIdx !== rowIdx))
                             anchors.centerIn: parent
                             text: trackRow.trkNum; color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
@@ -779,7 +781,7 @@ Rectangle {
 
                         // Drag grip dots (visible on hover when not playing)
                         Row {
-                            visible: !isPlaying && (rowHov || (root._isDragging && root._dragFromIdx === trkIdx))
+                            visible: !isPlaying && (rowHov || (root._isDragging && root._dragFromIdx === rowIdx))
                             anchors.centerIn: parent; spacing: 3
                             Repeater {
                                 model: 2
@@ -789,7 +791,7 @@ Rectangle {
                                         model: 3
                                         delegate: Rectangle {
                                             width: 2.5; height: 2.5; radius: 1.25
-                                            color: root._isDragging && root._dragFromIdx === trkIdx
+                                            color: root._isDragging && root._dragFromIdx === rowIdx
                                                    ? root.accentColor : root.textSecondary
                                             opacity: 0.7
                                         }
@@ -797,6 +799,41 @@ Rectangle {
                                 }
                             }
                         }
+
+                        DragHandler {
+                            target: null
+                            enabled: !isPlaying
+                            dragThreshold: 6
+                            property int  _startIdx:    -1
+                            property real _pressSceneY: 0
+
+                            onActiveChanged: {
+                                if (active) {
+                                    _startIdx    = trackRow.rowIdx
+                                    _pressSceneY = centroid.scenePosition.y
+                                    root._dragFromIdx    = _startIdx
+                                    root._dragToIdx      = _startIdx
+                                    root._dragGhostTitle = trackRow.trkTitle
+                                    root._dragGhostArt   = trackRow.artName
+                                    root._dragGhostY     = centroid.scenePosition.y
+                                } else if (root._dragFromIdx === _startIdx) {
+                                    if (root._dragFromIdx !== root._dragToIdx)
+                                        playlistDetailBridge.reorderTrack(root._dragFromIdx, root._dragToIdx)
+                                    root._dragFromIdx = -1; root._dragToIdx = -1; _startIdx = -1
+                                }
+                            }
+                            onCentroidChanged: {
+                                if (!active || root._dragFromIdx !== _startIdx) return
+                                var sy  = centroid.scenePosition.y
+                                // indexAt takes content coordinates; sceneY == view Y since trackList fills root
+                                var idx = trackList.indexAt(0, sy + trackList.contentY)
+                                if (idx >= 0)
+                                    root._dragToIdx = idx
+                                root._dragGhostY = sy
+                            }
+                        }
+
+                        HoverHandler { cursorShape: isPlaying ? Qt.ArrowCursor : (root._isDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor) }
 
                         // Playing bars
                         Row {
@@ -817,43 +854,6 @@ Rectangle {
                             }
                         }
 
-                        // DragHandler coexists with the row-level MouseArea (z:2) because
-                        // PointerHandlers use a separate delivery pipeline from MouseEvents.
-                        DragHandler {
-                            target: null
-                            enabled: !isPlaying
-                            dragThreshold: 5
-
-                            onActiveChanged: {
-                                if (active) {
-                                    var rp = numCol.mapToItem(root, centroid.position.x, centroid.position.y)
-                                    root._dragFromIdx    = trackRow.trkIdx
-                                    root._dragToIdx      = trackRow.trkIdx
-                                    root._dragGhostTitle = trackRow.trkTitle
-                                    root._dragGhostArt   = trackRow.artName
-                                    root._dragGhostY     = rp.y
-                                } else if (root._dragFromIdx === trackRow.trkIdx) {
-                                    if (root._dragFromIdx !== root._dragToIdx)
-                                        playlistDetailBridge.reorderTrack(root._dragFromIdx, root._dragToIdx)
-                                    root._dragFromIdx = -1
-                                    root._dragToIdx   = -1
-                                }
-                            }
-
-                            onCentroidChanged: {
-                                if (!active || root._dragFromIdx !== trackRow.trkIdx) return
-                                var rp = numCol.mapToItem(root, centroid.position.x, centroid.position.y)
-                                root._dragGhostY = rp.y
-                                var hdrH = trackList.headerItem ? trackList.headerItem.height : 0
-                                var rel  = rp.y + trackList.contentY - trackList.originY - hdrH
-                                root._dragToIdx  = Math.max(0, Math.min(playlistTrackModel.count - 1, Math.floor(rel / 52)))
-                            }
-                        }
-
-                        HoverHandler {
-                            enabled: !isPlaying && !root._isDragging
-                            cursorShape: Qt.OpenHandCursor
-                        }
                     }
 
                     // Track (cover art + title + artist combined)
@@ -1027,6 +1027,7 @@ Rectangle {
                         font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                     }
                 }
+
 
                 HoverHandler { onHoveredChanged: trackRow.rowHov = hovered }
                 MouseArea {

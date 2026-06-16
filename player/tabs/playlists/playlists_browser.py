@@ -263,7 +263,11 @@ class PlaylistDetailTrackModel(QAbstractListModel):
         self.beginMoveRows(QModelIndex(), from_idx, from_idx, QModelIndex(), dest)
         item = self._rows.pop(from_idx)
         self._rows.insert(to_idx, item)
+        lo, hi = min(from_idx, to_idx), max(from_idx, to_idx)
+        for i in range(lo, hi + 1):
+            self._rows[i]['_idx'] = i
         self.endMoveRows()
+        self.dataChanged.emit(self.index(lo, 0), self.index(hi, 0), [self.TRACK_IDX])
 
 
 class PlaylistDetailBridge(QObject):

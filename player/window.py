@@ -1079,12 +1079,11 @@ class SonarPlayer(
         from player.tabs.playlists.playlists_browser import PlaylistDetailView
         self.global_playlist_view = PlaylistDetailView(None)
         
-        self.global_playlist_view.track_list.play_track.connect(self.add_and_play_from_browser)
-        self.global_playlist_view.track_list.play_multiple_tracks.connect(self.play_whole_album)
-        self.global_playlist_view.track_list.queue_track.connect(self.add_track_to_queue)
-        self.global_playlist_view.track_list.play_next.connect(self.play_track_next)
-        self.global_playlist_view.track_list.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
-        self.global_playlist_view.track_list.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
+        self.global_playlist_view.track_play_signal.connect(
+            lambda tracks, idx: self.play_whole_album([tracks[idx]] if 0 <= idx < len(tracks) else []))
+        self.global_playlist_view.queue_track_signal.connect(self.add_track_to_queue)
+        self.global_playlist_view.play_next_signal.connect(self.play_track_next)
+        self.global_playlist_view.track_artist_clicked.connect(self.navigate_to_artist)
         
         self.global_playlist_view.play_clicked.connect(self.play_global_playlist)
         self.global_playlist_view.shuffle_clicked.connect(self.shuffle_global_playlist)

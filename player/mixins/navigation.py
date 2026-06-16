@@ -132,16 +132,14 @@ class NavigationMixin:
                     
                     
                     self.global_playlist_view.client = getattr(self, 'navidrome_client', None)
-                    self.global_playlist_view.track_list.client = getattr(self, 'navidrome_client', None)
-                    
+
                     current_id = getattr(self.global_playlist_view, 'current_playlist_id', None)
                     target_id = data.get('id') if isinstance(data, dict) else None
                     if current_id != target_id:
-                        if hasattr(self.global_playlist_view.track_list, 'show_skeleton_loader'):
-                            self.global_playlist_view.track_list.show_skeleton_loader(10)
+                        self.global_playlist_view.load_playlist(data)
                         from player.tabs.playlists.playlists_browser import PlaylistTracksWorker
                         self._pl_worker = PlaylistTracksWorker(self.navidrome_client, data)
-                        self._pl_worker.results_ready.connect(self.global_playlist_view.populate_view)
+                        self._pl_worker.results_ready.connect(self.global_playlist_view.populate_tracks)
                         self._pl_worker.start()
 
         finally:
@@ -408,21 +406,12 @@ class NavigationMixin:
         self.tabs.setCurrentIndex(self.global_playlist_tab_idx)
         self.programmatic_nav = False
         
-        # Give the playlist tab access to the server so it can save!
         self.global_playlist_view.client = getattr(self, 'navidrome_client', None)
-        self.global_playlist_view.track_list.client = getattr(self, 'navidrome_client', None)
-        
-        self.global_playlist_view.track_list.current_playlist_id = playlist_data.get('id')
-        
-        if pixmap:
-            self.global_playlist_view.cover_label.setPixmap(pixmap)
-            
-        if hasattr(self.global_playlist_view.track_list, 'show_skeleton_loader'):
-            self.global_playlist_view.track_list.show_skeleton_loader(10)
-            
+        self.global_playlist_view.load_playlist(playlist_data)
+
         from player.tabs.playlists.playlists_browser import PlaylistTracksWorker
         self._pl_worker = PlaylistTracksWorker(self.navidrome_client, playlist_data)
-        self._pl_worker.results_ready.connect(self.global_playlist_view.populate_view)
+        self._pl_worker.results_ready.connect(self.global_playlist_view.populate_tracks)
         self._pl_worker.start()
         
         if hasattr(self, 'theme'):
