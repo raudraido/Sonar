@@ -89,16 +89,17 @@ Rectangle {
     Timer {
         id: colSaveTimer
         interval: 400; repeat: false
-        onTriggered: playlistDetailBridge.saveColWidths(root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre)
+        onTriggered: playlistDetailBridge.saveColWidths(root.colTrack, root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre)
     }
 
     Component.onCompleted: {
         var w = playlistDetailBridge.getColWidths()
-        root.colArtist = w[0]
-        root.colFav    = w[1]
-        root.colDur    = w[2]
-        root.colPlays  = w[3]
-        root.colGenre  = w[4]
+        root.colTrack  = w[0]
+        root.colArtist = w[1]
+        root.colFav    = w[2]
+        root.colDur    = w[3]
+        root.colPlays  = w[4]
+        root.colGenre  = w[5]
         var v = playlistDetailBridge.getColVisibility()
         root.showTrack  = v[0]
         root.showTitle  = v[1]

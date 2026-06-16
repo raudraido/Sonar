@@ -435,14 +435,14 @@ class PlaylistDetailBridge(QObject):
     def getColWidths(self):
         saved = QSettings().value('playlist_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)),
+            return [int(saved.get('track', 240)), int(saved.get('artist', 160)), int(saved.get('fav', 68)),
                     int(saved.get('dur', 72)), int(saved.get('plays', 60)), int(saved.get('genre', 140))]
-        return [160, 68, 72, 60, 140]
+        return [240, 160, 68, 72, 60, 140]
 
-    @pyqtSlot(int, int, int, int, int)
-    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int, genre: int):
+    @pyqtSlot(int, int, int, int, int, int)
+    def saveColWidths(self, track: int, artist: int, fav: int, dur: int, plays: int, genre: int):
         QSettings().setValue('playlist_detail/track_col_widths',
-                             {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
+                             {'track': track, 'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
 
     @pyqtSlot(result='QVariantList')
     def getColVisibility(self):
