@@ -226,7 +226,7 @@ class PlaylistDetailTrackModel(QAbstractListModel):
             dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
             secs     = dur_ms // 1000
             plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
-            num      = str(t.get('track') or (idx + 1))
+            num      = str(idx + 1)
             genre_raw = t.get('genre', '') or ''
             for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
                 genre_raw = genre_raw.replace(sep, ' • ')
@@ -266,8 +266,9 @@ class PlaylistDetailTrackModel(QAbstractListModel):
         lo, hi = min(from_idx, to_idx), max(from_idx, to_idx)
         for i in range(lo, hi + 1):
             self._rows[i]['_idx'] = i
+            self._rows[i]['_num'] = str(i + 1)
         self.endMoveRows()
-        self.dataChanged.emit(self.index(lo, 0), self.index(hi, 0), [self.TRACK_IDX])
+        self.dataChanged.emit(self.index(lo, 0), self.index(hi, 0), [self.TRACK_IDX, self.TRACK_NUMBER])
 
 
 class PlaylistDetailBridge(QObject):
