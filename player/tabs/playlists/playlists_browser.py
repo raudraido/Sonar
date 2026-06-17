@@ -543,6 +543,10 @@ class PlaylistDetailBridge(QObject):
             return result
         return default
 
+    @pyqtSlot('QVariantList')
+    def saveColOrder(self, order):
+        QSettings().setValue('playlist_detail/col_order', list(order))
+
     @pyqtSlot(str, str)
     def trackAlbumClicked(self, album_id: str, album_name: str):
         if not album_id:
