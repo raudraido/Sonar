@@ -64,9 +64,9 @@ Rectangle {
 
 
     // ── Column layout — uniform sequential model ───────────────────────────────
-    // All columns behave identically: fixed user-adjustable width, laid out
-    // left-to-right in colOrder order, visible columns only. Free space collects
-    // at the right end. No elastic column, no right-anchoring, no per-column rules.
+    // All columns have fixed user-adjustable widths. Total always equals the
+    // available row width — nothing escapes the left/right walls. _clampCols
+    // enforces this on every layout change.
     property var colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
 
     readonly property int _rowAvail: Math.max(0, trackList.width - 48 - colNum - 8)
@@ -82,7 +82,8 @@ Rectangle {
         if (id === "album")  return showAlbum
         return false
     }
-    function _colW(id) {
+    // Stored (saved) width — always returns the raw property value
+    function _colWFixed(id) {
         if (id === "track")  return colTrack
         if (id === "title")  return colTitle
         if (id === "artist") return colArtist
@@ -92,6 +93,19 @@ Rectangle {
         if (id === "plays")  return colPlays
         if (id === "album")  return colAlbum
         return 0
+    }
+    // TRACK is elastic: fills all space not taken by other visible columns.
+    // Every other column returns its stored value.
+    function _colW(id) {
+        if (id === "track") {
+            var other = 0
+            for (var i = 0; i < colOrder.length; i++) {
+                var cid = colOrder[i]
+                if (cid !== "track" && _colVis(cid)) other += _colWFixed(cid)
+            }
+            return Math.max(minColTrack, _rowAvail - other)
+        }
+        return _colWFixed(id)
     }
     // Rendered width: stored width when visible, 0 when hidden
     function _colRenderW(id) { return _colVis(id) ? _colW(id) : 0 }
@@ -145,29 +159,49 @@ Rectangle {
         return x
     }
 
-    // Clamp all column widths so they fit within the available row width
+    // Keep all columns within the walls: total always equals available width.
+    // TRACK is elastic when visible — only the fixed columns need scaling.
     function _clampCols(listW) {
         if (listW < 100) return
         var avail = Math.max(0, listW - 48 - colNum - 8)
-        var total = 0
-        for (var i = 0; i < colOrder.length; i++)
-            if (_colVis(colOrder[i])) total += _colW(colOrder[i])
-        if (total === avail) return
-        if (total > avail) {
-            // Scale all visible columns down proportionally
-            var scale = avail / total
-            if (showTrack)  colTrack  = Math.max(minColTrack,  Math.round(colTrack  * scale))
-            if (showTitle)  colTitle  = Math.max(minColTitle,  Math.round(colTitle  * scale))
-            if (showArtist) colArtist = Math.max(minColArtist, Math.round(colArtist * scale))
-            if (showFav)    colFav    = Math.max(minColFav,    Math.round(colFav    * scale))
-            if (showGenre)  colGenre  = Math.max(minColGenre,  Math.round(colGenre  * scale))
-            if (showDur)    colDur    = Math.max(minColDur,    Math.round(colDur    * scale))
-            if (showPlays)  colPlays  = Math.max(minColPlays,  Math.round(colPlays  * scale))
-            if (showAlbum)  colAlbum  = Math.max(minColAlbum,  Math.round(colAlbum  * scale))
+        if (showTrack) {
+            // Elastic TRACK absorbs surplus/deficit automatically.
+            // Only act if the fixed columns have grown so large that TRACK
+            // would be forced below its minimum.
+            var fixedTotal = 0
+            for (var i = 0; i < colOrder.length; i++) {
+                var cid = colOrder[i]
+                if (cid !== "track" && _colVis(cid)) fixedTotal += _colWFixed(cid)
+            }
+            if (avail - fixedTotal >= minColTrack) return
+            var target = Math.max(0, avail - minColTrack)
+            if (fixedTotal <= 0) return
+            var scale = target / fixedTotal
+            if (showTitle)  colTitle  = Math.max(20, Math.round(colTitle  * scale))
+            if (showArtist) colArtist = Math.max(20, Math.round(colArtist * scale))
+            if (showFav)    colFav    = Math.max(20, Math.round(colFav    * scale))
+            if (showGenre)  colGenre  = Math.max(20, Math.round(colGenre  * scale))
+            if (showDur)    colDur    = Math.max(20, Math.round(colDur    * scale))
+            if (showPlays)  colPlays  = Math.max(20, Math.round(colPlays  * scale))
+            if (showAlbum)  colAlbum  = Math.max(20, Math.round(colAlbum  * scale))
         } else {
-            // Expand last visible column to fill remaining space
-            for (var j = colOrder.length - 1; j >= 0; j--) {
-                if (_colVis(colOrder[j])) { _setColW(colOrder[j], _colW(colOrder[j]) + (avail - total)); break }
+            // No elastic column — all visible columns must sum to avail.
+            var total = 0
+            for (var j = 0; j < colOrder.length; j++)
+                if (_colVis(colOrder[j])) total += _colWFixed(colOrder[j])
+            if (total === avail) return
+            if (total > avail) {
+                var s = avail / total
+                if (showTitle)  colTitle  = Math.max(20, Math.round(colTitle  * s))
+                if (showArtist) colArtist = Math.max(20, Math.round(colArtist * s))
+                if (showFav)    colFav    = Math.max(20, Math.round(colFav    * s))
+                if (showGenre)  colGenre  = Math.max(20, Math.round(colGenre  * s))
+                if (showDur)    colDur    = Math.max(20, Math.round(colDur    * s))
+                if (showPlays)  colPlays  = Math.max(20, Math.round(colPlays  * s))
+                if (showAlbum)  colAlbum  = Math.max(20, Math.round(colAlbum  * s))
+            } else {
+                for (var k = colOrder.length - 1; k >= 0; k--)
+                    if (_colVis(colOrder[k])) { _setColW(colOrder[k], _colWFixed(colOrder[k]) + (avail - total)); break }
             }
         }
     }
@@ -191,6 +225,7 @@ Rectangle {
     Text { id: _hdrPlays;  visible: false; text: "PLAYS";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrAlbum;  visible: false; text: "ALBUM";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
 
+    // Minimum for drag resize = header text width (column can't be dragged narrower than its label)
     readonly property int minColTrack:  Math.ceil(_hdrTrack.implicitWidth)  + 16
     readonly property int minColTitle:  Math.ceil(_hdrTitle.implicitWidth)  + 16
     readonly property int minColArtist: Math.ceil(_hdrArtist.implicitWidth) + 16
@@ -753,32 +788,31 @@ Rectangle {
                             }
 
                             // ── resize handle ─────────────────────────────────
-                            // Hidden on the last visible column — neighbor-swap needs a right neighbor.
+                            // TRACK is elastic and absorbs all width changes —
+                            // each handle just changes its own column freely.
+                            // TRACK has no handle (it fills remaining space).
                             MouseArea {
-                                visible: root._nextVisCol(hdrCell.modelData) !== ""
+                                visible: hdrCell.modelData !== "track" &&
+                                         root._nextVisCol(hdrCell.modelData) !== ""
                                 x: parent.width - 6
                                 y: 0; width: 12; height: parent.height; z: 10
                                 cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                                property real   _pressX:        0
-                                property int    _pressW:        0
-                                property int    _pressNeighborW: 0
-                                property string _neighborId:    ""
+                                property real _pressX:          0
+                                property int  _pressW:          0
+                                property int  _pressTrackSlack: 0
                                 onPressed: {
-                                    _pressX        = mapToItem(null, mouseX, 0).x
-                                    _pressW        = root._colW(hdrCell.modelData)
-                                    _neighborId    = root._nextVisCol(hdrCell.modelData)
-                                    _pressNeighborW = _neighborId !== "" ? root._colW(_neighborId) : 0
+                                    _pressX          = mapToItem(null, mouseX, 0).x
+                                    _pressW          = root._colWFixed(hdrCell.modelData)
+                                    // How much TRACK can give before hitting its minimum
+                                    _pressTrackSlack = root.showTrack
+                                        ? Math.max(0, root._colW("track") - root.minColTrack)
+                                        : 0
                                 }
                                 onPositionChanged: if (pressed) {
                                     var delta = mapToItem(null, mouseX, 0).x - _pressX
-                                    var newA  = Math.max(root._colMinW(hdrCell.modelData), _pressW + delta)
-                                    if (_neighborId !== "") {
-                                        var minB = root._colMinW(_neighborId)
-                                        var newB = _pressNeighborW - (newA - _pressW)
-                                        if (newB < minB) { newB = minB; newA = _pressW + (_pressNeighborW - minB) }
-                                        root._setColW(_neighborId, newB)
-                                    }
-                                    root._setColW(hdrCell.modelData, newA)
+                                    var minW  = root._colMinW(hdrCell.modelData)
+                                    root._setColW(hdrCell.modelData,
+                                        Math.max(minW, Math.min(_pressW + _pressTrackSlack, _pressW + delta)))
                                     colSaveTimer.restart()
                                 }
                                 Rectangle {
