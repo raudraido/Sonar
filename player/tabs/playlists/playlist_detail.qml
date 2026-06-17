@@ -746,6 +746,30 @@ Rectangle {
                 property real _ghostX:   0
                 readonly property bool _dragging: _dragFrom >= 0
 
+                // Delegate handlers cannot see root (id) or context properties.
+                // These methods live on colHeader which has full document scope.
+                function _updateDragPos(gx, colId) {
+                    _ghostX = gx - root._colRenderW(colId) / 2
+                    var cx = 4 + root.colNum; var best = root.colOrder.length
+                    for (var i = 0; i < root.colOrder.length; i++) {
+                        var cid = root.colOrder[i]
+                        if (!root._colVis(cid)) continue
+                        var w = root._colRenderW(cid)
+                        if (gx < cx + w * 0.5) { best = i; break }
+                        cx += w; best = i + 1
+                    }
+                    _dragTo = best
+                }
+                function _reorderAndSave(from, to) {
+                    var newOrder = root.colOrder.slice()
+                    var moved = newOrder.splice(from, 1)[0]
+                    newOrder.splice(to > from ? to - 1 : to, 0, moved)
+                    root.colOrder = newOrder
+                    playlistDetailBridge.saveColOrder(root.colOrder)
+                }
+                function _favHeaderClick()   { playlistDetailBridge.favHeaderClicked() }
+                function _albumHeaderClick() { playlistDetailBridge.albumHeaderClicked() }
+
                 Item {
                     id: hdrRow
                     x: 4; height: parent.height; width: parent.width - 8
@@ -846,39 +870,23 @@ Rectangle {
                                         colHeader._dragFrom = hdrCell.index
                                         colHeader._dragTo   = hdrCell.index
                                     }
-                                    if (_active) {
-                                        colHeader._ghostX = gx - root._colRenderW(hdrCell.modelData) / 2
-                                        var cx = 4 + root.colNum; var best = root.colOrder.length
-                                        for (var i = 0; i < root.colOrder.length; i++) {
-                                            var cid = root.colOrder[i]
-                                            if (!root._colVis(cid)) continue
-                                            var w = root._colRenderW(cid)
-                                            if (gx < cx + w * 0.5) { best = i; break }
-                                            cx += w; best = i + 1
-                                        }
-                                        colHeader._dragTo = best
-                                    }
+                                    if (_active) colHeader._updateDragPos(gx, modelData)
                                 }
 
-                                onReleased: {
+                                onReleased: mouse => {
                                     var from = colHeader._dragFrom
                                     var to   = colHeader._dragTo
                                     var wasDrag = _active
                                     _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1
-                                    if (wasDrag && from >= 0 && to !== from && to !== from + 1) {
-                                        var newOrder = root.colOrder.slice()
-                                        var moved = newOrder.splice(from, 1)[0]
-                                        newOrder.splice(to > from ? to - 1 : to, 0, moved)
-                                        root.colOrder = newOrder
-                                        playlistDetailBridge.saveColOrder(root.colOrder)
-                                    } else if (!wasDrag && hdrCell.modelData === "fav") {
-                                        playlistDetailBridge.favHeaderClicked()
-                                    } else if (!wasDrag && hdrCell.modelData === "album") {
-                                        playlistDetailBridge.albumHeaderClicked()
-                                    }
+                                    if (wasDrag && from >= 0 && to !== from && to !== from + 1)
+                                        colHeader._reorderAndSave(from, to)
+                                    else if (!wasDrag && modelData === "fav")
+                                        colHeader._favHeaderClick()
+                                    else if (!wasDrag && modelData === "album")
+                                        colHeader._albumHeaderClick()
                                 }
 
-                                onCanceled: { _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1 }
+                                onCanceled: () => { _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1 }
                             }
                         }
                     }
