@@ -67,7 +67,9 @@ Rectangle {
     // All columns have fixed user-adjustable widths. Total always equals the
     // available row width — nothing escapes the left/right walls. _clampCols
     // enforces this on every layout change.
-    property var colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+    property var    colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+    property string sortCol:  ""
+    property string sortDir:  ""   // "asc" | "desc" | ""
 
     readonly property int _rowAvail: Math.max(0, trackList.width - 48 - colNum - 8)
 
@@ -261,6 +263,8 @@ Rectangle {
         root.showPlays  = v[6]
         root.showAlbum  = v[7]
         root.colOrder = playlistDetailBridge.getColOrder()
+        var s = playlistDetailBridge.getSortState()
+        root.sortCol = s[0]; root.sortDir = s[1]
         // _clampCols is NOT called here — trackList.width is 0 at this point and would
         // destroy saved widths. The onWidthChanged handler below runs it once on first layout.
     }
@@ -303,6 +307,7 @@ Rectangle {
         function onShowDurChanged(v)     { root.showDur    = v; if (v) root._clampCols(trackList.width) }
         function onShowPlaysChanged(v)   { root.showPlays  = v; if (v) root._clampCols(trackList.width) }
         function onShowAlbumChanged(v)   { root.showAlbum  = v; if (v) root._clampCols(trackList.width) }
+        function onSortStateChanged(col, dir) { root.sortCol = col; root.sortDir = dir }
     }
 
     Connections {
@@ -769,6 +774,8 @@ Rectangle {
                 }
                 function _favHeaderClick()   { playlistDetailBridge.favHeaderClicked() }
                 function _albumHeaderClick() { playlistDetailBridge.albumHeaderClicked() }
+                function _isSortable(col)   { return col === "title" || col === "artist" || col === "fav" || col === "dur" || col === "plays" || col === "album" }
+                function _headerClick(col)  { playlistDetailBridge.colHeaderClicked(col) }
 
                 Item {
                     id: hdrRow
@@ -797,18 +804,28 @@ Rectangle {
                             // fade out original while dragging it
                             opacity: colHeader._dragFrom === index ? 0 : 1
 
-                            // ── label ─────────────────────────────────────────
-                            Text {
-                                visible: modelData !== "fav"
-                                anchors.fill: parent; leftPadding: 4
-                                text: root._colLabel(modelData); color: root.textSecondary
-                                font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8
-                                horizontalAlignment: (modelData === "dur" || modelData === "plays") ? Text.AlignHCenter : Text.AlignLeft
-                                verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily
-                            }
+                            // ── label + sort arrow ────────────────────────────
                             Item {
-                                visible: modelData === "fav"; anchors.fill: parent
-                                Text { anchors.fill: parent; text: "FAVORITE"; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
+                                anchors.fill: parent
+                                Row {
+                                    readonly property bool _mid: modelData === "dur" || modelData === "plays" || modelData === "fav"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    x: _mid ? Math.round((parent.width - implicitWidth) / 2) : 4
+                                    spacing: 3
+                                    Text {
+                                        text: root._colLabel(modelData); color: root.textSecondary
+                                        font.pixelSize: root.fontSizeSecondary - 1; font.bold: true
+                                        font.letterSpacing: 0.8; font.family: root.fontFamily
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    Text {
+                                        visible: root.sortCol === modelData && root.sortDir !== ""
+                                        text: root.sortDir === "asc" ? "▲" : "▼"
+                                        color: root.accentColor
+                                        font.pixelSize: root.fontSizeSecondary - 3; font.bold: true
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
                             }
 
                             // ── resize handle ─────────────────────────────────
@@ -853,8 +870,7 @@ Rectangle {
                                 anchors.rightMargin: 6
                                 anchors.leftMargin:  0
                                 z: 5
-                                cursorShape: _active ? Qt.ClosedHandCursor
-                                           : (modelData === "fav" || modelData === "album" ? Qt.PointingHandCursor : Qt.OpenHandCursor)
+                                cursorShape: _active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
                                 hoverEnabled: true
 
                                 property bool _active: false
@@ -880,10 +896,8 @@ Rectangle {
                                     _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1
                                     if (wasDrag && from >= 0 && to !== from && to !== from + 1)
                                         colHeader._reorderAndSave(from, to)
-                                    else if (!wasDrag && modelData === "fav")
-                                        colHeader._favHeaderClick()
-                                    else if (!wasDrag && modelData === "album")
-                                        colHeader._albumHeaderClick()
+                                    else if (!wasDrag && colHeader._isSortable(modelData))
+                                        colHeader._headerClick(modelData)
                                 }
 
                                 onCanceled: () => { _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1 }

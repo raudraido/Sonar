@@ -323,10 +323,14 @@ class PlaylistDetailBridge(QObject):
     showDurChanged            = pyqtSignal(bool)
     showPlaysChanged          = pyqtSignal(bool)
     showAlbumChanged          = pyqtSignal(bool)
+    # → QML sort
+    sortStateChanged          = pyqtSignal(str, str)   # col, 'asc'|'desc'|''
 
     def __init__(self, view):
         super().__init__()
         self._view = view
+        self._sort_col = ''
+        self._sort_dir = ''
         self._selected_trkidx = -1
         self.search = SearchController(
             on_active_changed=lambda active: view._set_window_shortcuts_enabled(not active))
@@ -349,7 +353,31 @@ class PlaylistDetailBridge(QObject):
 
     @pyqtSlot()
     def favHeaderClicked(self):
-        pass  # playlists have no per-view fav-sort
+        pass  # handled by colHeaderClicked('fav')
+
+    @pyqtSlot(str)
+    def colHeaderClicked(self, col: str):
+        if self._sort_col == col:
+            next_dir = {'': 'desc', 'desc': 'asc', 'asc': ''}[self._sort_dir]
+            self._sort_dir = next_dir
+            if not next_dir:
+                self._sort_col = ''
+        else:
+            self._sort_col = col
+            self._sort_dir = 'desc'
+        QSettings().setValue('playlist_detail/sort_col', self._sort_col)
+        QSettings().setValue('playlist_detail/sort_dir', self._sort_dir)
+        self.sortStateChanged.emit(self._sort_col, self._sort_dir)
+
+    @pyqtSlot(result='QVariantList')
+    def getSortState(self):
+        col  = QSettings().value('playlist_detail/sort_col', '') or ''
+        dir_ = QSettings().value('playlist_detail/sort_dir', '') or ''
+        if dir_ not in ('asc', 'desc'):
+            dir_ = ''
+        self._sort_col = col if dir_ else ''
+        self._sort_dir = dir_
+        return [self._sort_col, self._sort_dir]
 
     @pyqtSlot(int)
     def navigateRow(self, delta: int):
@@ -620,6 +648,14 @@ class PlaylistDetailView(QWidget):
         self._is_public           = False
         self._bg_color            = '14,14,14'
 
+        s = QSettings()
+        self._sort_col = s.value('playlist_detail/sort_col', '') or ''
+        self._sort_dir = s.value('playlist_detail/sort_dir', '') or ''
+        if self._sort_dir not in ('asc', 'desc'):
+            self._sort_dir = ''
+        if not self._sort_dir:
+            self._sort_col = ''
+
         self._track_model        = PlaylistDetailTrackModel()
         self._cover_provider     = AlbumDetailCoverProvider()
         self._icon_provider      = AlbumIconProvider()
@@ -653,6 +689,8 @@ class PlaylistDetailView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._qml)
 
+        self._bridge.sortStateChanged.connect(self._on_sort_changed)
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     @property
@@ -683,9 +721,30 @@ class PlaylistDetailView(QWidget):
                 self._bridge.coverIdChanged.emit(cid)
             threading.Thread(target=lambda: self._fetch_cover(cid), daemon=True).start()
 
+    def _on_sort_changed(self, col: str, dir_: str):
+        self._sort_col = col
+        self._sort_dir = dir_
+        self._apply_sort(col, dir_)
+
+    def _apply_sort(self, col: str, dir_: str):
+        tracks = list(self._tracks)
+        if dir_ and col:
+            def sort_key(pair):
+                _, t = pair
+                if col == 'title':  return t.get('title',  '').lower()
+                if col == 'artist': return t.get('artist', '').lower()
+                if col == 'album':  return t.get('album',  '').lower()
+                if col == 'dur':    return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                if col == 'plays':  return int(t.get('play_count') or 0)
+                if col == 'fav':    return int(bool(t.get('starred', False)))
+                return 0
+            paired = sorted(enumerate(tracks), key=sort_key, reverse=(dir_ == 'desc'))
+            tracks = [t for _, t in paired]
+        self._track_model.set_tracks(tracks)
+
     def populate_tracks(self, playlist_data: dict, tracks: list):
         self._tracks = tracks
-        self._track_model.set_tracks(tracks)
+        self._apply_sort(self._sort_col, self._sort_dir)
         if self.client:
             self._track_thumb_prov.set_client(self.client)
         self._bridge._selected_trkidx = -1
