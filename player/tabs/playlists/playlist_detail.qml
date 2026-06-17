@@ -1189,7 +1189,7 @@ Rectangle {
                         Image {
                             anchors.centerIn: parent; width: 16; height: 16
                             source: trackRow.isFav ? "image://playlisticons/heart_filled_E91E63" : "image://playlisticons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
-                            cache: false; mipmap: true; smooth: true
+                            cache: true; mipmap: true; smooth: true
                             scale: favHov.containsMouse ? 1.2 : 1.0
                             Behavior on scale { NumberAnimation { duration: 100 } }
                         }
