@@ -842,7 +842,24 @@ class PlaylistDetailView(QWidget):
                         lambda i=track_idx: self._bridge.trackFavoriteClicked(i),
                         color='#E91E63',
                         icon_path='img/heart_filled.png' if is_fav else 'img/heart.png')
+        pid = self.current_playlist_id
+        if pid:
+            menu.add_action('Remove from Playlist',
+                            lambda tid=track_id, p=pid: self._remove_track_from_playlist(tid, p),
+                            icon_path='img/remove.png')
         popup_menu_at_global(menu, gx, gy, window=main)
+
+    def _remove_track_from_playlist(self, track_id: str, playlist_id: str):
+        orig_idx = next((i for i, t in enumerate(self._tracks) if str(t.get('id', '')) == track_id), None)
+        if orig_idx is None:
+            return
+        self._tracks.pop(orig_idx)
+        self._apply_sort(self._sort_col, self._sort_dir)
+        client = getattr(self, 'client', None)
+        if client:
+            threading.Thread(
+                target=lambda: client.remove_track_from_playlist(playlist_id, orig_idx),
+                daemon=True).start()
 
     def _add_to_new_playlist(self, main, track_ids):
         client = getattr(main, 'navidrome_client', None)

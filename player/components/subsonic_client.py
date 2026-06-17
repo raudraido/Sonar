@@ -296,7 +296,19 @@ class SubsonicClient:
         if response.get('status') != 'ok':
             raise Exception(response.get('error', {}).get('message', 'Unknown API Error'))
         return True
-    
+
+    def remove_track_from_playlist(self, playlist_id, song_index: int):
+        """Removes a single track by its 0-based playlist position."""
+        params = self._get_auth_params()
+        params['playlistId'] = str(playlist_id)
+        params['songIndexToRemove'] = str(song_index)
+        r = self.session.get(f"{self.base_url}/rest/updatePlaylist", params=params, timeout=10)
+        r.raise_for_status()
+        response = r.json().get('subsonic-response', {})
+        if response.get('status') != 'ok':
+            raise Exception(response.get('error', {}).get('message', 'Unknown API Error'))
+        return True
+
     def reset_caches(self):
         """Call this when new content is known to have landed on the server."""
         self._scan_status_cache = None   # forces re-fetch of scan timestamp
