@@ -144,6 +144,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        pixelAligned: true
 
         leftMargin: 4
         rightMargin: 4

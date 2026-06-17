@@ -1120,6 +1120,7 @@ class SonarPlayer(
         self.home_tab.album_clicked.connect(lambda data: self.navigate_to_album(data))
         self.album_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.album_browser.genre_filter_requested.connect(self.navigate_to_genre)
+        self.playlists_browser.genre_filter_requested.connect(self.navigate_to_genre)
         self.artist_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         # artist_clicked / album_clicked already connected above during NowPlayingInfoTab init
         self.tabs.currentChanged.connect(self.on_tab_changed_global)

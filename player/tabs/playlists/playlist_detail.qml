@@ -324,8 +324,9 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
         interactive: false
         clip: true
+        pixelAligned: true
         spacing: 0
-        cacheBuffer: 600
+        cacheBuffer: 1500
         model: playlistTrackModel
 
         property bool isScrollActive: false
@@ -926,7 +927,7 @@ Rectangle {
                 || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
                 || albName.toLowerCase().indexOf(root.searchText.toLowerCase())  >= 0
 
-            height: matchSearch ? 52 : 0
+            height: matchSearch ? 58 : 0
             visible: height > 0
             clip: false
             opacity: root._isDragging && root._dragFromIdx === rowIdx ? 0.3 : 1.0
@@ -1035,20 +1036,35 @@ Rectangle {
                         Row {
                             x: 4; height: parent.height; width: parent.width - 4; spacing: 8
                             Rectangle {
-                                width: 43; height: 43; radius: 3
+                                width: 52; height: 52; radius: 3
                                 anchors.verticalCenter: parent.verticalCenter; color: root.cardBorderColor
                                 Image {
                                     anchors.fill: parent
                                     source: trackRow.coverArtId ? "image://playlisttrackcovers/" + trackRow.coverArtId : ""
                                     fillMode: Image.PreserveAspectCrop; cache: true; smooth: true; asynchronous: true
-                                    visible: status === Image.Ready
                                 }
                             }
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - 43 - 8 - 4; spacing: 1
+                                width: parent.width - 52 - 8 - 4; spacing: 1
                                 Text { width: parent.width; text: trackRow.trkTitle; color: isPlaying ? root.accentColor : root.textPrimary; font.pixelSize: root.fontSizePrimary; font.bold: true; elide: Text.ElideRight; font.family: root.fontFamily }
-                                Text { width: parent.width; text: trackRow.artName; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; elide: Text.ElideRight; font.family: root.fontFamily }
+                                Item {
+                                    width: parent.width; height: artistLbl.implicitHeight
+                                    property bool hov: false
+                                    Text {
+                                        id: artistLbl
+                                        width: parent.width
+                                        text: trackRow.artName
+                                        color: parent.hov ? root.accentColor : root.textSecondary
+                                        font.pixelSize: root.fontSizeSecondary; elide: Text.ElideRight; font.family: root.fontFamily
+                                        Rectangle { visible: parent.parent.hov; y: parent.baselineOffset + 2; width: parent.paintedWidth; height: 1; color: parent.color }
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                        onEntered: parent.hov = true; onExited: parent.hov = false
+                                        onClicked: mouse => { playlistDetailBridge.trackArtistClicked(trackRow.artName); mouse.accepted = true }
+                                    }
+                                }
                             }
                         }
                     }

@@ -56,7 +56,7 @@ Rectangle {
     GridView {
         id: grid
         anchors.fill: parent
-
+        pixelAligned: true
         leftMargin: 4
         rightMargin: 4
         topMargin: 4

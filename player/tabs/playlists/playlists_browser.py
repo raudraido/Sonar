@@ -160,9 +160,22 @@ class _TrackThumbProvider(QQuickImageProvider):
             except Exception:
                 pass
         if data:
-            img = QImage()
-            img.loadFromData(data)
-            if not img.isNull():
+            from PyQt6.QtGui import QPainter, QPainterPath
+            from PyQt6.QtCore import QRectF
+            src = QImage()
+            src.loadFromData(data)
+            if not src.isNull():
+                size = 250
+                src = src.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                img = QImage(size, size, QImage.Format.Format_ARGB32)
+                img.fill(Qt.GlobalColor.transparent)
+                p = QPainter(img)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
+                p.setClipPath(path)
+                p.drawImage(0, 0, src)
+                p.end()
                 return img, img.size()
         empty = QImage(1, 1, QImage.Format.Format_ARGB32)
         empty.fill(Qt.GlobalColor.transparent)
@@ -444,10 +457,10 @@ class PlaylistDetailBridge(QObject):
     def getColWidths(self):
         saved = QSettings().value('playlist_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('track', 240)), int(saved.get('title', 200)), int(saved.get('artist', 160)),
-                    int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)),
-                    int(saved.get('genre', 140)), int(saved.get('album', 160))]
-        return [240, 200, 160, 68, 72, 60, 140, 160]
+            return [int(saved.get('track', 450)), int(saved.get('title', 200)), int(saved.get('artist', 99)),
+                    int(saved.get('fav', 76)), int(saved.get('dur', 81)), int(saved.get('plays', 56)),
+                    int(saved.get('genre', 182)), int(saved.get('album', 213))]
+        return [450, 200, 99, 76, 81, 56, 182, 213]
 
     @pyqtSlot(int, int, int, int, int, int, int, int)
     def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
@@ -459,10 +472,15 @@ class PlaylistDetailBridge(QObject):
     def getColVisibility(self):
         saved = QSettings().value('playlist_detail/col_visibility', {})
         if not isinstance(saved, dict): saved = {}
-        return [bool(saved.get('track',  True)),  bool(saved.get('title',  True)),
+        if not saved:
+            # New user: intentional defaults
+            return [True, False, False, True, True, True, True, True]
+        # Existing user: original 7 columns default True (may never have been saved),
+        # album and any future additions default False so new columns are opt-in.
+        return [bool(saved.get('track',  True)), bool(saved.get('title',  True)),
                 bool(saved.get('artist', True)),  bool(saved.get('fav',    True)),
                 bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
-                bool(saved.get('plays',  True)),  bool(saved.get('album',  True))]
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  False))]
 
     @pyqtSlot(float, float)
     def burgerClicked(self, gx: float, gy: float):
@@ -791,6 +809,12 @@ class PlaylistDetailView(QWidget):
     def _set_window_shortcuts_enabled(self, enabled: bool):
         set_window_shortcuts_enabled(self, self._qml, enabled)
 
+    def _toggle_track_search(self):
+        if self._bridge.search.active:
+            self._bridge.search.close()
+        else:
+            self._bridge.search.open()
+
     def update_playing_status(self, playing_id, is_playing: bool, _accent: str = ''):
         self._last_playing_id = playing_id
         self._last_is_playing = is_playing
@@ -835,7 +859,8 @@ class PlaylistsBrowser(QWidget):
     play_album_signal = pyqtSignal(list) 
     queue_track_signal = pyqtSignal(dict)
     play_next_signal = pyqtSignal(dict)
-    switch_to_artist_tab = pyqtSignal(str)
+    switch_to_artist_tab   = pyqtSignal(str)
+    genre_filter_requested = pyqtSignal(str)
     playlist_clicked = pyqtSignal(dict, object)
     album_clicked = pyqtSignal(dict)
 
@@ -925,6 +950,7 @@ class PlaylistsBrowser(QWidget):
         self.detail_view.queue_track_signal.connect(self.queue_track_signal.emit)
         self.detail_view.play_next_signal.connect(self.play_next_signal.emit)
         self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab.emit)
+        self.detail_view.genre_clicked.connect(self.genre_filter_requested.emit)
         
         self.stack.addWidget(self.grid_view)
         self.stack.addWidget(self.detail_view)

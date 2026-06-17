@@ -92,6 +92,7 @@ Rectangle {
         anchors.fill: parent
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
+        pixelAligned: true
         interactive: false  // wheel handled via MomentumScroll below
         clip: true
         spacing: 0
@@ -474,6 +475,7 @@ Rectangle {
                     anchors.topMargin: 10
                     width: parent.width
                     height: contentHeight
+                    pixelAligned: true
 
                     interactive: false
                     boundsBehavior: Flickable.StopAtBounds
@@ -676,6 +678,7 @@ Rectangle {
                 anchors.top: titleRow.bottom
                 width: parent.width
                 height: contentHeight
+                pixelAligned: true
 
                 interactive: false
                 boundsBehavior: Flickable.StopAtBounds
@@ -1051,6 +1054,7 @@ Rectangle {
                 width: parent.width
                 height: root.relCellHeight + 12
                 orientation: ListView.Horizontal
+                pixelAligned: true
 
                 interactive: false
                 boundsBehavior: Flickable.StopAtBounds

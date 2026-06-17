@@ -152,6 +152,7 @@ Rectangle {
         contentHeight: rowsColumn.y + rowsColumn.implicitHeight + 60
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
+        pixelAligned: true
         clip: true
         interactive: false  // wheel handled below via momentum; no touch/drag flicking on this view
 
@@ -450,6 +451,7 @@ Rectangle {
                             orientation:  ListView.Horizontal
                             interactive:  false   // arrows drive scrolling
                             boundsBehavior: Flickable.StopAtBounds
+                            pixelAligned: true
                             clip: true
                             spacing: 0
 

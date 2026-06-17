@@ -159,6 +159,7 @@ Rectangle {
         anchors.fill: parent
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
+        pixelAligned: true
         interactive: false  // wheel handled below via momentum; no touch/drag flicking on this view
         clip: true
         spacing: 0

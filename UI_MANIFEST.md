@@ -66,6 +66,27 @@ warnings during fast scrolling. Use `cache: false; smooth: true` without
 
 ## 2. Scrolling
 
+### `pixelAligned: true` on every ListView/GridView
+
+Always set `pixelAligned: true` on any `ListView`, `GridView`, or `Flickable`
+that uses `MomentumScroll`. Without it, `contentY` can settle on a fractional
+pixel value when momentum deceleration ends, causing all delegate items to
+shift ~1px vertically as Qt resolves the sub-pixel position. The fix is one
+line on the view:
+
+```qml
+ListView {
+    pixelAligned: true
+    ...
+    MomentumScroll { target: ... }
+}
+```
+
+This is confirmed to eliminate the 1px jitter in `playlist_detail.qml`'s
+track list after momentum scroll finishes.
+
+
+
 One model, used everywhere: **momentum/friction wheel-scroll**. Every wheel
 notch adds an impulse to a velocity (px/sec); each frame, the scroll position
 moves by `velocity * dt`, then velocity decays exponentially
