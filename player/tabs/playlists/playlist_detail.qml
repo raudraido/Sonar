@@ -71,6 +71,40 @@ Rectangle {
         return Math.max(80, avail - colNum - effColTrack - effColArtist - effColFav - effColDur - effColPlays - effColGenre - 8)
     }
 
+    // ── Elastic-column helpers (tracks-browser style) ──────────────────────────
+    // There is always one elastic column that absorbs all leftover width:
+    //   • TITLE when visible
+    //   • TRACK when TITLE is hidden
+    // All other visible columns are fixed-width with resize handles.
+    // _clampCols proportionally scales the fixed set when the window would push
+    // the elastic column below its minimum. Does NOT restart colSaveTimer so
+    // persistent storage always holds the user's last intentional drag values.
+
+    // Rendered TRACK width: fixed when TITLE visible, fills remaining space when hidden.
+    // Root-level reactive property so QML tracks all dependencies correctly.
+    readonly property int _fillTrackW: showTitle
+        ? colTrack
+        : Math.max(minColTrack,
+              trackList.width - 48 - colNum
+              - effColArtist - effColFav - effColDur - effColPlays - effColGenre - 8)
+
+    function _clampCols(listW) {
+        var trackElastic = !showTitle && showTrack
+        // Reserve the elastic column's minimum; exclude it from the fixed set
+        var elasticMin = trackElastic ? minColTrack : (showTitle ? 80 : 0)
+        var avail = listW - 48 - colNum - elasticMin - 8
+        if (avail <= 0) return
+        var total = (trackElastic ? 0 : effColTrack) + effColArtist + effColFav + effColGenre + effColDur + effColPlays
+        if (total <= avail) return
+        var scale = avail / total
+        if (!trackElastic && showTrack) colTrack  = Math.max(minColTrack,  Math.round(colTrack  * scale))
+        if (showArtist)                 colArtist = Math.max(minColArtist, Math.round(colArtist * scale))
+        if (showFav)                    colFav    = Math.max(minColFav,    Math.round(colFav    * scale))
+        if (showGenre)                  colGenre  = Math.max(minColGenre,  Math.round(colGenre  * scale))
+        if (showDur)                    colDur    = Math.max(minColDur,    Math.round(colDur    * scale))
+        if (showPlays)                  colPlays  = Math.max(minColPlays,  Math.round(colPlays  * scale))
+    }
+
     Text { id: _lhRef;    visible: false; text: "X";        font.pixelSize: root.fontSizeSecondary;     font.family: root.fontFamily; renderType: Text.NativeRendering }
     Text { id: _hdrTrack;  visible: false; text: "TRACK";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrArtist; visible: false; text: "ARTIST";   font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
@@ -108,6 +142,7 @@ Rectangle {
         root.showGenre  = v[4]
         root.showDur    = v[5]
         root.showPlays  = v[6]
+        Qt.callLater(function() { root._clampCols(trackList.width) })
     }
 
     // ── Bridge connections ─────────────────────────────────────────────────────
@@ -140,13 +175,13 @@ Rectangle {
         function onScrollToModelRow(row)        { trackList.positionViewAtIndex(row, ListView.Contain) }
         function onScrollToTopOfView()          { trackList.contentY = trackList.originY }
         function onScrollToBottomOfView()       { trackList.contentY = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height) }
-        function onShowTrackChanged(v)   { root.showTrack  = v }
-        function onShowTitleChanged(v)   { root.showTitle  = v }
-        function onShowArtistChanged(v)  { root.showArtist = v }
-        function onShowFavChanged(v)     { root.showFav    = v }
-        function onShowGenreChanged(v)   { root.showGenre  = v }
-        function onShowDurChanged(v)     { root.showDur    = v }
-        function onShowPlaysChanged(v)   { root.showPlays  = v }
+        function onShowTrackChanged(v)   { root.showTrack  = v; if (v) root._clampCols(trackList.width) }
+        function onShowTitleChanged(v)   { root.showTitle  = v; root._clampCols(trackList.width) }
+        function onShowArtistChanged(v)  { root.showArtist = v; if (v) root._clampCols(trackList.width) }
+        function onShowFavChanged(v)     { root.showFav    = v; if (v) root._clampCols(trackList.width) }
+        function onShowGenreChanged(v)   { root.showGenre  = v; if (v) root._clampCols(trackList.width) }
+        function onShowDurChanged(v)     { root.showDur    = v; if (v) root._clampCols(trackList.width) }
+        function onShowPlaysChanged(v)   { root.showPlays  = v; if (v) root._clampCols(trackList.width) }
     }
 
     Connections {
@@ -156,6 +191,11 @@ Rectangle {
         function onSearchTextAppend(ch)  { if (root._searchBar) root._searchBar.appendChar(ch) }
         function onSearchTextBackspace() { if (root._searchBar) root._searchBar.backspace() }
         function onSearchClose()         { if (root._searchBar) root._searchBar.close() }
+    }
+
+    Connections {
+        target: trackList
+        function onWidthChanged() { root._clampCols(trackList.width) }
     }
 
     // ── Freestanding scrollbar ─────────────────────────────────────────────────
@@ -574,14 +614,22 @@ Rectangle {
                 x: 20; y: toolbarRow.y + toolbarRow.height
                 width: parent.width - 40; height: 36
 
-                // Actual rendered TITLE width (0 when hidden), used by resize handles
+                // Rendered TITLE width when visible (0 when hidden)
                 readonly property int _titleW: root.showTitle
                     ? Math.max(80, (width - 8) - root.colNum - root.effColTrack - root.effColArtist - root.effColFav - root.effColGenre - root.effColDur - root.effColPlays - 8)
                     : 0
 
-                // Max allowed width for a column = all slack TITLE has above its min
+                // Rendered TRACK width — delegates to root._fillTrackW which is always up to date
+                readonly property int _trackW: root.showTrack ? root._fillTrackW : 0
+
+                // Max allowed width for a fixed column so the elastic column never drops below its min
                 function _maxW(excludeEff) {
                     var avail = width - 8
+                    if (!root.showTitle && root.showTrack) {
+                        // TRACK is elastic — reserve its minimum; exclude it from others
+                        var others = root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - excludeEff
+                        return avail - root.colNum - root.minColTrack - others - 8
+                    }
                     var others = root.effColTrack + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - excludeEff
                     return avail - root.colNum - others - (root.showTitle ? 80 : 0) - 8
                 }
@@ -592,7 +640,7 @@ Rectangle {
                     property int    fSize:    root.fontSizeSecondary - 1
 
                     Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
-                    Text { visible: root.showTrack; width: root.colTrack; height: parent.height; text: "TRACK"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
+                    Text { visible: root.showTrack; width: colHeader._trackW; height: parent.height; text: "TRACK"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
                     Text { visible: root.showTitle; width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
                     Text { visible: root.showArtist; width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
                     Item {
@@ -606,12 +654,13 @@ Rectangle {
                 }
 
                 // ── Column resize handles ─────────────────────────────────────────
-                // All x positions computed left-to-right matching actual column layout.
-                // Handle (12px wide) centered on column right edge → x = right_edge - 6.
-                // Row starts at x=4; columns: colNum | effColTrack | _titleW | effColArtist | ...
+                // All x positions use _trackW + _titleW so they stay correct whether
+                // TRACK is fixed (title visible) or elastic (title hidden).
+                // TRACK handle is hidden when TRACK is elastic (no resize handle for
+                // the fill column — matches tracks-browser behaviour).
                 MouseArea {
-                    visible: root.showTrack
-                    x: 4 + root.colNum + root.effColTrack - 6
+                    visible: root.showTrack && root.showTitle
+                    x: 4 + root.colNum + parent._trackW - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -625,7 +674,7 @@ Rectangle {
                 }
                 MouseArea {
                     visible: root.showArtist
-                    x: 4 + root.colNum + root.effColTrack + parent._titleW + root.effColArtist - 6
+                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -639,7 +688,7 @@ Rectangle {
                 }
                 MouseArea {
                     visible: root.showFav
-                    x: 4 + root.colNum + root.effColTrack + parent._titleW + root.effColArtist + root.effColFav - 6
+                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -653,7 +702,7 @@ Rectangle {
                 }
                 MouseArea {
                     visible: root.showGenre
-                    x: 4 + root.colNum + root.effColTrack + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre - 6
+                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -667,7 +716,7 @@ Rectangle {
                 }
                 MouseArea {
                     visible: root.showDur
-                    x: 4 + root.colNum + root.effColTrack + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur - 6
+                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -681,7 +730,7 @@ Rectangle {
                 }
                 MouseArea {
                     visible: root.showPlays
-                    x: 4 + root.colNum + root.effColTrack + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - 6
+                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - 6
                     y: 0; width: 12; height: parent.height; z: 10
                     cursorShape: Qt.SizeHorCursor; hoverEnabled: true
                     property real _pressX: 0; property int _pressW: 0
@@ -860,7 +909,7 @@ Rectangle {
                     // Track (cover art + title + artist combined)
                     Item {
                         visible: root.showTrack
-                        width: root.colTrack; height: parent.height
+                        width: root._fillTrackW; height: parent.height
 
                         Row {
                             x: 4; height: parent.height; width: parent.width - 4
