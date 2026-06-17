@@ -966,6 +966,7 @@ class SonarPlayer(
         self.playlists_browser.queue_track_signal.connect(self.add_track_to_queue)
         self.playlists_browser.play_next_signal.connect(self.play_track_next)
         self.playlists_browser.switch_to_artist_tab.connect(self.navigate_to_artist)
+        self.playlists_browser.album_clicked.connect(self.navigate_to_album)
         self.playlists_browser.playlist_clicked.connect(self.navigate_to_playlist)
         if hasattr(self, 'theme'): self.playlists_browser.set_accent_color(self.theme.accent)
         self.tabs.addTab(self.playlists_browser, "Playlists")

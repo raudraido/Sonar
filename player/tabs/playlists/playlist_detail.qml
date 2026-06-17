@@ -42,12 +42,15 @@ Rectangle {
     property bool   _isDragging:     _dragFromIdx >= 0
 
     // ── Column widths ──────────────────────────────────────────────────────────
-    readonly property int colNum:  44
+    readonly property int colNum:   44
+    property int colTrack:  240
+    property int colTitle:  200
     property int colArtist: 160
     property int colFav:     68
     property int colDur:     72
     property int colPlays:   60
     property int colGenre:  140
+    property int colAlbum:  160
 
     // Column visibility (burger menu)
     property bool showTrack:  true
@@ -57,83 +60,162 @@ Rectangle {
     property bool showGenre:  true
     property bool showDur:    true
     property bool showPlays:  true
+    property bool showAlbum:  true
 
-    // Effective widths — 0 when hidden so colTitleW auto-expands
-    property int  colTrack:   240
-    readonly property int effColTrack:  showTrack  ? colTrack  : 0
-    readonly property int effColArtist: showArtist ? colArtist : 0
-    readonly property int effColFav:    showFav    ? colFav    : 0
-    readonly property int effColGenre:  showGenre  ? colGenre  : 0
-    readonly property int effColDur:    showDur    ? colDur    : 0
-    readonly property int effColPlays:  showPlays  ? colPlays  : 0
 
-    function colTitleW(avail) {
-        return Math.max(80, avail - colNum - effColTrack - effColArtist - effColFav - effColDur - effColPlays - effColGenre - 8)
+    // ── Column layout — uniform sequential model ───────────────────────────────
+    // All columns behave identically: fixed user-adjustable width, laid out
+    // left-to-right in colOrder order, visible columns only. Free space collects
+    // at the right end. No elastic column, no right-anchoring, no per-column rules.
+    property var colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+
+    readonly property int _rowAvail: Math.max(0, trackList.width - 48 - colNum - 8)
+
+    function _colVis(id) {
+        if (id === "track")  return showTrack
+        if (id === "title")  return showTitle
+        if (id === "artist") return showArtist
+        if (id === "fav")    return showFav
+        if (id === "genre")  return showGenre
+        if (id === "dur")    return showDur
+        if (id === "plays")  return showPlays
+        if (id === "album")  return showAlbum
+        return false
+    }
+    function _colW(id) {
+        if (id === "track")  return colTrack
+        if (id === "title")  return colTitle
+        if (id === "artist") return colArtist
+        if (id === "fav")    return colFav
+        if (id === "genre")  return colGenre
+        if (id === "dur")    return colDur
+        if (id === "plays")  return colPlays
+        if (id === "album")  return colAlbum
+        return 0
+    }
+    // Rendered width: stored width when visible, 0 when hidden
+    function _colRenderW(id) { return _colVis(id) ? _colW(id) : 0 }
+
+    function _colMinW(id) {
+        if (id === "track")  return minColTrack
+        if (id === "title")  return minColTitle
+        if (id === "artist") return minColArtist
+        if (id === "fav")    return minColFav
+        if (id === "genre")  return minColGenre
+        if (id === "dur")    return minColDur
+        if (id === "plays")  return minColPlays
+        if (id === "album")  return minColAlbum
+        return 40
+    }
+    // Next visible column after id in colOrder, or "" if none
+    function _nextVisCol(id) {
+        var idx = colOrder.indexOf(id)
+        for (var i = idx + 1; i < colOrder.length; i++)
+            if (_colVis(colOrder[i])) return colOrder[i]
+        return ""
+    }
+    function _setColW(id, w) {
+        if      (id === "track")  colTrack  = w
+        else if (id === "title")  colTitle  = w
+        else if (id === "artist") colArtist = w
+        else if (id === "fav")    colFav    = w
+        else if (id === "genre")  colGenre  = w
+        else if (id === "dur")    colDur    = w
+        else if (id === "plays")  colPlays  = w
+        else if (id === "album")  colAlbum  = w
+    }
+    function _colLabel(id) {
+        if (id === "track")  return "TRACK"
+        if (id === "title")  return "TITLE"
+        if (id === "artist") return "ARTIST"
+        if (id === "fav")    return "FAVORITE"
+        if (id === "genre")  return "GENRE"
+        if (id === "dur")    return "DURATION"
+        if (id === "plays")  return "PLAYS"
+        if (id === "album")  return "ALBUM"
+        return ""
+    }
+    // X position: sum of rendered widths of all visible columns before id in colOrder
+    function _colX(id) {
+        var x = 0
+        for (var i = 0; i < colOrder.length; i++) {
+            if (colOrder[i] === id) return x
+            x += _colRenderW(colOrder[i])
+        }
+        return x
     }
 
-    // ── Elastic-column helpers (tracks-browser style) ──────────────────────────
-    // There is always one elastic column that absorbs all leftover width:
-    //   • TITLE when visible
-    //   • TRACK when TITLE is hidden
-    // All other visible columns are fixed-width with resize handles.
-    // _clampCols proportionally scales the fixed set when the window would push
-    // the elastic column below its minimum. Does NOT restart colSaveTimer so
-    // persistent storage always holds the user's last intentional drag values.
-
-    // Rendered TRACK width: fixed when TITLE visible, fills remaining space when hidden.
-    // Root-level reactive property so QML tracks all dependencies correctly.
-    readonly property int _fillTrackW: showTitle
-        ? colTrack
-        : Math.max(minColTrack,
-              trackList.width - 48 - colNum
-              - effColArtist - effColFav - effColDur - effColPlays - effColGenre - 8)
-
+    // Clamp all column widths so they fit within the available row width
     function _clampCols(listW) {
-        var trackElastic = !showTitle && showTrack
-        // Reserve the elastic column's minimum; exclude it from the fixed set
-        var elasticMin = trackElastic ? minColTrack : (showTitle ? 80 : 0)
-        var avail = listW - 48 - colNum - elasticMin - 8
-        if (avail <= 0) return
-        var total = (trackElastic ? 0 : effColTrack) + effColArtist + effColFav + effColGenre + effColDur + effColPlays
-        if (total <= avail) return
-        var scale = avail / total
-        if (!trackElastic && showTrack) colTrack  = Math.max(minColTrack,  Math.round(colTrack  * scale))
-        if (showArtist)                 colArtist = Math.max(minColArtist, Math.round(colArtist * scale))
-        if (showFav)                    colFav    = Math.max(minColFav,    Math.round(colFav    * scale))
-        if (showGenre)                  colGenre  = Math.max(minColGenre,  Math.round(colGenre  * scale))
-        if (showDur)                    colDur    = Math.max(minColDur,    Math.round(colDur    * scale))
-        if (showPlays)                  colPlays  = Math.max(minColPlays,  Math.round(colPlays  * scale))
+        if (listW < 100) return
+        var avail = Math.max(0, listW - 48 - colNum - 8)
+        var total = 0
+        for (var i = 0; i < colOrder.length; i++)
+            if (_colVis(colOrder[i])) total += _colW(colOrder[i])
+        if (total === avail) return
+        if (total > avail) {
+            // Scale all visible columns down proportionally
+            var scale = avail / total
+            if (showTrack)  colTrack  = Math.max(minColTrack,  Math.round(colTrack  * scale))
+            if (showTitle)  colTitle  = Math.max(minColTitle,  Math.round(colTitle  * scale))
+            if (showArtist) colArtist = Math.max(minColArtist, Math.round(colArtist * scale))
+            if (showFav)    colFav    = Math.max(minColFav,    Math.round(colFav    * scale))
+            if (showGenre)  colGenre  = Math.max(minColGenre,  Math.round(colGenre  * scale))
+            if (showDur)    colDur    = Math.max(minColDur,    Math.round(colDur    * scale))
+            if (showPlays)  colPlays  = Math.max(minColPlays,  Math.round(colPlays  * scale))
+            if (showAlbum)  colAlbum  = Math.max(minColAlbum,  Math.round(colAlbum  * scale))
+        } else {
+            // Expand last visible column to fill remaining space
+            for (var j = colOrder.length - 1; j >= 0; j--) {
+                if (_colVis(colOrder[j])) { _setColW(colOrder[j], _colW(colOrder[j]) + (avail - total)); break }
+            }
+        }
     }
 
-    Text { id: _lhRef;    visible: false; text: "X";        font.pixelSize: root.fontSizeSecondary;     font.family: root.fontFamily; renderType: Text.NativeRendering }
+    onShowTrackChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowTitleChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowArtistChanged: Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowFavChanged:    Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowGenreChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowDurChanged:    Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowPlaysChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowAlbumChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+
+    Text { id: _lhRef;     visible: false; text: "X";        font.pixelSize: root.fontSizeSecondary;     font.family: root.fontFamily; renderType: Text.NativeRendering }
     Text { id: _hdrTrack;  visible: false; text: "TRACK";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrTitle;  visible: false; text: "TITLE";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrArtist; visible: false; text: "ARTIST";   font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrFav;    visible: false; text: "FAVORITE"; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrGenre;  visible: false; text: "GENRE";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrDur;    visible: false; text: "DURATION"; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrPlays;  visible: false; text: "PLAYS";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrAlbum;  visible: false; text: "ALBUM";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
 
     readonly property int minColTrack:  Math.ceil(_hdrTrack.implicitWidth)  + 16
+    readonly property int minColTitle:  Math.ceil(_hdrTitle.implicitWidth)  + 16
     readonly property int minColArtist: Math.ceil(_hdrArtist.implicitWidth) + 16
     readonly property int minColFav:    Math.ceil(_hdrFav.implicitWidth)    + 16
     readonly property int minColGenre:  Math.ceil(_hdrGenre.implicitWidth)  + 16
     readonly property int minColDur:    Math.ceil(_hdrDur.implicitWidth)    + 16
     readonly property int minColPlays:  Math.ceil(_hdrPlays.implicitWidth)  + 16
+    readonly property int minColAlbum:  Math.ceil(_hdrAlbum.implicitWidth)  + 16
 
     Timer {
         id: colSaveTimer
         interval: 400; repeat: false
-        onTriggered: playlistDetailBridge.saveColWidths(root.colTrack, root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre)
+        onTriggered: playlistDetailBridge.saveColWidths(root.colTrack, root.colTitle, root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre, root.colAlbum)
     }
 
     Component.onCompleted: {
         var w = playlistDetailBridge.getColWidths()
         root.colTrack  = w[0]
-        root.colArtist = w[1]
-        root.colFav    = w[2]
-        root.colDur    = w[3]
-        root.colPlays  = w[4]
-        root.colGenre  = w[5]
+        root.colTitle  = w[1]
+        root.colArtist = w[2]
+        root.colFav    = w[3]
+        root.colDur    = w[4]
+        root.colPlays  = w[5]
+        root.colGenre  = w[6]
+        root.colAlbum  = w[7]
         var v = playlistDetailBridge.getColVisibility()
         root.showTrack  = v[0]
         root.showTitle  = v[1]
@@ -142,7 +224,10 @@ Rectangle {
         root.showGenre  = v[4]
         root.showDur    = v[5]
         root.showPlays  = v[6]
-        Qt.callLater(function() { root._clampCols(trackList.width) })
+        root.showAlbum  = v[7]
+        root.colOrder = playlistDetailBridge.getColOrder()
+        // _clampCols is NOT called here — trackList.width is 0 at this point and would
+        // destroy saved widths. The onWidthChanged handler below runs it once on first layout.
     }
 
     // ── Bridge connections ─────────────────────────────────────────────────────
@@ -182,6 +267,7 @@ Rectangle {
         function onShowGenreChanged(v)   { root.showGenre  = v; if (v) root._clampCols(trackList.width) }
         function onShowDurChanged(v)     { root.showDur    = v; if (v) root._clampCols(trackList.width) }
         function onShowPlaysChanged(v)   { root.showPlays  = v; if (v) root._clampCols(trackList.width) }
+        function onShowAlbumChanged(v)   { root.showAlbum  = v; if (v) root._clampCols(trackList.width) }
     }
 
     Connections {
@@ -243,8 +329,12 @@ Rectangle {
         model: playlistTrackModel
 
         property bool isScrollActive: false
+        property bool _initialClampDone: false
         Timer { id: scrollHideTimer; interval: 600; onTriggered: trackList.isScrollActive = false }
         onContentYChanged: { isScrollActive = true; scrollHideTimer.restart() }
+        onWidthChanged: {
+            if (!_initialClampDone && width >= 100) { _initialClampDone = true; root._clampCols(width) }
+        }
 
         MomentumScroll {
             target: trackList
@@ -614,133 +704,180 @@ Rectangle {
                 x: 20; y: toolbarRow.y + toolbarRow.height
                 width: parent.width - 40; height: 36
 
-                // Rendered TITLE width when visible (0 when hidden)
-                readonly property int _titleW: root.showTitle
-                    ? Math.max(80, (width - 8) - root.colNum - root.effColTrack - root.effColArtist - root.effColFav - root.effColGenre - root.effColDur - root.effColPlays - 8)
-                    : 0
+                // ── column drag-to-reorder state ──────────────────────────────
+                property int  _dragFrom: -1
+                property int  _dragTo:   -1
+                property real _ghostX:   0
+                readonly property bool _dragging: _dragFrom >= 0
 
-                // Rendered TRACK width — delegates to root._fillTrackW which is always up to date
-                readonly property int _trackW: root.showTrack ? root._fillTrackW : 0
-
-                // Max allowed width for a fixed column so the elastic column never drops below its min
-                function _maxW(excludeEff) {
-                    var avail = width - 8
-                    if (!root.showTitle && root.showTrack) {
-                        // TRACK is elastic — reserve its minimum; exclude it from others
-                        var others = root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - excludeEff
-                        return avail - root.colNum - root.minColTrack - others - 8
-                    }
-                    var others = root.effColTrack + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - excludeEff
-                    return avail - root.colNum - others - (root.showTitle ? 80 : 0) - 8
-                }
-
-                Row {
+                Item {
+                    id: hdrRow
                     x: 4; height: parent.height; width: parent.width - 8
-                    property string colStyle: root.textSecondary
-                    property int    fSize:    root.fontSizeSecondary - 1
 
-                    Text { width: root.colNum; height: parent.height; text: "#"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
-                    Text { visible: root.showTrack; width: colHeader._trackW; height: parent.height; text: "TRACK"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
-                    Text { visible: root.showTitle; width: root.colTitleW(colHeader.width - 8); height: parent.height; text: "TITLE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
-                    Text { visible: root.showArtist; width: root.colArtist; height: parent.height; text: "ARTIST"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
-                    Item {
-                        visible: root.showFav; width: root.colFav; height: parent.height
-                        Text { anchors.fill: parent; text: "FAVORITE"; color: parent.parent.colStyle; font.pixelSize: parent.parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: playlistDetailBridge.favHeaderClicked() }
+                    // # — always first, never reorderable
+                    Text {
+                        x: 0; width: root.colNum; height: parent.height; text: "#"
+                        color: root.textSecondary; font.pixelSize: root.fontSizeSecondary - 1
+                        font.bold: true; font.letterSpacing: 0.8
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        font.family: root.fontFamily
                     }
-                    Text { visible: root.showGenre; width: root.colGenre; height: parent.height; text: "GENRE"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignLeft; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily; leftPadding: 4 }
-                    Text { visible: root.showDur; width: root.colDur; height: parent.height; text: "DURATION"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
-                    Text { visible: root.showPlays; width: root.colPlays; height: parent.height; text: "PLAYS"; color: parent.colStyle; font.pixelSize: parent.fSize; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
+
+                    Repeater {
+                        model: root.colOrder
+                        delegate: Item {
+                            id: hdrCell
+                            required property string modelData
+                            required property int index
+
+                            visible: root._colVis(modelData)
+                            x:       root.colNum + root._colX(modelData)
+                            width:   root._colRenderW(modelData)
+                            height:  hdrRow.height
+                            // fade out original while dragging it
+                            opacity: colHeader._dragFrom === index ? 0 : 1
+
+                            // ── label ─────────────────────────────────────────
+                            Text {
+                                visible: modelData !== "fav"
+                                anchors.fill: parent; leftPadding: 4
+                                text: root._colLabel(modelData); color: root.textSecondary
+                                font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8
+                                horizontalAlignment: (modelData === "dur" || modelData === "plays") ? Text.AlignHCenter : Text.AlignLeft
+                                verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily
+                            }
+                            Item {
+                                visible: modelData === "fav"; anchors.fill: parent
+                                Text { anchors.fill: parent; text: "FAVORITE"; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: root.fontFamily }
+                            }
+
+                            // ── resize handle ─────────────────────────────────
+                            // Hidden on the last visible column — neighbor-swap needs a right neighbor.
+                            MouseArea {
+                                visible: root._nextVisCol(hdrCell.modelData) !== ""
+                                x: parent.width - 6
+                                y: 0; width: 12; height: parent.height; z: 10
+                                cursorShape: Qt.SizeHorCursor; hoverEnabled: true
+                                property real   _pressX:        0
+                                property int    _pressW:        0
+                                property int    _pressNeighborW: 0
+                                property string _neighborId:    ""
+                                onPressed: {
+                                    _pressX        = mapToItem(null, mouseX, 0).x
+                                    _pressW        = root._colW(hdrCell.modelData)
+                                    _neighborId    = root._nextVisCol(hdrCell.modelData)
+                                    _pressNeighborW = _neighborId !== "" ? root._colW(_neighborId) : 0
+                                }
+                                onPositionChanged: if (pressed) {
+                                    var delta = mapToItem(null, mouseX, 0).x - _pressX
+                                    var newA  = Math.max(root._colMinW(hdrCell.modelData), _pressW + delta)
+                                    if (_neighborId !== "") {
+                                        var minB = root._colMinW(_neighborId)
+                                        var newB = _pressNeighborW - (newA - _pressW)
+                                        if (newB < minB) { newB = minB; newA = _pressW + (_pressNeighborW - minB) }
+                                        root._setColW(_neighborId, newB)
+                                    }
+                                    root._setColW(hdrCell.modelData, newA)
+                                    colSaveTimer.restart()
+                                }
+                                Rectangle {
+                                    anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary
+                                    opacity: parent.containsMouse ? 0.55 : 0.15
+                                }
+                            }
+
+                            // ── drag-to-reorder (also handles FAV header click) ──
+                            // No propagateComposedEvents so this MA holds exclusive grab on press,
+                            // ensuring onReleased always fires and the ghost never gets stuck.
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.rightMargin: 6
+                                anchors.leftMargin:  0
+                                z: 5
+                                cursorShape: _active ? Qt.ClosedHandCursor
+                                           : (modelData === "fav" || modelData === "album" ? Qt.PointingHandCursor : Qt.OpenHandCursor)
+                                hoverEnabled: true
+
+                                property bool _active: false
+                                property real _startX: 0
+
+                                onPressed: mouse => { _startX = mapToItem(colHeader, mouseX, 0).x; _active = false; mouse.accepted = true }
+
+                                onPositionChanged: mouse => {
+                                    if (mouse.buttons === Qt.NoButton) return
+                                    var gx = mapToItem(colHeader, mouseX, 0).x
+                                    if (!_active && Math.abs(gx - _startX) > 5) {
+                                        _active = true
+                                        colHeader._dragFrom = hdrCell.index
+                                        colHeader._dragTo   = hdrCell.index
+                                    }
+                                    if (_active) {
+                                        colHeader._ghostX = gx - root._colRenderW(hdrCell.modelData) / 2
+                                        var cx = 4 + root.colNum; var best = root.colOrder.length
+                                        for (var i = 0; i < root.colOrder.length; i++) {
+                                            var cid = root.colOrder[i]
+                                            if (!root._colVis(cid)) continue
+                                            var w = root._colRenderW(cid)
+                                            if (gx < cx + w * 0.5) { best = i; break }
+                                            cx += w; best = i + 1
+                                        }
+                                        colHeader._dragTo = best
+                                    }
+                                }
+
+                                onReleased: {
+                                    var from = colHeader._dragFrom
+                                    var to   = colHeader._dragTo
+                                    var wasDrag = _active
+                                    _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1
+                                    if (wasDrag && from >= 0 && to !== from && to !== from + 1) {
+                                        var newOrder = root.colOrder.slice()
+                                        var moved = newOrder.splice(from, 1)[0]
+                                        newOrder.splice(to > from ? to - 1 : to, 0, moved)
+                                        root.colOrder = newOrder
+                                        playlistDetailBridge.saveColOrder(root.colOrder)
+                                    } else if (!wasDrag && hdrCell.modelData === "fav") {
+                                        playlistDetailBridge.favHeaderClicked()
+                                    } else if (!wasDrag && hdrCell.modelData === "album") {
+                                        playlistDetailBridge.albumHeaderClicked()
+                                    }
+                                }
+
+                                onCanceled: { _active = false; colHeader._dragFrom = -1; colHeader._dragTo = -1 }
+                            }
+                        }
+                    }
                 }
 
-                // ── Column resize handles ─────────────────────────────────────────
-                // All x positions use _trackW + _titleW so they stay correct whether
-                // TRACK is fixed (title visible) or elastic (title hidden).
-                // TRACK handle is hidden when TRACK is elastic (no resize handle for
-                // the fill column — matches tracks-browser behaviour).
-                MouseArea {
-                    visible: root.showTrack && root.showTitle
-                    x: 4 + root.colNum + parent._trackW - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colTrack }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colTrack = Math.max(root.minColTrack, Math.min(parent._maxW(root.effColTrack), raw))
-                        colSaveTimer.restart()
+                // ── drag ghost ────────────────────────────────────────────────
+                Rectangle {
+                    visible: colHeader._dragging && colHeader._dragFrom >= 0 && colHeader._dragFrom < root.colOrder.length
+                    x: Math.max(4 + root.colNum, Math.min(colHeader._ghostX, parent.width - width - 4))
+                    y: 2; height: parent.height - 4
+                    width: colHeader._dragFrom >= 0 && colHeader._dragFrom < root.colOrder.length
+                           ? root._colRenderW(root.colOrder[colHeader._dragFrom]) : 0
+                    color: root.panelBgColor; opacity: 0.93
+                    border.color: root.accentColor; border.width: 1; radius: 3; z: 20
+                    Text {
+                        anchors.centerIn: parent
+                        text: colHeader._dragFrom >= 0 && colHeader._dragFrom < root.colOrder.length
+                              ? root._colLabel(root.colOrder[colHeader._dragFrom]) : ""
+                        color: root.accentColor; font.pixelSize: root.fontSizeSecondary - 1
+                        font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily
                     }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
                 }
-                MouseArea {
-                    visible: root.showArtist
-                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colArtist }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colArtist = Math.max(root.minColArtist, Math.min(parent._maxW(root.effColArtist), raw))
-                        colSaveTimer.restart()
+
+                // ── drop indicator ────────────────────────────────────────────
+                Rectangle {
+                    visible: colHeader._dragging && colHeader._dragTo !== colHeader._dragFrom && colHeader._dragTo !== colHeader._dragFrom + 1
+                    x: {
+                        var cx = 4 + root.colNum
+                        var to = colHeader._dragTo
+                        for (var i = 0; i < to && i < root.colOrder.length; i++)
+                            if (root._colVis(root.colOrder[i])) cx += root._colRenderW(root.colOrder[i])
+                        return cx - 1
                     }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                }
-                MouseArea {
-                    visible: root.showFav
-                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colFav }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colFav = Math.max(root.minColFav, Math.min(parent._maxW(root.effColFav), raw))
-                        colSaveTimer.restart()
-                    }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                }
-                MouseArea {
-                    visible: root.showGenre
-                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colGenre }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colGenre = Math.max(root.minColGenre, Math.min(parent._maxW(root.effColGenre), raw))
-                        colSaveTimer.restart()
-                    }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                }
-                MouseArea {
-                    visible: root.showDur
-                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colDur }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colDur = Math.max(root.minColDur, Math.min(parent._maxW(root.effColDur), raw))
-                        colSaveTimer.restart()
-                    }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
-                }
-                MouseArea {
-                    visible: root.showPlays
-                    x: 4 + root.colNum + parent._trackW + parent._titleW + root.effColArtist + root.effColFav + root.effColGenre + root.effColDur + root.effColPlays - 6
-                    y: 0; width: 12; height: parent.height; z: 10
-                    cursorShape: Qt.SizeHorCursor; hoverEnabled: true
-                    property real _pressX: 0; property int _pressW: 0
-                    onPressed: { _pressX = mapToItem(null, mouseX, 0).x; _pressW = root.colPlays }
-                    onPositionChanged: if (pressed) {
-                        var raw = _pressW + (mapToItem(null, mouseX, 0).x - _pressX)
-                        root.colPlays = Math.max(root.minColPlays, Math.min(parent._maxW(root.effColPlays), raw))
-                        colSaveTimer.restart()
-                    }
-                    Rectangle { anchors.centerIn: parent; width: 2; height: parent.height - 22; color: root.textSecondary; opacity: parent.containsMouse ? 0.55 : 0.25 }
+                    y: 2; width: 2; height: parent.height - 4; color: root.accentColor; z: 21
                 }
             }
         }
@@ -777,6 +914,8 @@ Rectangle {
             property string playsStr:   model.playCountStr || ""
             property string genreStr:   model.trackGenre   || ""
             property string coverArtId: model.coverArtId   || ""
+            property string albName:    model.albumName    || ""
+            property string albId:     model.albumId      || ""
 
             property bool rowHov:     false
             property bool isSelected: trkIdx === root.selectedTrkIdx
@@ -785,6 +924,7 @@ Rectangle {
                 || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
                 || artName.toLowerCase().indexOf(root.searchText.toLowerCase())  >= 0
                 || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
+                || albName.toLowerCase().indexOf(root.searchText.toLowerCase())  >= 0
 
             height: matchSearch ? 52 : 0
             visible: height > 0
@@ -812,24 +952,21 @@ Rectangle {
                     Behavior on opacity { NumberAnimation { duration: 120 } }
                 }
 
-                Row {
+                Item {
                     x: 24; y: 0
                     width: parent.width - 48; height: parent.height
 
-                    // # / playing bars / drag grip
+                    // # / playing bars / drag grip — always at x:0
                     Item {
                         id: numCol
-                        width: root.colNum; height: parent.height
+                        x: 0; width: root.colNum; height: parent.height
 
-                        // Track number (visible when not hovering or playing)
                         Text {
                             visible: isPlaying ? false : (!rowHov || (root._isDragging && root._dragFromIdx !== rowIdx))
                             anchors.centerIn: parent
                             text: trackRow.trkNum; color: root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                         }
-
-                        // Drag grip dots (visible on hover when not playing)
                         Row {
                             visible: !isPlaying && (rowHov || (root._isDragging && root._dragFromIdx === rowIdx))
                             anchors.centerIn: parent; spacing: 3
@@ -841,31 +978,23 @@ Rectangle {
                                         model: 3
                                         delegate: Rectangle {
                                             width: 2.5; height: 2.5; radius: 1.25
-                                            color: root._isDragging && root._dragFromIdx === rowIdx
-                                                   ? root.accentColor : root.textSecondary
+                                            color: root._isDragging && root._dragFromIdx === rowIdx ? root.accentColor : root.textSecondary
                                             opacity: 0.7
                                         }
                                     }
                                 }
                             }
                         }
-
                         DragHandler {
-                            target: null
-                            enabled: !isPlaying
-                            dragThreshold: 6
+                            target: null; enabled: !isPlaying; dragThreshold: 6
                             property int  _startIdx:    -1
                             property real _pressSceneY: 0
-
                             onActiveChanged: {
                                 if (active) {
-                                    _startIdx    = trackRow.rowIdx
-                                    _pressSceneY = centroid.scenePosition.y
-                                    root._dragFromIdx    = _startIdx
-                                    root._dragToIdx      = _startIdx
-                                    root._dragGhostTitle = trackRow.trkTitle
-                                    root._dragGhostArt   = trackRow.artName
-                                    root._dragGhostY     = centroid.scenePosition.y
+                                    _startIdx = trackRow.rowIdx; _pressSceneY = centroid.scenePosition.y
+                                    root._dragFromIdx = _startIdx; root._dragToIdx = _startIdx
+                                    root._dragGhostTitle = trackRow.trkTitle; root._dragGhostArt = trackRow.artName
+                                    root._dragGhostY = centroid.scenePosition.y
                                 } else if (root._dragFromIdx === _startIdx) {
                                     if (root._dragFromIdx !== root._dragToIdx)
                                         playlistDetailBridge.reorderTrack(root._dragFromIdx, root._dragToIdx)
@@ -874,18 +1003,13 @@ Rectangle {
                             }
                             onCentroidChanged: {
                                 if (!active || root._dragFromIdx !== _startIdx) return
-                                var sy  = centroid.scenePosition.y
-                                // indexAt takes content coordinates; sceneY == view Y since trackList fills root
+                                var sy = centroid.scenePosition.y
                                 var idx = trackList.indexAt(0, sy + trackList.contentY)
-                                if (idx >= 0)
-                                    root._dragToIdx = idx
+                                if (idx >= 0) root._dragToIdx = idx
                                 root._dragGhostY = sy
                             }
                         }
-
                         HoverHandler { cursorShape: isPlaying ? Qt.ArrowCursor : (root._isDragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor) }
-
-                        // Playing bars
                         Row {
                             visible: isPlaying; anchors.centerIn: parent; spacing: 3
                             Repeater {
@@ -895,86 +1019,57 @@ Rectangle {
                                     required property int index
                                     width: 3; radius: 1.5; color: root.accentColor; height: 4
                                     SequentialAnimation on height {
-                                        loops: Animation.Infinite
-                                        running: isPlaying && root.isCurrentlyPlaying
+                                        loops: Animation.Infinite; running: isPlaying && root.isCurrentlyPlaying
                                         NumberAnimation { from: 4; to: 4 + (index + 1) * 4; duration: modelData; easing.type: Easing.InOutSine }
                                         NumberAnimation { from: 4 + (index + 1) * 4; to: 4; duration: modelData; easing.type: Easing.InOutSine }
                                     }
                                 }
                             }
                         }
-
                     }
 
-                    // Track (cover art + title + artist combined)
+                    // Track (cover art + title + artist combined) — x driven by colOrder
                     Item {
                         visible: root.showTrack
-                        width: root._fillTrackW; height: parent.height
-
+                        x: root.colNum + root._colX("track"); width: root._colRenderW("track"); height: parent.height
                         Row {
-                            x: 4; height: parent.height; width: parent.width - 4
-                            spacing: 8
-
+                            x: 4; height: parent.height; width: parent.width - 4; spacing: 8
                             Rectangle {
-                                width: 43; height: 43
-                                radius: 3
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: root.cardBorderColor
-
+                                width: 43; height: 43; radius: 3
+                                anchors.verticalCenter: parent.verticalCenter; color: root.cardBorderColor
                                 Image {
                                     anchors.fill: parent
                                     source: trackRow.coverArtId ? "image://playlisttrackcovers/" + trackRow.coverArtId : ""
-                                    fillMode: Image.PreserveAspectCrop
-                                    cache: false; smooth: true
+                                    fillMode: Image.PreserveAspectCrop; cache: true; smooth: true; asynchronous: true
                                     visible: status === Image.Ready
                                 }
                             }
-
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - 43 - 8 - 4
-                                spacing: 1
-
-                                Text {
-                                    width: parent.width
-                                    text: trackRow.trkTitle
-                                    color: isPlaying ? root.accentColor : root.textPrimary
-                                    font.pixelSize: root.fontSizePrimary; font.bold: true
-                                    elide: Text.ElideRight; font.family: root.fontFamily
-                                }
-                                Text {
-                                    width: parent.width
-                                    text: trackRow.artName
-                                    color: root.textSecondary
-                                    font.pixelSize: root.fontSizeSecondary
-                                    elide: Text.ElideRight; font.family: root.fontFamily
-                                }
+                                width: parent.width - 43 - 8 - 4; spacing: 1
+                                Text { width: parent.width; text: trackRow.trkTitle; color: isPlaying ? root.accentColor : root.textPrimary; font.pixelSize: root.fontSizePrimary; font.bold: true; elide: Text.ElideRight; font.family: root.fontFamily }
+                                Text { width: parent.width; text: trackRow.artName; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; elide: Text.ElideRight; font.family: root.fontFamily }
                             }
                         }
                     }
 
-                    // Title
+                    // Title — x driven by colOrder
                     Text {
                         visible: root.showTitle
-                        width: root.colTitleW(trackList.width - 48); height: parent.height
+                        x: root.colNum + root._colX("title"); width: root._colRenderW("title"); height: parent.height
                         verticalAlignment: Text.AlignVCenter; leftPadding: 4
-                        text: trackRow.trkTitle
-                        color: isPlaying ? root.accentColor : root.textPrimary
-                        font.pixelSize: root.fontSizePrimary; font.bold: true
-                        elide: Text.ElideRight; font.family: root.fontFamily
+                        text: trackRow.trkTitle; color: isPlaying ? root.accentColor : root.textPrimary
+                        font.pixelSize: root.fontSizePrimary; font.bold: true; elide: Text.ElideRight; font.family: root.fontFamily
                     }
 
-                    // Artist — split into clickable parts
+                    // Artist — x driven by colOrder
                     Item {
                         visible: root.showArtist
-                        width: root.colArtist; height: parent.height; clip: true
+                        x: root.colNum + root._colX("artist"); width: root.colArtist; height: parent.height; clip: true
                         Flow {
-                            id: flowArt
-                            x: 4; width: parent.width - 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 0
+                            id: flowArt; x: 4; width: parent.width - 4
+                            anchors.verticalCenter: parent.verticalCenter; spacing: 0
                             height: Math.min(implicitHeight, root._twoLineH); clip: true
-
                             Repeater {
                                 model: trackRow.artName.split(/( \/\/\/ | • | \/ | feat\. | Feat\. | vs\. )/).filter(function(p) { return p !== "" })
                                 delegate: Text {
@@ -985,53 +1080,58 @@ Rectangle {
                                     font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                                     Rectangle { visible: !parent.isSep && parent.hov; y: parent.baselineOffset + 2; width: parent.paintedWidth; height: 1; color: parent.color }
                                     MouseArea {
-                                        anchors.fill: parent; hoverEnabled: true
-                                        enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
+                                        anchors.fill: parent; hoverEnabled: true; enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
                                         onEntered: parent.hov = true; onExited: parent.hov = false
                                         onClicked: mouse => { playlistDetailBridge.trackArtistClicked(parent.text); mouse.accepted = true }
                                     }
                                 }
                             }
                         }
+                        Text { visible: flowArt.implicitHeight > flowArt.height; text: "…"; anchors.right: parent.right; anchors.rightMargin: 4; y: flowArt.y + flowArt.height - implicitHeight; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily }
+                    }
+
+                    // Album — x driven by colOrder
+                    Item {
+                        visible: root.showAlbum
+                        x: root.colNum + root._colX("album"); width: root._colRenderW("album"); height: parent.height; clip: true
+                        property bool hov: false
                         Text {
-                            visible: flowArt.implicitHeight > flowArt.height; text: "…"
-                            anchors.right: parent.right; anchors.rightMargin: 4
-                            y: flowArt.y + flowArt.height - implicitHeight
-                            color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                            x: 4; width: parent.width - 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: trackRow.albName
+                            color: parent.hov ? root.accentColor : root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary; elide: Text.ElideRight; font.family: root.fontFamily
+                            Rectangle { visible: parent.parent.hov; y: parent.baselineOffset + 2; width: parent.paintedWidth; height: 1; color: parent.color }
+                        }
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onEntered: parent.hov = true; onExited: parent.hov = false
+                            onClicked: mouse => { playlistDetailBridge.trackAlbumClicked(trackRow.albId, trackRow.albName); mouse.accepted = true }
                         }
                     }
 
-                    // Favorite
+                    // Favorite — x driven by colOrder
                     Item {
                         visible: root.showFav
-                        width: root.colFav; height: parent.height
+                        x: root.colNum + root._colX("fav"); width: root.colFav; height: parent.height
                         Image {
                             anchors.centerIn: parent; width: 16; height: 16
-                            source: trackRow.isFav
-                                ? "image://playlisticons/heart_filled_E91E63"
-                                : "image://playlisticons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
+                            source: trackRow.isFav ? "image://playlisticons/heart_filled_E91E63" : "image://playlisticons/heart_" + (favHov.containsMouse ? root.accentColor.replace("#","") : root.textSecondary.replace("#",""))
                             cache: false; mipmap: true; smooth: true
                             scale: favHov.containsMouse ? 1.2 : 1.0
                             Behavior on scale { NumberAnimation { duration: 100 } }
                         }
-                        MouseArea {
-                            id: favHov; anchors.fill: parent; hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor; z: 5
-                            onClicked: mouse => { playlistDetailBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true }
-                        }
+                        MouseArea { id: favHov; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; z: 5; onClicked: mouse => { playlistDetailBridge.trackFavoriteClicked(trackRow.trkIdx); mouse.accepted = true } }
                     }
 
-                    // Genre — split into clickable parts
+                    // Genre — x driven by colOrder
                     Item {
                         visible: root.showGenre
-                        width: root.colGenre; height: parent.height; clip: true
+                        x: root.colNum + root._colX("genre"); width: root.colGenre; height: parent.height; clip: true
                         Flow {
-                            id: flowGen
-                            x: 4; width: parent.width - 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 0
+                            id: flowGen; x: 4; width: parent.width - 4
+                            anchors.verticalCenter: parent.verticalCenter; spacing: 0
                             height: Math.min(implicitHeight, root._twoLineH); clip: true
-
                             Repeater {
                                 model: trackRow.genreStr.split(/( • )/).filter(function(p) { return p !== "" })
                                 delegate: Text {
@@ -1042,36 +1142,29 @@ Rectangle {
                                     font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                                     Rectangle { visible: !parent.isSep && parent.hov; y: parent.baselineOffset + 2; width: parent.paintedWidth; height: 1; color: parent.color }
                                     MouseArea {
-                                        anchors.fill: parent; hoverEnabled: true
-                                        enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
+                                        anchors.fill: parent; hoverEnabled: true; enabled: !parent.isSep; cursorShape: Qt.PointingHandCursor
                                         onEntered: parent.hov = true; onExited: parent.hov = false
                                         onClicked: mouse => { playlistDetailBridge.trackGenreClicked(parent.text); mouse.accepted = true }
                                     }
                                 }
                             }
                         }
-                        Text {
-                            visible: flowGen.implicitHeight > flowGen.height; text: "…"
-                            anchors.right: parent.right; anchors.rightMargin: 4
-                            y: flowGen.y + flowGen.height - implicitHeight
-                            color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
-                        }
+                        Text { visible: flowGen.implicitHeight > flowGen.height; text: "…"; anchors.right: parent.right; anchors.rightMargin: 4; y: flowGen.y + flowGen.height - implicitHeight; color: root.textSecondary; font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily }
                     }
 
-                    // Duration
+                    // Duration — x driven by colOrder
                     Text {
                         visible: root.showDur
-                        width: root.colDur; height: parent.height
+                        x: root.colNum + root._colX("dur"); width: root.colDur; height: parent.height
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                        text: trackRow.durStr
-                        color: isPlaying ? root.accentColor : root.textSecondary
+                        text: trackRow.durStr; color: isPlaying ? root.accentColor : root.textSecondary
                         font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                     }
 
-                    // Plays
+                    // Plays — x driven by colOrder
                     Text {
                         visible: root.showPlays
-                        width: root.colPlays; height: parent.height
+                        x: root.colNum + root._colX("plays"); width: root.colPlays; height: parent.height
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         text: trackRow.playsStr; color: root.textSecondary
                         font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
@@ -1138,7 +1231,8 @@ Rectangle {
                     }
                 }
                 Text {
-                    width: root.colTitleW(ghostRow.width - 48); height: parent.height
+                    width: root._colRenderW("title") > 0 ? root._colRenderW("title") : root._colRenderW("track")
+                    height: parent.height
                     verticalAlignment: Text.AlignVCenter; leftPadding: 4
                     text: root._dragGhostTitle; color: root.accentColor
                     font.pixelSize: root.fontSizePrimary; font.bold: true

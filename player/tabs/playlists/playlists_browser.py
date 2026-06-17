@@ -180,6 +180,8 @@ class PlaylistDetailTrackModel(QAbstractListModel):
     PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 8
     TRACK_GENRE    = Qt.ItemDataRole.UserRole + 9
     COVER_ART_ID   = Qt.ItemDataRole.UserRole + 10
+    ALBUM_NAME     = Qt.ItemDataRole.UserRole + 11
+    ALBUM_ID       = Qt.ItemDataRole.UserRole + 12
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -202,6 +204,8 @@ class PlaylistDetailTrackModel(QAbstractListModel):
         if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
         if role == self.TRACK_GENRE:    return r.get('_genre', '')
         if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
+        if role == self.ALBUM_NAME:     return r.get('_album', '')
+        if role == self.ALBUM_ID:       return r.get('_album_id', '')
         return None
 
     def roleNames(self):
@@ -216,6 +220,8 @@ class PlaylistDetailTrackModel(QAbstractListModel):
             self.PLAY_COUNT_STR: b"playCountStr",
             self.TRACK_GENRE:    b"trackGenre",
             self.COVER_ART_ID:   b"coverArtId",
+            self.ALBUM_NAME:     b"albumName",
+            self.ALBUM_ID:       b"albumId",
         }
 
     def set_tracks(self, tracks: list):
@@ -241,7 +247,9 @@ class PlaylistDetailTrackModel(QAbstractListModel):
                 '_dur':      f"{secs // 60}:{secs % 60:02d}",
                 '_plays':    plays,
                 '_genre':    ' • '.join(genre_parts[:3]),
-                '_cover_id': str(t.get('coverArt') or t.get('albumId') or ''),
+                '_cover_id':  str(t.get('coverArt') or t.get('albumId') or ''),
+                '_album':     t.get('album', ''),
+                '_album_id':  str(t.get('albumId', '')),
             })
         self.beginResetModel()
         self._rows = rows
@@ -301,6 +309,7 @@ class PlaylistDetailBridge(QObject):
     showGenreChanged          = pyqtSignal(bool)
     showDurChanged            = pyqtSignal(bool)
     showPlaysChanged          = pyqtSignal(bool)
+    showAlbumChanged          = pyqtSignal(bool)
 
     def __init__(self, view):
         super().__init__()
@@ -435,14 +444,16 @@ class PlaylistDetailBridge(QObject):
     def getColWidths(self):
         saved = QSettings().value('playlist_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('track', 240)), int(saved.get('artist', 160)), int(saved.get('fav', 68)),
-                    int(saved.get('dur', 72)), int(saved.get('plays', 60)), int(saved.get('genre', 140))]
-        return [240, 160, 68, 72, 60, 140]
+            return [int(saved.get('track', 240)), int(saved.get('title', 200)), int(saved.get('artist', 160)),
+                    int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)),
+                    int(saved.get('genre', 140)), int(saved.get('album', 160))]
+        return [240, 200, 160, 68, 72, 60, 140, 160]
 
-    @pyqtSlot(int, int, int, int, int, int)
-    def saveColWidths(self, track: int, artist: int, fav: int, dur: int, plays: int, genre: int):
+    @pyqtSlot(int, int, int, int, int, int, int, int)
+    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
         QSettings().setValue('playlist_detail/track_col_widths',
-                             {'track': track, 'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
+                             {'track': track, 'title': title, 'artist': artist, 'fav': fav,
+                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album})
 
     @pyqtSlot(result='QVariantList')
     def getColVisibility(self):
@@ -451,7 +462,7 @@ class PlaylistDetailBridge(QObject):
         return [bool(saved.get('track',  True)),  bool(saved.get('title',  True)),
                 bool(saved.get('artist', True)),  bool(saved.get('fav',    True)),
                 bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
-                bool(saved.get('plays',  True))]
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  True))]
 
     @pyqtSlot(float, float)
     def burgerClicked(self, gx: float, gy: float):
@@ -465,12 +476,13 @@ class PlaylistDetailBridge(QObject):
             ('genre',  'Genre',    self.showGenreChanged),
             ('dur',    'Duration', self.showDurChanged),
             ('plays',  'Plays',    self.showPlaysChanged),
+            ('album',  'Album',    self.showAlbumChanged),
         ]
         menu = themed_shadow_menu(self._view)
         for key, label, sig in cols:
             vis = bool(saved.get(key, True))
-            text = ('✓  ' if vis else '    ') + label
-            menu.add_action(text, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s))
+            menu.add_action(label, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s),
+                            icon_path='img/yes.png' if vis else '')
         popup_menu_at_global(menu, int(gx), int(gy))
 
     def _set_col_vis(self, key: str, visible: bool, signal):
@@ -499,6 +511,32 @@ class PlaylistDetailBridge(QObject):
             ids = [str(t.get('id', '')) for t in tracks]
             threading.Thread(target=_persist_track_reorder,
                              args=(client, pl_id, n, ids), daemon=True).start()
+
+    @pyqtSlot(result='QVariantList')
+    def getColOrder(self):
+        default = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+        known = set(default)
+        saved = QSettings().value('playlist_detail/col_order')
+        if isinstance(saved, list) and set(saved) <= known and len(saved) > 0:
+            result = [c for c in saved if c in known]
+            for c in default:
+                if c not in result:
+                    result.append(c)
+            return result
+        return default
+
+    @pyqtSlot(str, str)
+    def trackAlbumClicked(self, album_id: str, album_name: str):
+        if not album_id:
+            return
+        album_data = {'id': album_id, 'title': album_name, 'coverArt': album_id, 'cover_id': album_id}
+        main = self._view.window()
+        if hasattr(main, 'navigate_to_album'):
+            main.navigate_to_album(album_data)
+
+    @pyqtSlot()
+    def albumHeaderClicked(self):
+        pass
 
     @pyqtSlot()
     def favHeaderClicked(self):
