@@ -237,7 +237,8 @@ class PlaylistDetailTrackModel(QAbstractListModel):
             self.ALBUM_ID:       b"albumId",
         }
 
-    def set_tracks(self, tracks: list):
+    @staticmethod
+    def _build_rows(tracks: list) -> list:
         rows = []
         for idx, t in enumerate(tracks):
             raw_star = t.get('starred', False)
@@ -264,9 +265,18 @@ class PlaylistDetailTrackModel(QAbstractListModel):
                 '_album':     t.get('album', ''),
                 '_album_id':  str(t.get('albumId', '')),
             })
+        return rows
+
+    def set_tracks(self, tracks: list):
         self.beginResetModel()
-        self._rows = rows
+        self._rows = self._build_rows(tracks)
         self.endResetModel()
+
+    def reorder_tracks(self, tracks: list):
+        """Sort in-place via dataChanged — does not reset scroll position."""
+        self._rows = self._build_rows(tracks)
+        if self._rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, 0))
 
     def update_favorite(self, track_idx: int, is_fav: bool):
         for i, r in enumerate(self._rows):
@@ -425,11 +435,13 @@ class PlaylistDetailBridge(QObject):
 
     @pyqtSlot(str)
     def trackArtistClicked(self, name: str):
-        self._view.track_artist_clicked.emit(name)
+        view = self._view
+        QTimer.singleShot(0, lambda: view.track_artist_clicked.emit(name))
 
     @pyqtSlot(str)
     def trackGenreClicked(self, genre: str):
-        self._view.genre_clicked.emit(genre)
+        view = self._view
+        QTimer.singleShot(0, lambda: view.genre_clicked.emit(genre))
 
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
@@ -582,7 +594,9 @@ class PlaylistDetailBridge(QObject):
         album_data = {'id': album_id, 'title': album_name, 'coverArt': album_id, 'cover_id': album_id}
         main = self._view.window()
         if hasattr(main, 'navigate_to_album'):
-            main.navigate_to_album(album_data)
+            # Defer out of the QML mouse-event chain: switching native windows
+            # synchronously inside onClicked races with QML image loading.
+            QTimer.singleShot(0, lambda: main.navigate_to_album(album_data))
 
     @pyqtSlot()
     def albumHeaderClicked(self):
@@ -724,9 +738,9 @@ class PlaylistDetailView(QWidget):
     def _on_sort_changed(self, col: str, dir_: str):
         self._sort_col = col
         self._sort_dir = dir_
-        self._apply_sort(col, dir_)
+        self._apply_sort(col, dir_, preserve_scroll=True)
 
-    def _apply_sort(self, col: str, dir_: str):
+    def _apply_sort(self, col: str, dir_: str, preserve_scroll: bool = False):
         tracks = list(self._tracks)
         if dir_ and col:
             def sort_key(pair):
@@ -740,7 +754,10 @@ class PlaylistDetailView(QWidget):
                 return 0
             paired = sorted(enumerate(tracks), key=sort_key, reverse=(dir_ == 'desc'))
             tracks = [t for _, t in paired]
-        self._track_model.set_tracks(tracks)
+        if preserve_scroll:
+            self._track_model.reorder_tracks(tracks)
+        else:
+            self._track_model.set_tracks(tracks)
 
     def populate_tracks(self, playlist_data: dict, tracks: list):
         self._tracks = tracks
