@@ -113,6 +113,21 @@ jobs:
           name: Icosahedron-Linux
           path: artifacts/linux
 
+      - name: Delete stale Latest Build release
+        if: startsWith(github.ref, 'refs/heads/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Generate Latest Build body
+        if: startsWith(github.ref, 'refs/heads/')
+        run: |
+          DATE=$(date -u '+%Y-%m-%d %H:%M UTC')
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          printf '**Automated build** from `master` — %s\n\n**Commit:** [`%s`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})\n**Message:** %s\n' \
+            "$DATE" "$SHORT" "$MSG" > /tmp/release_body.md
+
       - name: Publish latest (branch push)
         if: startsWith(github.ref, 'refs/heads/')
         uses: softprops/action-gh-release@v2
@@ -120,6 +135,7 @@ jobs:
           tag_name: latest
           name: Latest Build
           prerelease: true
+          body_path: /tmp/release_body.md
           files: |
             artifacts/windows/Icosahedron-win-x64.exe
             artifacts/linux/Icosahedron-linux-x64.appimage
