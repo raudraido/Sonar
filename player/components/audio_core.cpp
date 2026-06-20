@@ -171,7 +171,8 @@ struct AudioEngine {
     float vis_snapshot[4096] = {};  
     std::mutex vis_snapshot_mutex;  
     std::complex<float> fft_working_buf[8192] = {};
-    std::atomic<float> current_vu_rms{0.0f};
+    std::atomic<float> current_vu_rms_l{0.0f};
+    std::atomic<float> current_vu_rms_r{0.0f};
 };
 
 static AudioEngine engine;
@@ -263,15 +264,18 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         engine.buffer.read(out, frameCount);
     }
     
-    // --- ADD THIS BLOCK: True Time-Domain RMS for VU Meter ---
-    float sum_squares = 0.0f;
+    // --- True Time-Domain RMS for VU Meter, per channel ---
+    float sum_sq_l = 0.0f, sum_sq_r = 0.0f;
     for (ma_uint32 i = 0; i < frameCount; i++) {
-        // Proper Mono Summation: (L + R) / 2
-        float mono = (out[i * CHANNELS] + out[i * CHANNELS + 1]) * 0.5f;
-        sum_squares += mono * mono;
+        float l = out[i * CHANNELS];
+        float r = out[i * CHANNELS + 1];
+        sum_sq_l += l * l;
+        sum_sq_r += r * r;
     }
-    float true_rms = std::sqrt(sum_squares / frameCount);
-    engine.current_vu_rms.store(true_rms, std::memory_order_relaxed);
+    float true_rms_l = std::sqrt(sum_sq_l / frameCount);
+    float true_rms_r = std::sqrt(sum_sq_r / frameCount);
+    engine.current_vu_rms_l.store(true_rms_l, std::memory_order_relaxed);
+    engine.current_vu_rms_r.store(true_rms_r, std::memory_order_relaxed);
     // ---------------------------------------------------------
     
     // FFT Visualizer — skip entirely when nobody is watching (e.g. minimized)
@@ -954,8 +958,11 @@ extern "C" {
     }
 
     // --- VU Meter ---
-    EXPORT float get_vu_rms() {
-        return engine.current_vu_rms.load(std::memory_order_relaxed);
+    EXPORT float get_vu_rms_l() {
+        return engine.current_vu_rms_l.load(std::memory_order_relaxed);
+    }
+    EXPORT float get_vu_rms_r() {
+        return engine.current_vu_rms_r.load(std::memory_order_relaxed);
     }
     // ----------------------------------------
 
