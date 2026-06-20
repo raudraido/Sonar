@@ -18,18 +18,9 @@ Item {
         height: width
         radius: 8
         color:  baseColor
+        clip: true
 
-        Rectangle {
-            anchors.fill: parent
-            radius:       parent.radius
-            color:        "white"
-            opacity:      0
-            SequentialAnimation on opacity {
-                running: skeletonRoot.visible; loops: -1
-                NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-            }
-        }
+        ShimmerSweep {}
     }
 
     Column {
@@ -47,18 +38,9 @@ Item {
                 height: index === 0 ? 11 : 9
                 radius: index === 0 ? 5 : 4
                 color:  index === 0 ? baseColor : Qt.darker(baseColor, 1.15)
+                clip: true
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius:       parent.radius
-                    color:        "white"
-                    opacity:      0
-                    SequentialAnimation on opacity {
-                        running: skeletonRoot.visible; loops: -1
-                        NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-                    }
-                }
+                ShimmerSweep {}
             }
         }
     }

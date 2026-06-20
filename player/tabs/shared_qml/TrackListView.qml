@@ -879,7 +879,10 @@ Rectangle {
                             Rectangle {
                                 width: 52; height: 52; radius: 3
                                 anchors.verticalCenter: parent.verticalCenter; color: root.skeletonColor
+                                clip: true
+                                ShimmerSweep { visible: trackArt.status !== Image.Ready }
                                 Image {
+                                    id: trackArt
                                     anchors.fill: parent
                                     source: root.fixedThumbSource !== "" ? root.fixedThumbSource
                                         : ((root.enableTrackColumn && trackRow.coverArtId) ? "image://" + root.trackThumbProvider + "/" + trackRow.coverArtId : "")

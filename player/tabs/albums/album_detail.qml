@@ -122,6 +122,8 @@ Rectangle {
                             anchors.fill: parent; radius: 10
                             color: root.skeletonColor
                             visible: root.coverId === ""
+                            clip: true
+                            ShimmerSweep {}
                         }
 
                         // Static shadow image — positioned at -shadowPad so it bleeds

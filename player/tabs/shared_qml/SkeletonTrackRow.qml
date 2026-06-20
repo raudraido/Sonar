@@ -1,8 +1,8 @@
 import QtQuick
 
 // Loading placeholder for one track row in TrackListView — same shimmer
-// language as SkeletonCard.qml (white overlay pulsing 0 → 0.2 → 0 opacity),
-// just laid out horizontally to mimic a row's thumbnail+title+artist and
+// language as SkeletonCard.qml (ShimmerSweep.qml light-band sweep), just
+// laid out horizontally to mimic a row's thumbnail+title+artist and
 // trailing column pills instead of a vertical grid card.
 Item {
     id: skeletonRoot
@@ -24,14 +24,8 @@ Item {
 
         Rectangle {
             width: 52; height: 52; radius: 3; color: skeletonRoot.baseColor
-            Rectangle {
-                anchors.fill: parent; radius: parent.radius; color: "white"; opacity: 0
-                SequentialAnimation on opacity {
-                    running: skeletonRoot.visible; loops: -1
-                    NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-                }
-            }
+            clip: true
+            ShimmerSweep {}
         }
 
         Column {
@@ -40,26 +34,14 @@ Item {
 
             Rectangle {
                 width: 170; height: 11; radius: 5; color: skeletonRoot.baseColor
-                Rectangle {
-                    anchors.fill: parent; radius: parent.radius; color: "white"; opacity: 0
-                    SequentialAnimation on opacity {
-                        running: skeletonRoot.visible; loops: -1
-                        NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-                    }
-                }
+                clip: true
+                ShimmerSweep {}
             }
 
             Rectangle {
                 width: 110; height: 9; radius: 4; color: Qt.darker(skeletonRoot.baseColor, 1.15)
-                Rectangle {
-                    anchors.fill: parent; radius: parent.radius; color: "white"; opacity: 0
-                    SequentialAnimation on opacity {
-                        running: skeletonRoot.visible; loops: -1
-                        NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-                    }
-                }
+                clip: true
+                ShimmerSweep {}
             }
         }
     }
@@ -75,14 +57,8 @@ Item {
             delegate: Rectangle {
                 required property int modelData
                 width: modelData; height: 9; radius: 4; color: skeletonRoot.baseColor
-                Rectangle {
-                    anchors.fill: parent; radius: parent.radius; color: "white"; opacity: 0
-                    SequentialAnimation on opacity {
-                        running: skeletonRoot.visible; loops: -1
-                        NumberAnimation { to: 0.2; duration: 900; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.0; duration: 900; easing.type: Easing.InOutSine }
-                    }
-                }
+                clip: true
+                ShimmerSweep {}
             }
         }
     }
