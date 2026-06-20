@@ -166,13 +166,23 @@ class AudioVisualizer(QWidget):
                     QSettings("Icosahedron", "Visualizer").setValue("vu_sens_step", self._vu_sens_step)
                 event.accept()
                 return
-        delta = event.angleDelta().x() or event.angleDelta().y()
-        step = 1 if delta > 0 else -1
-        new_val = max(-18, min(0, self._vu_ref_level + step))
-        if new_val != self._vu_ref_level:
-            self._vu_ref_level = new_val
-            QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
-        event.accept()
+
+        hit = self._knob_rect()
+        if hit:
+            kx, ky, kr = hit
+            dx = event.position().x() - kx
+            dy = event.position().y() - ky
+            if dx*dx + dy*dy <= (kr*1.4)**2:
+                delta = event.angleDelta().x() or event.angleDelta().y()
+                step = 1 if delta > 0 else -1
+                new_val = max(-18, min(0, self._vu_ref_level + step))
+                if new_val != self._vu_ref_level:
+                    self._vu_ref_level = new_val
+                    QSettings("Icosahedron", "Visualizer").setValue("vu_ref_level", self._vu_ref_level)
+                event.accept()
+                return
+
+        super().wheelEvent(event)
 
     # ── Data processing ───────────────────────────────────────────────────────
 
