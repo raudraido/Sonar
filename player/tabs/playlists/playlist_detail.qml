@@ -61,6 +61,7 @@ Rectangle {
         enableAlbumColumn: true
         elasticCol:    "track"
         iconProvider:  "playlisticons"
+        tracksLoading: root.playlistMeta === "Loading..."
 
         accentColor:       root.accentColor
         hoverColor:        root.hoverColor

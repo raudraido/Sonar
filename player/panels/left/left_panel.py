@@ -95,10 +95,10 @@ class LeftPanel(QWidget):
 
         self._qml_view.setSource(QUrl.fromLocalFile(resource_path("player/panels/left/left_panel.qml")))
 
-        lo = QVBoxLayout(self)
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(0)
-        lo.addWidget(self._qml)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+        self._layout.addWidget(self._qml)
 
         # Triple-click logo (within 500ms) → Theme Builder
         self._click_count = 0
@@ -220,11 +220,29 @@ class LeftPanel(QWidget):
             panel_hex = '#0e0e0e'
         self._panel_bg_hex = panel_hex
         self._bridge.panelBgChanged.emit(panel_hex)
+        # Still used by the QML header's internal bottom divider (the line
+        # under the logo row) — that one isn't contested by the resize
+        # handle and continues to render fine via QML.
         self._bridge.borderColorChanged.emit(self._border_color_to_hex(theme.border_color))
         self._bridge.borderWidthChanged.emit(theme.border_width)
         for w in self._header_widgets:
             if hasattr(w, 'set_bg_color'):
                 w.set_bg_color(panel_hex)
+
+        # Right-edge border: drawn by this QWidget's own stylesheet (like the
+        # footer/queue/header panels in mixins/visuals.py), NOT by the QML
+        # view — a createWindowContainer's native surface doesn't reliably
+        # win the z-order fight against the resize-handle overlay sitting on
+        # top of this exact boundary on every platform, which silently hid a
+        # QML-drawn border here. The layout margin below reserves border_width
+        # px so the native QML view doesn't extend over the border itself.
+        bw = theme.border_width
+        bc = theme.border_color
+        self.setStyleSheet(
+            f'#LeftPanel {{ background: rgb({theme.left_panel_bg}); '
+            f'border: none; border-right: {bw}px solid {bc}; border-radius: 0px; }}'
+        )
+        self._layout.setContentsMargins(0, 0, bw, 0)
 
     @staticmethod
     def _border_color_to_hex(color_str: str) -> str:

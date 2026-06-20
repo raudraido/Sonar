@@ -42,6 +42,10 @@ Rectangle {
     // instead of needing per-row album data in its track model.
     property string fixedAlbumName: ""
     property string fixedAlbumId:   ""
+    // While true, shows shimmering skeleton rows (matching album/artist grid's
+    // SkeletonCard look) below the column headers instead of (empty) track
+    // rows — host page binds this to its own "Loading..." sentinel.
+    property bool   tracksLoading: false
 
     // ── Theme (bound by host page; no Connections here — the host page's own
     //    bridge Connections is the single place theme signals are received) ──
@@ -397,7 +401,7 @@ Rectangle {
         header: Item {
             id: pageHeader
             width: trackList.width
-            height: headerLoader.y + headerLoader.height + 10 + cardLid.height
+            height: headerLoader.y + headerLoader.height + 10 + cardLid.height + skeletonRows.height
 
             Component.onCompleted: root._searchBar = trackSearchBar
 
@@ -677,6 +681,25 @@ Rectangle {
                     y: 2; width: 2; height: parent.height - 4; color: root.accentColor; z: 21
                 }
             }
+
+            // ── SKELETON ROWS (shown while tracksLoading, in place of the
+            //    still-empty track list — same shimmer language as the
+            //    album/artist grids' SkeletonCard) ──────────────────────────
+            Column {
+                id: skeletonRows
+                x: 0; y: cardLid.y + cardLid.height
+                width: parent.width
+                spacing: 0
+                Repeater {
+                    model: root.tracksLoading ? 8 : 0
+                    delegate: SkeletonTrackRow {
+                        width: trackList.width
+                        baseColor:       root.skeletonColor
+                        cardBgColor:     root.cardBgColor
+                        cardBorderColor: root.cardBorderColor
+                    }
+                }
+            }
         }
 
         // ── FOOTER: bottom rounded corner ───────────────────────────────────
@@ -855,7 +878,7 @@ Rectangle {
                             x: 4; height: parent.height; width: parent.width - 4; spacing: 8
                             Rectangle {
                                 width: 52; height: 52; radius: 3
-                                anchors.verticalCenter: parent.verticalCenter; color: root.cardBorderColor
+                                anchors.verticalCenter: parent.verticalCenter; color: root.skeletonColor
                                 Image {
                                     anchors.fill: parent
                                     source: root.fixedThumbSource !== "" ? root.fixedThumbSource

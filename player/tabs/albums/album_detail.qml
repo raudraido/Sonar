@@ -66,6 +66,7 @@ Rectangle {
         iconProvider:      "albumicons"
         trackThumbProvider: "albumtrackcovers"
         fixedAlbumName:    root.albumTitle
+        tracksLoading:     root.albumMeta === "Loading..."
 
         accentColor:       root.accentColor
         hoverColor:        root.hoverColor

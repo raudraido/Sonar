@@ -90,14 +90,11 @@ Rectangle {
         // from Python (LeftPanel.add_header_widget).
     }
 
-    // Right edge border — between the left panel and the main content
-    Rectangle {
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: root.borderWidth
-        color: root.borderColor
-    }
+    // Right edge border now drawn by LeftPanel's own QWidget stylesheet
+    // (see LeftPanel.apply_theme) — a createWindowContainer's native
+    // surface doesn't reliably win z-order against the resize-handle
+    // overlay sitting on this exact boundary, which silently hid this
+    // Rectangle on some platforms.
 
     // ── ART SECTION ──────────────────────────────────────────────────────
     // Sits at the bottom of the panel, expands upward from height 0.

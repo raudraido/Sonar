@@ -689,7 +689,11 @@ class VisualsMixin:
             self._last_title_bar_dark = _is_dark_bg
             self.enable_dark_title_bar(_is_dark_bg)
 
-        theme_key = (mc, resolve_menu_hover(self.theme))
+        theme_key = (
+            mc, resolve_menu_hover(self.theme),
+            self.theme.auto_border_from_accent, self.theme.manual_border_color,
+            self.theme.border_width,
+        )
 
         if getattr(self, '_last_theme_key', None) == theme_key:
             return
@@ -896,10 +900,9 @@ class VisualsMixin:
                 f'#MainHeader {{ background: rgb({self.theme.header_panel_bg}); border-bottom: {bw}px solid {bc}; }}'
             )
         if hasattr(self, '_left_panel'):
-            self._left_panel.setStyleSheet(
-                f'#LeftPanel {{ background: rgb({self.theme.left_panel_bg}); border: none; '
-                f'border-radius: 0px; }}'
-            )
+            # apply_theme() sets the panel's full stylesheet itself
+            # (background + right-edge border), so no separate setStyleSheet
+            # call is needed here.
             self._left_panel.apply_theme(self.theme)
         bg = self.theme.main_panel_bg
         for _i in range(self.tabs.count()):
