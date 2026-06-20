@@ -176,6 +176,14 @@ class AudioVisualizer(QWidget):
 
     # ── Data processing ───────────────────────────────────────────────────────
 
+    def _needle_k(self):
+        """Rate constant for needle rise/fall — also used to decay the raw RMS
+        toward zero on silence, so the pause/stop fallback moves at exactly
+        the same speed as the needle's normal tracking, scaled by SENS."""
+        STEP_MIN, STEP_MAX = 0.12, 0.70
+        step = STEP_MIN + (self._vu_sens_step / 18.0) * (STEP_MAX - STEP_MIN)
+        return -math.log(1.0 - step) * 60.0 * 2.0
+
     def _render_tick(self):
         import time as _t
         now = _t.monotonic()
@@ -183,8 +191,7 @@ class AudioVisualizer(QWidget):
         if now - last > 0.05:  # no audio data for >50ms → decay toward zero
             dt = now - getattr(self, '_render_last_t', now - 0.016)
             dt = min(dt, 0.1)
-            # half-life of 400ms — needle falls naturally over ~1s
-            decay = 0.5 ** (dt / 0.4)
+            decay = math.exp(-self._needle_k() * dt)
             self._raw_vu_rms_l = getattr(self, '_raw_vu_rms_l', 0.0) * decay
             self._raw_vu_rms_r = getattr(self, '_raw_vu_rms_r', 0.0) * decay
         self._render_last_t = now
@@ -265,8 +272,12 @@ class AudioVisualizer(QWidget):
         self._vu_rms2_l = alpha * self._vu_rms2_l + (1.0 - alpha) * rms_l
         self._vu_rms2_r = alpha * self._vu_rms2_r + (1.0 - alpha) * rms_r
 
-        db_l = 20.0 * math.log10(max(self._vu_rms2_l, 1e-9)) + self._vu_ref_level
-        db_r = 20.0 * math.log10(max(self._vu_rms2_r, 1e-9)) + self._vu_ref_level
+        # Mirror the knob's relative position around its center (-9) before
+        # applying it to the calibration math — knob visual/drag/scroll and
+        # its stored value are untouched, only this calculation is flipped.
+        _ref_mirrored = -(self._vu_ref_level + 9) - 9
+        db_l = 20.0 * math.log10(max(self._vu_rms2_l, 1e-9)) + (-_ref_mirrored)
+        db_r = 20.0 * math.log10(max(self._vu_rms2_r, 1e-9)) + (-_ref_mirrored)
 
         # Calibrated from image pixel analysis:
         # pivot_left=(311,340), R=273px, left_angle=-45.2°, right_angle=+36.1°
@@ -293,27 +304,22 @@ class AudioVisualizer(QWidget):
         target_left  = db2a(db_l, _LEFT_MARKS)
         target_right = db2a(db_r, _RIGHT_MARKS)
         # SENS knob: 0.0 = slow/sluggish needle, 1.0 = fast/snappy needle
-        _STEP_MIN, _STEP_MAX = 0.12, 0.70
-        _ndl_step = _STEP_MIN + (self._vu_sens_step / 18.0) * (_STEP_MAX - _STEP_MIN)
-        NEEDLE_K_ATTACK  = -math.log(1.0 - _ndl_step) * 60.0   # rise speed
-        NEEDLE_K_RELEASE = -math.log(1.0 - _ndl_step) * 60.0   # fallback speed
+        NEEDLE_K = self._needle_k()   # rise/fall speed — same both ways
 
         def _step_needle(prefix, target):
             base_pos    = getattr(self, prefix + '_pos', target)
             base_target = getattr(self, prefix + '_target', target)
             base_t      = getattr(self, prefix + '_t', now)
             if target != base_target:
-                _k  = NEEDLE_K_ATTACK if target > base_target else NEEDLE_K_RELEASE
                 e   = now - base_t
-                base_pos    = base_target + (base_pos - base_target) * math.exp(-_k * e)
+                base_pos    = base_target + (base_pos - base_target) * math.exp(-NEEDLE_K * e)
                 base_target = target
                 base_t      = now
             setattr(self, prefix + '_pos', base_pos)
             setattr(self, prefix + '_target', base_target)
             setattr(self, prefix + '_t', base_t)
-            _k = NEEDLE_K_ATTACK if base_target >= base_pos else NEEDLE_K_RELEASE
             e  = now - base_t
-            return base_target + (base_pos - base_target) * math.exp(-_k * e)
+            return base_target + (base_pos - base_target) * math.exp(-NEEDLE_K * e)
 
         needle_left  = _step_needle('_ndl2L', target_left)
         needle_right = _step_needle('_ndl2R', target_right)

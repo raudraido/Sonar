@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
 
 from PyQt6.QtCore import (Qt, pyqtSignal, QTimer, QModelIndex, QEvent, QPoint, QRect,
                           QPropertyAnimation, QEasingCurve, QSize, QParallelAnimationGroup,
-                          QRectF, QThread, QSettings, QObject)
+                          QRectF, QThread, QSettings, QObject, QPointF)
 
 from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont, QPen
 
@@ -1442,13 +1442,20 @@ class MultiLinkArtistDelegate(QStyledItemDelegate):
             is_hovering = is_link and (index == hovered_idx) and (hovered_part_text == part_text)
             
             
-            painter.setPen(base_color)
-
             f = painter.font()
             f.setUnderline(is_hovering)
             painter.setFont(f)
 
-            painter.drawText(token_rect, Qt.AlignmentFlag.AlignVCenter, part_text)
+            if part_text.strip() == '•':
+                r = max(1.2, fm.height() * 0.09)
+                painter.save()
+                painter.setBrush(base_color)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(token_rect.center()), r, r)
+                painter.restore()
+            else:
+                painter.setPen(base_color)
+                painter.drawText(token_rect, Qt.AlignmentFlag.AlignVCenter, part_text)
             x_offset += width
             if x_offset >= rect.right() - 5:
                 break
@@ -1604,11 +1611,10 @@ class MultiGenreDelegate(QStyledItemDelegate):
                 is_sep = bool(self.split_regex.fullmatch(part))
                 width = fm.horizontalAdvance(part)
                 is_hovering = (not is_sep) and index == hovered_idx and hovered_genre == part.strip()
-                painter.setPen(QColor("#777") if is_sep else base_color)
                 f = painter.font()
                 f.setUnderline(is_hovering)
                 painter.setFont(f)
-                painter.drawText(int(x), y, part)
+                _draw_sep_token(painter, int(x), y, part, fm, QColor("#777") if is_sep else base_color)
                 x += width
 
         painter.restore()
@@ -1811,11 +1817,20 @@ class CombinedTrackDelegate(QStyledItemDelegate):
             painter.setBrush(QColor("#222222"))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(cover_rect, 4, 4)
-            painter.setPen(QColor("#555555"))
-            f_music = painter.font()
-            f_music.setPixelSize(30)
-            painter.setFont(f_music)
-            painter.drawText(cover_rect, Qt.AlignmentFlag.AlignCenter, "♪")
+            # Vector-drawn music note — avoids relying on a "♪" glyph, whose
+            # font-fallback resolution floods the console with bearing warnings
+            # when painted on every row, every repaint/scroll.
+            painter.save()
+            painter.setBrush(QColor("#555555"))
+            note_h = cover_rect.height() * 0.5
+            cx, cy = cover_rect.center().x(), cover_rect.center().y()
+            stem_x = cx + note_h * 0.18
+            stem_top_y = cy - note_h * 0.5
+            stem_bottom_y = cy + note_h * 0.32
+            head_r = max(1.0, note_h * 0.16)
+            painter.drawLine(QPointF(stem_x, stem_top_y), QPointF(stem_x, stem_bottom_y))
+            painter.drawEllipse(QPointF(stem_x - head_r * 0.9, stem_bottom_y), head_r, head_r * 0.8)
+            painter.restore()
 
         # --- 4. DYNAMIC TEXT BLOCK CALCULATION ---
         from PyQt6.QtGui import QTextLayout
@@ -1917,8 +1932,16 @@ class CombinedTrackDelegate(QStyledItemDelegate):
                     break
                     
                 sep_rect = QRect(int(current_x), artist_rect.y(), int(width), artist_rect.height())
-                painter.drawText(sep_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, part)
-                
+                if part.strip() == '•':
+                    r = max(1.2, fm_artist.height() * 0.09)
+                    painter.save()
+                    painter.setBrush(base_artist_pen)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(QPointF(sep_rect.center()), r, r)
+                    painter.restore()
+                else:
+                    painter.drawText(sep_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, part)
+
                 current_x += width
 
         painter.restore()
@@ -2063,6 +2086,24 @@ def _split_genres(text):
         if i < len(parts) - 1:
             result.append((' • ', True))
     return result
+
+
+def _draw_sep_token(painter, x, baseline_y, part, fm, color):
+    """Draw a separator token. A lone '•' is drawn as a vector dot instead of
+    text — Qt's font-fallback resolution for that glyph floods the console
+    with bearing warnings on some systems when drawn every row, every repaint."""
+    if part.strip() == '•':
+        r = max(1.2, fm.height() * 0.09)
+        cx = x + fm.horizontalAdvance(part) / 2.0
+        cy = baseline_y - fm.ascent() * 0.35
+        painter.save()
+        painter.setBrush(color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        painter.restore()
+    else:
+        painter.setPen(color)
+        painter.drawText(x, baseline_y, part)
 
 
 class _TrackHeader(QHeaderView):
@@ -2318,11 +2359,8 @@ class _TrackListDelegate(QStyledItemDelegate):
                         painter.drawText(ax, ay + fm.ascent() // 2, elided)
                     break
                 hovered = (not is_sep and self._hover_artist == (row, part.strip()))
-                if is_sep:
-                    painter.setPen(QColor(120, 120, 120))
-                else:
-                    painter.setPen(self.accent if row == self.playing_row else QColor(self._secondary_color()))
-                painter.drawText(ax, ay + fm.ascent() // 2, part)
+                color = QColor(120, 120, 120) if is_sep else (self.accent if row == self.playing_row else QColor(self._secondary_color()))
+                _draw_sep_token(painter, ax, ay + fm.ascent() // 2, part, fm, color)
                 if hovered:
                     painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
                 ax += pw
@@ -2374,8 +2412,8 @@ class _TrackListDelegate(QStyledItemDelegate):
                         painter.drawText(ax, ay + fm.ascent() // 2, elided)
                         break
                     hovered = (not is_sep and self._hover_genre == (row, part))
-                    painter.setPen(QColor(120, 120, 120) if is_sep else QColor(self._secondary_color()))
-                    painter.drawText(ax, ay + fm.ascent() // 2, part)
+                    color = QColor(120, 120, 120) if is_sep else QColor(self._secondary_color())
+                    _draw_sep_token(painter, ax, ay + fm.ascent() // 2, part, fm, color)
                     if hovered:
                         painter.drawLine(ax, ay + fm.ascent() // 2 + 2, ax + pw, ay + fm.ascent() // 2 + 2)
                     ax += pw

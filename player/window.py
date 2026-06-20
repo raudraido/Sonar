@@ -1085,7 +1085,8 @@ class SonarPlayer(
         self.global_playlist_view.queue_track_signal.connect(self.add_track_to_queue)
         self.global_playlist_view.play_next_signal.connect(self.play_track_next)
         self.global_playlist_view.track_artist_clicked.connect(self.navigate_to_artist)
-        
+        self.global_playlist_view.genre_clicked.connect(self.navigate_to_genre)
+
         self.global_playlist_view.play_clicked.connect(self.play_global_playlist)
         self.global_playlist_view.shuffle_clicked.connect(self.shuffle_global_playlist)
         
