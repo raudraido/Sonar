@@ -671,6 +671,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         super().__init__()
         self.client  = client
         self._tracks: list = []
+        self._tracks_original: list = []
         self._album_liked  = False
         self._bg_color     = '14,14,14'
         self.current_album_id = None
@@ -738,7 +739,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         )
 
     def _on_tracks_ready(self, tracks: list):
-        self._tracks = tracks
+        self._tracks_original = tracks
         self._apply_sort(self._sort_col, self._sort_dir)
         self._bridge._selected_trkidx = -1
         self._bridge.selectedTrackChanged.emit(-1)
@@ -765,7 +766,10 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
                 if col == 'plays':  return int(t.get('play_count') or 0)
                 if col == 'fav':    return int(bool(t.get('starred', False)))
                 return 0
-            self._tracks = sorted(self._tracks, key=sort_key, reverse=(dir_ == 'desc'))
+            self._tracks = sorted(self._tracks_original, key=sort_key, reverse=(dir_ == 'desc'))
+        else:
+            # Sort turned off — restore the album's natural disc/track order.
+            self._tracks = list(self._tracks_original)
         self._track_model.set_tracks(self._tracks, group_by_disc=not sorting)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -856,6 +860,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         self._bridge.albumDataChanged.emit(title, album_artist, "Loading...", alb_type, '', self._album_liked)
         self._track_model.set_tracks([])
         self._tracks = []
+        self._tracks_original = []
 
         if not (hasattr(self, 'client') and self.client):
             return
