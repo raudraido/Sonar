@@ -166,7 +166,8 @@ class AudioVisualizer(QWidget):
                     QSettings("Icosahedron", "Visualizer").setValue("vu_sens_step", self._vu_sens_step)
                 event.accept()
                 return
-        step = 1 if event.angleDelta().y() > 0 else -1
+        delta = event.angleDelta().x() or event.angleDelta().y()
+        step = 1 if delta > 0 else -1
         new_val = max(-18, min(0, self._vu_ref_level + step))
         if new_val != self._vu_ref_level:
             self._vu_ref_level = new_val
@@ -264,8 +265,8 @@ class AudioVisualizer(QWidget):
         self._vu_rms2_l = alpha * self._vu_rms2_l + (1.0 - alpha) * rms_l
         self._vu_rms2_r = alpha * self._vu_rms2_r + (1.0 - alpha) * rms_r
 
-        db_l = 20.0 * math.log10(max(self._vu_rms2_l, 1e-9)) + (-self._vu_ref_level)
-        db_r = 20.0 * math.log10(max(self._vu_rms2_r, 1e-9)) + (-self._vu_ref_level)
+        db_l = 20.0 * math.log10(max(self._vu_rms2_l, 1e-9)) + self._vu_ref_level
+        db_r = 20.0 * math.log10(max(self._vu_rms2_r, 1e-9)) + self._vu_ref_level
 
         # Calibrated from image pixel analysis:
         # pivot_left=(311,340), R=273px, left_angle=-45.2°, right_angle=+36.1°
