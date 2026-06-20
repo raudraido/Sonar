@@ -8,14 +8,15 @@ from PyQt6.QtQuick import QQuickView
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout,
                              QStackedWidget)
 
-from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer,
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QRect, QTimer, QSettings,
                           QAbstractListModel, QModelIndex, pyqtSlot, pyqtProperty, QObject, QUrl, Qt)
 from player.qml_search import SearchController, SearchKeyFilter, GridSearchKeyFilter, set_window_shortcuts_enabled
 from PyQt6.QtGui import QColor
 
 from player import resource_path
 from player.workers import GridCoverWorker
-from player.widgets import CoverImageProvider, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider, QMLGridWrapper, QMLMiddleClickScroller
+from player.widgets import (CoverImageProvider, AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider,
+                            QMLGridWrapper, QMLMiddleClickScroller, TrackThumbProvider, themed_shadow_menu, popup_menu_at_global)
 from player.scroll_tuning import scroll_tuning
 
 
@@ -228,6 +229,7 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
     DURATION_STR   = Qt.ItemDataRole.UserRole + 9
     PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 10
     TRACK_GENRE    = Qt.ItemDataRole.UserRole + 11
+    COVER_ART_ID   = Qt.ItemDataRole.UserRole + 12
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -251,6 +253,7 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
         if role == self.DURATION_STR:   return r.get('_dur', '')
         if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
         if role == self.TRACK_GENRE:    return r.get('_genre', '')
+        if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
         return None
 
     def roleNames(self):
@@ -266,14 +269,15 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
             self.DURATION_STR:   b"durationStr",
             self.PLAY_COUNT_STR: b"playCountStr",
             self.TRACK_GENRE:    b"trackGenre",
+            self.COVER_ART_ID:   b"coverArtId",
         }
 
-    def set_tracks(self, tracks: list):
+    def set_tracks(self, tracks: list, group_by_disc: bool = True):
         disc_groups: dict = {}
         for idx, t in enumerate(tracks):
-            disc = int(t.get('discNumber') or t.get('disc') or 1)
+            disc = int(t.get('discNumber') or t.get('disc') or 1) if group_by_disc else 1
             disc_groups.setdefault(disc, []).append((idx, t))
-        multi_disc = len(disc_groups) > 1
+        multi_disc = group_by_disc and len(disc_groups) > 1
 
         rows = []
         for disc_num in sorted(disc_groups.keys()):
@@ -303,6 +307,7 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
                     '_dur':    f"{secs // 60}:{secs % 60:02d}",
                     '_plays':  plays,
                     '_genre':  genre,
+                    '_cover_id': str(t.get('coverArt') or t.get('albumId') or t.get('cover_id') or ''),
                 })
         self.beginResetModel()
         self._rows = rows
@@ -337,11 +342,28 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
     scrollToModelRow          = pyqtSignal(int)         # model row → QML scroll
     scrollToTopOfView         = pyqtSignal()
     scrollToBottomOfView      = pyqtSignal()
+    # → QML column visibility
+    showTrackChanged          = pyqtSignal(bool)
+    showTitleChanged          = pyqtSignal(bool)
+    showArtistChanged         = pyqtSignal(bool)
+    showFavChanged            = pyqtSignal(bool)
+    showGenreChanged          = pyqtSignal(bool)
+    showDurChanged            = pyqtSignal(bool)
+    showPlaysChanged          = pyqtSignal(bool)
+    showAlbumChanged          = pyqtSignal(bool)
+    # → QML sort
+    sortStateChanged          = pyqtSignal(str, str)   # col, 'asc'|'desc'|''
+
+    # Same shape as PlaylistDetailBridge.getColOrder's default — see comment
+    # above getColWidths for why 'track'/'album' are present but inert here.
+    COL_ORDER_DEFAULT = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
 
     def __init__(self, view):
         super().__init__()
         self._view = view
         self._selected_trkidx = -1
+        self._sort_col = ''
+        self._sort_dir = ''
         self.search = SearchController(
             on_active_changed=lambda active: view._set_window_shortcuts_enabled(not active))
 
@@ -480,18 +502,112 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
     def favHeaderClicked(self):
         self._view.fav_header_clicked.emit()
 
+    @pyqtSlot(str, str)
+    def trackAlbumClicked(self, album_id: str, album_name: str):
+        pass  # every row is this same album — nothing to navigate to
+
+    # Column array shapes below intentionally mirror PlaylistDetailBridge's
+    # (player/tabs/playlists/playlists_browser.py) — TrackListView.qml (the
+    # shared component) reads both bridges through one positional contract.
+    # The 'track' and 'album' columns render the same cover/album name for
+    # every row here (album_detail.qml's fixedThumbSource/fixedAlbumName),
+    # since every track on this page belongs to the one album shown.
+
     @pyqtSlot(result='QVariantList')
     def getColWidths(self):
-        from PyQt6.QtCore import QSettings
         saved = QSettings().value('album_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('artist', 160)), int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)), int(saved.get('genre', 140))]
-        return [160, 68, 72, 60, 140]
+            return [int(saved.get('track', 240)), int(saved.get('title', 200)), int(saved.get('artist', 160)),
+                    int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)),
+                    int(saved.get('genre', 140)), int(saved.get('album', 160))]
+        return [240, 200, 160, 68, 72, 60, 140, 160]
 
-    @pyqtSlot(int, int, int, int, int)
-    def saveColWidths(self, artist: int, fav: int, dur: int, plays: int, genre: int):
-        from PyQt6.QtCore import QSettings
-        QSettings().setValue('album_detail/track_col_widths', {'artist': artist, 'fav': fav, 'dur': dur, 'plays': plays, 'genre': genre})
+    @pyqtSlot(int, int, int, int, int, int, int, int)
+    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
+        QSettings().setValue('album_detail/track_col_widths',
+                             {'track': track, 'title': title, 'artist': artist, 'fav': fav,
+                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album})
+
+    @pyqtSlot(result='QVariantList')
+    def getColOrder(self):
+        known = set(self.COL_ORDER_DEFAULT)
+        saved = QSettings().value('album_detail/col_order')
+        if isinstance(saved, list) and set(saved) <= known and len(saved) > 0:
+            result = [c for c in saved if c in known]
+            for c in self.COL_ORDER_DEFAULT:
+                if c not in result:
+                    result.append(c)
+            return result
+        return list(self.COL_ORDER_DEFAULT)
+
+    @pyqtSlot('QVariantList')
+    def saveColOrder(self, order):
+        QSettings().setValue('album_detail/col_order', list(order))
+
+    @pyqtSlot(result='QVariantList')
+    def getColVisibility(self):
+        saved = QSettings().value('album_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        if not saved:
+            # New user: intentional defaults (track combined column on, plain
+            # title/artist columns off, album column on — mirrors playlist's)
+            return [True, False, False, True, True, True, True, True]
+        return [bool(saved.get('track',  True)), bool(saved.get('title',  False)),
+                bool(saved.get('artist', False)), bool(saved.get('fav',    True)),
+                bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  True))]
+
+    @pyqtSlot(float, float)
+    def burgerClicked(self, gx: float, gy: float):
+        saved = QSettings().value('album_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        cols = [
+            ('track',  'Track',    self.showTrackChanged),
+            ('title',  'Title',    self.showTitleChanged),
+            ('artist', 'Artist',   self.showArtistChanged),
+            ('fav',    'Favorite', self.showFavChanged),
+            ('genre',  'Genre',    self.showGenreChanged),
+            ('dur',    'Duration', self.showDurChanged),
+            ('plays',  'Plays',    self.showPlaysChanged),
+            ('album',  'Album',    self.showAlbumChanged),
+        ]
+        menu = themed_shadow_menu(self._view)
+        for key, label, sig in cols:
+            vis = bool(saved.get(key, True))
+            menu.add_action(label, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s),
+                            icon_path='img/yes.png' if vis else '')
+        popup_menu_at_global(menu, int(gx), int(gy))
+
+    def _set_col_vis(self, key: str, visible: bool, signal):
+        saved = QSettings().value('album_detail/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        saved[key] = visible
+        QSettings().setValue('album_detail/col_visibility', saved)
+        signal.emit(visible)
+
+    @pyqtSlot(str)
+    def colHeaderClicked(self, col: str):
+        if self._sort_col == col:
+            next_dir = {'': 'desc', 'desc': 'asc', 'asc': ''}[self._sort_dir]
+            self._sort_dir = next_dir
+            if not next_dir:
+                self._sort_col = ''
+        else:
+            self._sort_col = col
+            self._sort_dir = 'desc'
+        QSettings().setValue('album_detail/sort_col', self._sort_col)
+        QSettings().setValue('album_detail/sort_dir', self._sort_dir)
+        self.sortStateChanged.emit(self._sort_col, self._sort_dir)
+
+    @pyqtSlot(result='QVariantList')
+    def getSortState(self):
+        col  = QSettings().value('album_detail/sort_col', '') or ''
+        dir_ = QSettings().value('album_detail/sort_dir', '') or ''
+        if dir_ not in ('asc', 'desc'):
+            dir_ = ''
+        self._sort_col = col if dir_ else ''
+        self._sort_dir = dir_
+        return [self._sort_col, self._sort_dir]
 
 class _AlbumKeyFilter(SearchKeyFilter): # Widget-level key filter for the album detail QML view: routes typed characters into the track search box, and Up/Down/PageUp/PageDown/Enter/Escape to track navigation, play, and selection-clear.
     """Widget-level key filter — fires regardless of QML focus state.
@@ -559,14 +675,24 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         self._bg_color     = '14,14,14'
         self.current_album_id = None
 
+        s = QSettings()
+        self._sort_col = s.value('album_detail/sort_col', '') or ''
+        self._sort_dir = s.value('album_detail/sort_dir', '') or ''
+        if self._sort_dir not in ('asc', 'desc'):
+            self._sort_dir = ''
+        if not self._sort_dir:
+            self._sort_col = ''
+
         self._track_model   = AlbumDetailTrackModel()
         self._cover_provider = AlbumDetailCoverProvider()
         self._icon_provider  = AlbumIconProvider()
+        self._track_thumb_prov = TrackThumbProvider()
         self._bridge         = AlbumDetailBridge(self)
 
         self._meta_ready.connect(self._on_meta_ready)
         self._tracks_ready.connect(self._on_tracks_ready)
         self._album_star_ready.connect(self.set_header_heart_state)
+        self._bridge.sortStateChanged.connect(self._on_sort_changed)
 
         # QML widget — QQuickView in a window container renders at the
         # monitor's real refresh rate, unlike QQuickWidget which caps at ~60Hz
@@ -582,6 +708,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         engine = self._qml_view.engine()
         engine.addImageProvider("albumdetailcover", self._cover_provider)
         engine.addImageProvider("albumicons",        self._icon_provider)
+        engine.addImageProvider("albumtrackcovers",  self._track_thumb_prov)
 
         ctx = self._qml_view.rootContext()
         ctx.setContextProperty("trackModel",  self._track_model)
@@ -612,7 +739,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
 
     def _on_tracks_ready(self, tracks: list):
         self._tracks = tracks
-        self._track_model.set_tracks(tracks)
+        self._apply_sort(self._sort_col, self._sort_dir)
         self._bridge._selected_trkidx = -1
         self._bridge.selectedTrackChanged.emit(-1)
         self.tracks_loaded.emit()
@@ -622,6 +749,24 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
                 self._last_playing_id,
                 getattr(self, '_last_is_playing', False),
             )
+
+    def _on_sort_changed(self, col: str, dir_: str):
+        self._sort_col = col
+        self._sort_dir = dir_
+        self._apply_sort(col, dir_)
+
+    def _apply_sort(self, col: str, dir_: str):
+        sorting = bool(dir_ and col)
+        if sorting:
+            def sort_key(t):
+                if col == 'title':  return t.get('title',  '').lower()
+                if col == 'artist': return t.get('artist', '').lower()
+                if col == 'dur':    return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                if col == 'plays':  return int(t.get('play_count') or 0)
+                if col == 'fav':    return int(bool(t.get('starred', False)))
+                return 0
+            self._tracks = sorted(self._tracks, key=sort_key, reverse=(dir_ == 'desc'))
+        self._track_model.set_tracks(self._tracks, group_by_disc=not sorting)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -692,6 +837,8 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
 
     def load_album(self, album_data: dict):
         import threading, re
+        if self.client:
+            self._track_thumb_prov.set_client(self.client)
         self.current_album_id = album_data.get('id')
         _album_id    = self.current_album_id
         title        = album_data.get('title') or album_data.get('name') or "Unknown Album"

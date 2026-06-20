@@ -1684,6 +1684,53 @@ class AlbumIconProvider(QQuickImageProvider):
         self._cache[cache_key] = result
         return result, result.size()
 
+class TrackThumbProvider(QQuickImageProvider):
+    """Serves per-track thumbnails from CoverCache, fetching from the network on cache miss.
+    requestImage is called on a QML background thread so network I/O here is safe.
+
+    Shared by playlist and album detail views (player/tabs/playlists/playlists_browser.py,
+    player/tabs/albums/albums_browser.py) — a track's own cover can differ from its
+    containing page's header art (e.g. a various-artists compilation album)."""
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Image)
+        self._client = None
+
+    def set_client(self, client):
+        self._client = client
+
+    def requestImage(self, cid, _requestedSize):
+        from PyQt6.QtGui import QImage
+        from player.components.cover_cache import CoverCache, THUMB_SIZE
+        data = CoverCache.instance().get_thumb(cid)
+        if not data and self._client:
+            try:
+                data = self._client.get_cover_art(cid, size=THUMB_SIZE)
+                if data:
+                    CoverCache.instance().save_thumb(cid, data)
+            except Exception:
+                pass
+        if data:
+            from PyQt6.QtGui import QPainter, QPainterPath
+            from PyQt6.QtCore import QRectF
+            src = QImage()
+            src.loadFromData(data)
+            if not src.isNull():
+                size = 250
+                src = src.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                img = QImage(size, size, QImage.Format.Format_ARGB32)
+                img.fill(Qt.GlobalColor.transparent)
+                p = QPainter(img)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
+                p.setClipPath(path)
+                p.drawImage(0, 0, src)
+                p.end()
+                return img, img.size()
+        empty = QImage(1, 1, QImage.Format.Format_ARGB32)
+        empty.fill(Qt.GlobalColor.transparent)
+        return empty, empty.size()
+
 class LeftPanelCoverProvider(QQuickImageProvider):
     """Serves the left-panel album-art square via
     `image://leftpanelcover/<current|old>/<token>`.

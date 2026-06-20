@@ -10,8 +10,7 @@ from PyQt6.QtQuick import QQuickView
 from PyQt6.QtQuickWidgets import QQuickWidget
 from player.mixins.visuals import resolve_menu_hover
 
-from PyQt6.QtQuick import QQuickImageProvider
-from player.widgets import CoverImageProvider, QMLGridWrapper, AlbumDetailCoverProvider, AlbumIconProvider, themed_shadow_menu, popup_menu_at_global
+from player.widgets import CoverImageProvider, QMLGridWrapper, AlbumDetailCoverProvider, AlbumIconProvider, TrackThumbProvider, themed_shadow_menu, popup_menu_at_global
 from player import resource_path
 from player.workers import GridCoverWorker
 from player.components.shared_widgets import SmartSearchContainer
@@ -137,49 +136,6 @@ class DragDropHelper(QObject):
     sig_drag_ended = pyqtSignal()
 
 # ── Playlist detail — QML-based (mirrors AlbumDetailView) ─────────────────────
-
-class _TrackThumbProvider(QQuickImageProvider):
-    """Serves per-track thumbnails from CoverCache, fetching from the network on cache miss.
-    requestImage is called on a QML background thread so network I/O here is safe."""
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self._client = None
-
-    def set_client(self, client):
-        self._client = client
-
-    def requestImage(self, cid, _requestedSize):
-        from PyQt6.QtGui import QImage
-        from player.components.cover_cache import CoverCache, THUMB_SIZE
-        data = CoverCache.instance().get_thumb(cid)
-        if not data and self._client:
-            try:
-                data = self._client.get_cover_art(cid, size=THUMB_SIZE)
-                if data:
-                    CoverCache.instance().save_thumb(cid, data)
-            except Exception:
-                pass
-        if data:
-            from PyQt6.QtGui import QPainter, QPainterPath
-            from PyQt6.QtCore import QRectF
-            src = QImage()
-            src.loadFromData(data)
-            if not src.isNull():
-                size = 250
-                src = src.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-                img = QImage(size, size, QImage.Format.Format_ARGB32)
-                img.fill(Qt.GlobalColor.transparent)
-                p = QPainter(img)
-                p.setRenderHint(QPainter.RenderHint.Antialiasing)
-                path = QPainterPath()
-                path.addRoundedRect(QRectF(0, 0, size, size), 12, 12)
-                p.setClipPath(path)
-                p.drawImage(0, 0, src)
-                p.end()
-                return img, img.size()
-        empty = QImage(1, 1, QImage.Format.Format_ARGB32)
-        empty.fill(Qt.GlobalColor.transparent)
-        return empty, empty.size()
 
 
 class PlaylistDetailTrackModel(QAbstractListModel):
@@ -673,7 +629,7 @@ class PlaylistDetailView(QWidget):
         self._track_model        = PlaylistDetailTrackModel()
         self._cover_provider     = AlbumDetailCoverProvider()
         self._icon_provider      = AlbumIconProvider()
-        self._track_thumb_prov   = _TrackThumbProvider()
+        self._track_thumb_prov   = TrackThumbProvider()
         self._bridge             = PlaylistDetailBridge(self)
 
         self._qml_view = QQuickView()
