@@ -193,32 +193,6 @@ Rectangle {
                     opacity: isDragging ? 0.30 : 1.0
                     Behavior on opacity { NumberAnimation { duration: 120 } }
 
-                    // Scroll carousel + Flickable when keyboard selection moves to this row
-                    Connections {
-                        target: root
-                        function _snapToCol(col) {
-                            var pageW = rowItem.nCols * rowItem.cellW
-                            var page  = Math.floor(col / rowItem.nCols)
-                            var maxX  = Math.max(0, carousel.contentWidth - carousel.width)
-                            carousel.contentX = Math.min(maxX, page * pageW)
-                        }
-                        function onSelectedColChanged() {
-                            if (root.selectedRowId === rowItem.rowId && root.selectedCol >= 0)
-                                _snapToCol(root.selectedCol)
-                        }
-                        function onSelectedRowIdChanged() {
-                            if (root.selectedRowId !== rowItem.rowId) return
-                            if (root.selectedCol >= 0)
-                                _snapToCol(root.selectedCol)
-                            var rTop = rowsColumn.y + rowItem.y
-                            var rBot = rTop + rowItem.height
-                            if (rTop < scroller.contentY)
-                                scroller.contentY = rTop
-                            else if (rBot > scroller.contentY + scroller.height)
-                                scroller.contentY = rBot - scroller.height
-                        }
-                    }
-
                     // Responsive column count (Feishin-style breakpoints)
                     readonly property int nCols: {
                         if (width >= 1440) return 8
@@ -234,17 +208,12 @@ Rectangle {
 
                     height: 36 + 10 + cellH
 
-                    // ── Header ─────────────────────────────────────────────
-                    Item {
-                        id: rowHeader
-                        width: parent.width
-                        height: 36
-
-                        // Grip handle — 3 horizontal lines, visible on hover
+                    // ── Drag grip handle — injected into Carousel's header ──
+                    property Component gripComponent: Component {
                         Item {
                             id: gripHandle
-                            width: 22; height: parent.height
-                            visible: headerHover.containsMouse
+                            width: 22; height: 36
+                            visible: rowCarousel.headerHovered
 
                             Column {
                                 anchors.centerIn: parent
@@ -286,404 +255,66 @@ Rectangle {
                                 }
                             }
                         }
-
-                        // Hover tracker for grip visibility
-                        MouseArea {
-                            id: headerHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            acceptedButtons: Qt.NoButton
-                        }
-
-                        // Title
-                        Text {
-                            text: root.rowTitleFor(rowId)
-                            color: root.textPrimary
-                            font.pixelSize: 15
-                            font.bold: true
-                            anchors.left: gripHandle.right
-                            anchors.leftMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            // QtRendering (default), not NativeRendering: native
-                            // rendering snaps glyphs to integer pixels
-                            // independently of contentY, causing a 1px pop
-                            // relative to the (sub-pixel) cover image during the
-                            // slow tail of a momentum scroll.
-                        }
-
-                        // Right controls: refresh + arrows
-                        Row {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            height: 31
-                            spacing: 4
-
-                            // Refresh button
-                            Item {
-                                visible: rowItem.hasRefresh
-                                width: 31; height: 31
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 4
-                                    color: root.hoverColor
-                                    opacity: refreshHover.containsMouse && !rowItem.spinning ? 1.0 : 0.0
-                                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                                }
-
-                                Image {
-                                    anchors.centerIn: parent
-                                    width: 19; height: 19
-                                    source: "image://homeicons/sub_refresh_" + root.accentColor.replace("#", "")
-                                    cache: false
-                                    mipmap: true
-                                    smooth: true
-                                    transformOrigin: Item.Center
-
-                                    NumberAnimation on rotation {
-                                        running: rowItem.spinning
-                                        loops:   Animation.Infinite
-                                        from: 0; to: 360
-                                        duration: 800
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: refreshHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    enabled: !rowItem.spinning
-                                    onClicked: {
-                                        if (rowId === "recent")      homeBridge.refreshRecent()
-                                        else if (rowId === "random") homeBridge.refreshRandom()
-                                    }
-                                }
-                            }
-
-                            // Left arrow
-                            Item {
-                                width: 29; height: 31
-                                property bool canPage: carousel.contentX > 0
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 4
-                                    color: root.hoverColor
-                                    opacity: leftArrowHover.containsMouse && parent.canPage ? 1.0 : 0.0
-                                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                                }
-
-                                Image {
-                                    anchors.centerIn: parent
-                                    width: 13; height: 13
-                                    source: parent.canPage
-                                        ? "image://homeicons/home_back_" + root.accentColor.replace("#", "")
-                                        : "image://homeicons/home_back_444444"
-                                    cache: false
-                                    mipmap: true
-                                    smooth: true
-                                }
-                                MouseArea {
-                                    id: leftArrowHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: parent.canPage ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        var pageW = rowItem.nCols * rowItem.cellW
-                                        var cur   = Math.round(carousel.contentX / pageW)
-                                        carousel.contentX = Math.max(0, (cur - 1) * pageW)
-                                    }
-                                }
-                            }
-
-                            // Right arrow
-                            Item {
-                                width: 29; height: 31
-                                property bool canPage: carousel.contentX + carousel.width < carousel.contentWidth - 1
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 4
-                                    color: root.hoverColor
-                                    opacity: rightArrowHover.containsMouse && parent.canPage ? 1.0 : 0.0
-                                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                                }
-
-                                Image {
-                                    anchors.centerIn: parent
-                                    width: 13; height: 13
-                                    source: parent.canPage
-                                        ? "image://homeicons/home_next_" + root.accentColor.replace("#", "")
-                                        : "image://homeicons/home_next_444444"
-                                    cache: false
-                                    mipmap: true
-                                    smooth: true
-                                }
-                                MouseArea {
-                                    id: rightArrowHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: parent.canPage ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        var pageW = rowItem.nCols * rowItem.cellW
-                                        var cur   = Math.round(carousel.contentX / pageW)
-                                        var maxX  = Math.max(0, carousel.contentWidth - carousel.width)
-                                        carousel.contentX = Math.min(maxX, (cur + 1) * pageW)
-                                    }
-                                }
-                            }
-                        }
                     }
 
-                    // ── Horizontal album carousel ───────────────────────────
-                    Item {
-                        anchors.top:       rowHeader.bottom
-                        anchors.topMargin: 10
-                        width:  parent.width
-                        height: rowItem.cellH
-                        clip:   true
+                    Carousel {
+                        id: rowCarousel
+                        width: parent.width
+                        title: root.rowTitleFor(rowId)
 
-                        ListView {
-                            id: carousel
-                            anchors.fill: parent
-                            orientation:  ListView.Horizontal
-                            interactive:  false   // arrows drive scrolling
-                            boundsBehavior: Flickable.StopAtBounds
-                            pixelAligned: true
-                            clip: true
-                            spacing: 0
+                        accentColor:       root.accentColor
+                        skeletonColor:     root.skeletonColor
+                        hoverColor:        root.hoverColor
+                        textPrimary:       root.textPrimary
+                        textSecondary:     root.textSecondary
+                        fontSizePrimary:   root.fontSizePrimary
+                        fontSizeSecondary: root.fontSizeSecondary
 
-                            model: root.albumModelFor(rowId)
+                        model:         root.albumModelFor(rowId)
+                        showRefresh:   rowItem.hasRefresh
+                        spinning:      rowItem.spinning
+                        leadingItem:   rowItem.gripComponent
+                        selectedIndex: (root.selectedRowId === rowId) ? root.selectedCol : -1
 
-                            // Smooth page transitions
-                            Behavior on contentX {
-                                SmoothedAnimation { velocity: 3500; maximumEasingTime: 200 }
-                            }
+                        onRefreshClicked: {
+                            if (rowId === "recent")      homeBridge.refreshRecent()
+                            else if (rowId === "random") homeBridge.refreshRandom()
+                        }
+                        onCardClicked: (index) => {
+                            root.selectedRowId = rowId
+                            root.selectedCol   = index
+                            root.forceActiveFocus()
+                            homeBridge.albumClicked(rowId, index)
+                        }
+                        onPlayClicked: (index) => homeBridge.playClicked(rowId, index)
+                        onArtistSubtextClicked: (name, artistId) => homeBridge.artistNameClicked(name, artistId)
+                        onLoadMoreRequested: (count) => homeBridge.loadMore(rowId, count)
+                    }
 
-                            property string rowId: rowItem.rowId
-
-                            // Trigger load-more when 80% through
-                            onContentXChanged: {
-                                if (count > 0 && !_loadingMore &&
-                                    contentX + width >= contentWidth * 0.8) {
-                                    _loadingMore = true
-                                    homeBridge.loadMore(carousel.rowId, count)
-                                }
-                            }
-                            property bool _loadingMore: false
-                            onCountChanged: { _loadingMore = false }
-
-                            // ── Album card delegate ─────────────────────────
-                            delegate: Item {
-                                width:  rowItem.cellW
-                                height: rowItem.cellH
-
-                                // ── Skeleton card ───────────────────────────
-                                SkeletonCard {
-                                    visible:    isLoading
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    pillCount:  2
-                                    baseColor:  root.skeletonColor
-                                    cardIndex:  index
-                                }
-
-                                // ── Real card ───────────────────────────────
-                                Item {
-                                    id: card
-                                    visible: !isLoading
-                                    anchors.fill:        parent
-                                    anchors.leftMargin:  6
-                                    anchors.rightMargin: 6
-                                    anchors.topMargin:   4
-                                    anchors.bottomMargin:4
-
-                                    property bool hov: mainArea.containsMouse ||
-                                                       playArea.containsMouse
-                                    property bool isSelected: !isLoading &&
-                                        carousel.rowId === root.selectedRowId &&
-                                        index === root.selectedCol
-
-                                    // Cover area (square)
-                                    Item {
-                                        id: coverArea
-                                        width:  parent.width
-                                        height: parent.width
-                                        anchors.top: parent.top
-
-                                        // Placeholder when no cover yet
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: 8
-                                            color:  root.skeletonColor
-                                            visible: coverId === ""
-                                        }
-
-                                        Image {
-                                            visible:  coverId !== ""
-                                            anchors.fill: parent
-                                            source:   coverId !== "" ? "image://homecovers/" + coverId : ""
-                                            fillMode: Image.PreserveAspectCrop
-                                            cache:    false
-                                            layer.enabled: true
-                                            layer.effect: null
-                                        }
-
-                                        // Hover dim overlay
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius:  8
-                                            color:   "#000"
-                                            opacity: card.hov ? 0.40 : 0.0
-                                            Behavior on opacity { NumberAnimation { duration: 150 } }
-                                        }
-
-                                        // Accent border on hover / keyboard selection
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius:       8
-                                            color:        "transparent"
-                                            border.color: (card.hov || card.isSelected) ? root.accentColor : "transparent"
-                                            border.width: card.isSelected ? 2 : 1
-                                        }
-
-                                        // Play button circle
-                                        Rectangle {
-                                            id: playBtn
-                                            width:  Math.min(52, parent.width / 2.2)
-                                            height: width
-                                            radius: width / 2
-                                            color:  root.accentColor
-                                            anchors.centerIn: parent
-
-                                            opacity: playArea.containsMouse ? 1.0
-                                                   : card.hov              ? 0.80
-                                                   : 0.0
-                                            scale:   playArea.containsMouse ? 1.0 : 0.82
-                                            Behavior on opacity { NumberAnimation { duration: 150 } }
-                                            Behavior on scale   { NumberAnimation { duration: 150 } }
-
-                                            // Triangle play icon
-                                            Canvas {
-                                                anchors.fill: parent
-                                                onPaint: {
-                                                    var ctx = getContext("2d")
-                                                    ctx.clearRect(0, 0, width, height)
-                                                    ctx.fillStyle = "#111"
-                                                    var s  = width / 3
-                                                    var cx = width / 2
-                                                    ctx.beginPath()
-                                                    ctx.moveTo(cx - s / 3, cx - s / 2)
-                                                    ctx.lineTo(cx - s / 3, cx + s / 2)
-                                                    ctx.lineTo(cx + s / 2 + 2, cx)
-                                                    ctx.fill()
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Text info below cover
-                                    Column {
-                                        visible: albumTitle !== ""
-                                        z: 2
-                                        anchors.top:       coverArea.bottom
-                                        anchors.topMargin: 8
-                                        anchors.left:  parent.left
-                                        anchors.right: parent.right
-                                        spacing: 2
-
-                                        Text {
-                                            width: parent.width
-                                            text:  albumTitle
-                                            color: (card.hov || card.isSelected) ? root.accentColor : root.textPrimary
-                                            font.pixelSize: root.fontSizePrimary
-                                            font.bold:      true
-                                            elide: Text.ElideRight
-                                            // QtRendering (default), not NativeRendering: native
-                                            // rendering snaps glyphs to integer pixels
-                                            // independently of contentY, causing a 1px pop
-                                            // relative to the (sub-pixel) cover image during the
-                                            // slow tail of a momentum scroll.
-                                        }
-
-                                        Text {
-                                            id: artistText
-                                            width: parent.width
-                                            property bool hov: false
-                                            text:  albumArtist
-                                            color: hov ? root.accentColor : root.textSecondary
-                                            font.pixelSize: root.fontSizeSecondary
-                                            elide: Text.ElideRight
-                                            // QtRendering (default) — see note above.
-                                            Rectangle {
-                                                visible: parent.hov
-                                                y: parent.baselineOffset + 2
-                                                width: parent.paintedWidth; height: 1
-                                                color: parent.color
-                                            }
-
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape:  Qt.PointingHandCursor
-                                                z: 4
-                                                onEntered: parent.hov = true
-                                                onExited:  parent.hov = false
-                                                onClicked: mouse => {
-                                                    homeBridge.artistNameClicked(albumArtist, albumArtistId)
-                                                    mouse.accepted = true
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            width: parent.width
-                                            text:  (albumSongCount ? albumSongCount : "") +
-                                                   (albumSongCount && albumYear ? " · " : "") +
-                                                   (albumYear ? albumYear : "")
-                                            color: root.textSecondary
-                                            font.pixelSize: root.fontSizeSecondary
-                                            elide: Text.ElideRight
-                                            // QtRendering (default) — see note above.
-                                        }
-                                    }
-
-                                    // Main click area (whole card, z:1)
-                                    MouseArea {
-                                        id: mainArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape:  Qt.PointingHandCursor
-                                        z: 1
-                                        onClicked: {
-                                            root.selectedRowId = carousel.rowId
-                                            root.selectedCol   = index
-                                            root.forceActiveFocus()
-                                            homeBridge.albumClicked(carousel.rowId, index)
-                                        }
-                                    }
-
-                                    // Play-button click area (z:3, above mainArea)
-                                    MouseArea {
-                                        id: playArea
-                                        x:      coverArea.x + playBtn.x
-                                        y:      coverArea.y + playBtn.y
-                                        width:  playBtn.width
-                                        height: playBtn.height
-                                        hoverEnabled: true
-                                        cursorShape:  Qt.PointingHandCursor
-                                        z: 3
-                                        onClicked: mouse => {
-                                            homeBridge.playClicked(carousel.rowId, index)
-                                            mouse.accepted = true
-                                        }
-                                    }
-                                }
-                            } // delegate
-                        } // ListView
-                    } // clip Item
+                    // Keep keyboard-nav carousel paging in sync (Carousel
+                    // pages itself via arrows/contentX, but keyboard
+                    // selection needs to scroll it programmatically too).
+                    Connections {
+                        target: root
+                        function _snapToCol(col) {
+                            rowCarousel.scrollToIndex(col)
+                        }
+                        function onSelectedColChanged() {
+                            if (root.selectedRowId === rowItem.rowId && root.selectedCol >= 0)
+                                _snapToCol(root.selectedCol)
+                        }
+                        function onSelectedRowIdChanged() {
+                            if (root.selectedRowId !== rowItem.rowId) return
+                            if (root.selectedCol >= 0)
+                                _snapToCol(root.selectedCol)
+                            var rTop = rowsColumn.y + rowItem.y
+                            var rBot = rTop + rowItem.height
+                            if (rTop < scroller.contentY)
+                                scroller.contentY = rTop
+                            else if (rBot > scroller.contentY + scroller.height)
+                                scroller.contentY = rBot - scroller.height
+                        }
+                    }
                 } // row Item delegate
             } // Repeater
         } // Column

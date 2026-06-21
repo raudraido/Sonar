@@ -1,18 +1,23 @@
-"""favorites_view.py — Favorites tab: starred artists, albums and top artists."""
+"""favorites_view.py — Favorites tab: starred artists, albums, top artists
+and songs. QML (Carousel.qml + TrackListView.qml), per UI_MANIFEST.md."""
+import threading
 from collections import Counter
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                              QScrollArea, QTreeWidget, QTreeWidgetItem,
-                              QHeaderView, QStyle, QPushButton, QCheckBox,
-                              QListWidget, QListWidgetItem, QLineEdit, QFrame,
-                              QApplication)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QRect
-from PyQt6.QtGui import QColor, QMovie, QPixmap, QPainter as _QPainter, QCursor
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QFrame, QPushButton
+from PyQt6.QtCore import (Qt, QThread, pyqtSignal, pyqtSlot, pyqtProperty, QTimer, QPoint,
+                          QAbstractListModel, QModelIndex, QObject, QUrl, QSettings)
+from PyQt6.QtGui import QColor, QPainter as _QPainter, QCursor
+from PyQt6.QtQuick import QQuickView
 
-from player.components.home_widgets import HomeAlbumRowWidget
-from player.tabs.tracks.tracks_browser import _checkmark_svg_path, _TrackHeader, _TrackListDelegate
-from player.widgets import ShadowContextMenu as _ShadowContextMenu
-
+from player.tabs.tracks.tracks_browser import _checkmark_svg_path
+from player import resource_path
+from player.workers import GridCoverWorker
+from player.mixins.visuals import scrollbar_css, resolve_menu_hover
+from player.widgets import (AlbumModel, AlbumIconProvider, AlbumDetailCoverProvider,
+                             CoverImageProvider, TrackThumbProvider,
+                             themed_shadow_menu, popup_menu_at_global)
+from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
+from player.scroll_tuning import scroll_tuning
 
 
 class _GenrePopup(QFrame):
@@ -79,7 +84,6 @@ class _GenrePopup(QFrame):
             self._paint_bc = QColor(getattr(theme, 'manual_border_color', '#2a2a2a'))
         else:
             self._paint_bc = QColor(bc)
-        from player.mixins.visuals import scrollbar_css
         self.setStyleSheet(f"""
             QLineEdit {{
                 background: rgb({bg}); color: {fg2}; border: 1px solid {bc};
@@ -157,7 +161,6 @@ class _GenrePopup(QFrame):
         # toggles via itemChanged; toggling here too would reverse it.
         vp_pos = self._list.viewport().mapFromGlobal(QCursor.pos())
         item_rect = self._list.visualItemRect(item)
-        # Checkbox occupies roughly the first 22px of the item
         if vp_pos.x() - item_rect.left() > 22:
             new_state = (Qt.CheckState.Unchecked
                          if item.checkState() == Qt.CheckState.Checked
@@ -176,140 +179,6 @@ class _GenrePopup(QFrame):
         self._selected.clear()
         self._rebuild()
         self.selection_changed.emit(set())
-from player import resource_path
-from player.workers import GridCoverWorker
-from player.tabs.now_playing.now_playing_info import _Card
-from player.mixins.visuals import scrollbar_css, install_scroll_reveal, SmoothScroller
-
-
-class _SortableTrackHeader(_TrackHeader):
-    """_TrackHeader extended with 3-state sort cycling on sortable columns."""
-
-    sort_changed = pyqtSignal(int, str)   # col, 'asc' | 'desc' | ''
-
-    # Columns that support sorting (indices into favorites' 7-col layout).
-    # Genre (col 4) is excluded.
-    SORT_COLS = {0, 1, 2, 3, 5, 6}
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._sort_col   = -1    # currently sorted column (-1 = none)
-        self._sort_state = ''    # 'asc' | 'desc' | ''
-        self._up_pix   = self._load_icon('img/filter_up.png')
-        self._down_pix = self._load_icon('img/filter_down.png')
-
-    @staticmethod
-    def _load_icon(path):
-        p = QPixmap(resource_path(path))
-        if p.isNull():
-            return QPixmap()
-        return p.scaled(QSize(10, 10), Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation)
-
-    def _tinted_pix(self, pix):
-        if pix.isNull():
-            return pix
-        color = self._accent
-        out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
-        p = _QPainter(out)
-        p.drawPixmap(0, 0, pix)
-        p.setCompositionMode(_QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(out.rect(), color)
-        p.end()
-        return out
-
-    def _in_resize_zone(self, x: int) -> bool:
-        grip = self.style().pixelMetric(QStyle.PixelMetric.PM_HeaderGripMargin) + 2
-        for i in range(self.count()):
-            boundary = self.sectionViewportPosition(i) + self.sectionSize(i)
-            if abs(x - boundary) <= grip:
-                return True
-        return False
-
-    # ── Override click to cycle sort state ───────────────────────────────
-    def mousePressEvent(self, event):
-        if (event.button() == Qt.MouseButton.LeftButton
-                and not self._in_resize_zone(event.pos().x())
-                and not self._near_flex_boundary(event.pos().x())):
-            col = self.logicalIndexAt(event.pos().x())
-            if col in self.SORT_COLS:
-                if self._sort_col == col:
-                    # Cycle: desc → asc → none
-                    self._sort_state = {'desc': 'asc', 'asc': '', '': 'desc'}[self._sort_state]
-                else:
-                    self._sort_col   = col
-                    self._sort_state = 'desc'
-                if not self._sort_state:
-                    self._sort_col = -1
-                self.viewport().update()
-                self.sort_changed.emit(col, self._sort_state)
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    # Centered columns in the 7-col favorites layout: #(0), DURATION(5), PLAYS(6)
-    _CENTER_COLS = {0, 5, 6}
-
-    _ICON_SZ = 14   # matches tracks browser FILTER_ICON_SIZE
-
-    # ── Override paintSection: correct alignment + sort arrow ─────────────
-    def paintSection(self, painter, rect, logical_index):
-        if not rect.isValid():
-            return
-        from PyQt6.QtGui import QFont, QPen, QPainter, QFontMetrics
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(rect, Qt.GlobalColor.transparent)
-
-        text   = self.model().headerData(logical_index, Qt.Orientation.Horizontal) or ''
-        f      = QFont(); f.setPixelSize(self._secondary_px()); f.setBold(True)
-        fm     = QFontMetrics(f)
-        painter.setFont(f)
-        painter.setPen(QColor(self._secondary_color()))
-
-        has_sort = (logical_index == self._sort_col and bool(self._sort_state))
-        sz       = self._ICON_SZ
-        fy       = rect.bottom() - sz - 8   # same baseline as text
-
-        centered = logical_index in self._CENTER_COLS
-        if centered and has_sort:
-            # Text + icon grouped and centred together
-            text_w    = fm.horizontalAdvance(text)
-            content_w = text_w + 4 + sz
-            gx        = rect.left() + 4 + max(0, (rect.width() - 8 - content_w) // 2)
-            from PyQt6.QtCore import QRect as _QR
-            painter.drawText(_QR(gx, rect.top(), text_w, rect.height() - 8),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, text)
-            fx = gx + text_w + 4
-        else:
-            h_align = Qt.AlignmentFlag.AlignHCenter if centered else Qt.AlignmentFlag.AlignLeft
-            painter.drawText(rect.adjusted(4, 0, -4, -8),
-                             h_align | Qt.AlignmentFlag.AlignBottom, text)
-            fx = rect.left() + 4 + fm.horizontalAdvance(text) + 4
-
-        # Bottom border
-        painter.setPen(QPen(QColor(255, 255, 255, 20), 1))
-        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
-
-        # Column separator
-        if logical_index > 0:
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            pen = QPen(self._border_qcolor(), 2)
-            pen.setCosmetic(True)
-            painter.setPen(pen)
-            painter.drawLine(rect.right(), rect.top() - 5, rect.right(), rect.bottom() - 8)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        # Sort arrow — same position/tint as tracks browser
-        if has_sort:
-            src = self._up_pix if self._sort_state == 'asc' else self._down_pix
-            pix = self._tinted_pix(src.scaled(
-                QSize(sz, sz), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
-            if not pix.isNull():
-                painter.drawPixmap(fx, int(fy), pix)
-
-        painter.restore()
 
 
 class _StarredWorker(QThread):
@@ -328,6 +197,455 @@ class _StarredWorker(QThread):
         self.done.emit(data)
 
 
+class FavoritesTrackModel(QAbstractListModel):
+    """Role set mirrors PlaylistDetailTrackModel — kept local (not imported
+    cross-tab) since each *DetailTrackModel is per-tab by convention."""
+    TRACK_IDX      = Qt.ItemDataRole.UserRole + 1
+    TRACK_ID       = Qt.ItemDataRole.UserRole + 2
+    TRACK_NUMBER   = Qt.ItemDataRole.UserRole + 3
+    TRACK_TITLE    = Qt.ItemDataRole.UserRole + 4
+    ARTIST_NAME    = Qt.ItemDataRole.UserRole + 5
+    IS_FAVORITE    = Qt.ItemDataRole.UserRole + 6
+    DURATION_STR   = Qt.ItemDataRole.UserRole + 7
+    PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 8
+    TRACK_GENRE    = Qt.ItemDataRole.UserRole + 9
+    COVER_ART_ID   = Qt.ItemDataRole.UserRole + 10
+    ALBUM_NAME     = Qt.ItemDataRole.UserRole + 11
+    ALBUM_ID       = Qt.ItemDataRole.UserRole + 12
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows = []
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._rows)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._rows):
+            return None
+        r = self._rows[index.row()]
+        if role == self.TRACK_IDX:      return r.get('_idx', 0)
+        if role == self.TRACK_ID:       return r.get('_id', '')
+        if role == self.TRACK_NUMBER:   return r.get('_num', '')
+        if role == self.TRACK_TITLE:    return r.get('_title', '')
+        if role == self.ARTIST_NAME:    return r.get('_artist', '')
+        if role == self.IS_FAVORITE:    return r.get('_fav', False)
+        if role == self.DURATION_STR:   return r.get('_dur', '')
+        if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
+        if role == self.TRACK_GENRE:    return r.get('_genre', '')
+        if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
+        if role == self.ALBUM_NAME:     return r.get('_album', '')
+        if role == self.ALBUM_ID:       return r.get('_album_id', '')
+        return None
+
+    def roleNames(self):
+        return {
+            self.TRACK_IDX:      b"trackIdx",
+            self.TRACK_ID:       b"trackId",
+            self.TRACK_NUMBER:   b"trackNumber",
+            self.TRACK_TITLE:    b"trackTitle",
+            self.ARTIST_NAME:    b"artistName",
+            self.IS_FAVORITE:    b"isFavorite",
+            self.DURATION_STR:   b"durationStr",
+            self.PLAY_COUNT_STR: b"playCountStr",
+            self.TRACK_GENRE:    b"trackGenre",
+            self.COVER_ART_ID:   b"coverArtId",
+            self.ALBUM_NAME:     b"albumName",
+            self.ALBUM_ID:       b"albumId",
+        }
+
+    @staticmethod
+    def _build_rows(tracks: list) -> list:
+        rows = []
+        for idx, t in enumerate(tracks):
+            raw_star = t.get('starred', False)
+            is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
+            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            secs     = dur_ms // 1000
+            plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
+            genre_raw = t.get('genre', '') or ''
+            for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
+                genre_raw = genre_raw.replace(sep, ' • ')
+            genre_parts = [g.strip() for g in genre_raw.split(' • ') if g.strip()]
+            rows.append({
+                '_idx':       idx,
+                '_id':        str(t.get('id', '')),
+                '_num':       str(idx + 1),
+                '_title':     t.get('title', ''),
+                '_artist':    t.get('artist', ''),
+                '_fav':       is_fav,
+                '_dur':       f"{secs // 60}:{secs % 60:02d}",
+                '_plays':     plays,
+                '_genre':     ' • '.join(genre_parts[:3]),
+                '_cover_id':  str(t.get('coverArt') or t.get('albumId') or ''),
+                '_album':     t.get('album', ''),
+                '_album_id':  str(t.get('albumId', '')),
+            })
+        return rows
+
+    def set_tracks(self, tracks: list):
+        self.beginResetModel()
+        self._rows = self._build_rows(tracks)
+        self.endResetModel()
+
+    def update_tracks(self, tracks: list):
+        """Replace the row set without ever doing a full beginResetModel().
+        A reset briefly collapses the view to zero rows, which clamps
+        contentY back near the top and never restores it — this updates
+        overlapping rows in place and only inserts/removes the row-count
+        delta, so filtering/clearing filters doesn't reset scroll position."""
+        new_rows  = self._build_rows(tracks)
+        old_count = len(self._rows)
+        new_count = len(new_rows)
+        common    = min(old_count, new_count)
+        if new_count > old_count:
+            self.beginInsertRows(QModelIndex(), old_count, new_count - 1)
+            self._rows = new_rows
+            self.endInsertRows()
+        elif new_count < old_count:
+            self.beginRemoveRows(QModelIndex(), new_count, old_count - 1)
+            self._rows = new_rows
+            self.endRemoveRows()
+        else:
+            self._rows = new_rows
+        if common:
+            self.dataChanged.emit(self.index(0, 0), self.index(common - 1, 0))
+
+    def update_favorite(self, track_idx: int, is_fav: bool):
+        for i, r in enumerate(self._rows):
+            if r.get('_idx') == track_idx:
+                r['_fav'] = is_fav
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
+                break
+
+    def reorder_tracks(self, tracks: list):
+        """Re-sort in-place via dataChanged — does not reset scroll position
+        (unlike set_tracks' beginResetModel, which collapses the view to zero
+        rows and clamps contentY back near the top)."""
+        self._rows = self._build_rows(tracks)
+        if self._rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, 0))
+
+    def remove_track(self, track_idx: int):
+        """Remove exactly one row (e.g. un-favoriting) without resetting the
+        whole model, so scroll position is preserved."""
+        for i, r in enumerate(self._rows):
+            if r.get('_idx') == track_idx:
+                self.beginRemoveRows(QModelIndex(), i, i)
+                self._rows.pop(i)
+                self.endRemoveRows()
+                for j in range(i, len(self._rows)):
+                    self._rows[j]['_idx'] = j
+                    self._rows[j]['_num'] = str(j + 1)
+                if i < len(self._rows):
+                    self.dataChanged.emit(self.index(i, 0), self.index(len(self._rows) - 1, 0),
+                                          [self.TRACK_IDX, self.TRACK_NUMBER])
+                break
+
+
+class _FavoritesKeyFilter(SearchKeyFilter):
+    def __init__(self, bridge, qml_widget, parent=None):
+        super().__init__(bridge.search, on_navigate=self._navigate, parent=parent)
+        self._b   = bridge
+        self._qml = qml_widget
+
+    def _navigate(self, event):
+        key  = event.key()
+        mods = event.modifiers()
+        b    = self._b
+        if key == Qt.Key.Key_Down:
+            b.navigateRow(1);  return True
+        if key == Qt.Key.Key_Up:
+            b.navigateRow(-1); return True
+        if key == Qt.Key.Key_PageDown:
+            b.navigateRow(max(5, self._qml.height() // 42)); return True
+        if key == Qt.Key.Key_PageUp:
+            b.navigateRow(-max(5, self._qml.height() // 42)); return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if mods & Qt.KeyboardModifier.ControlModifier:
+                b.playAllClicked(); return True
+            if b._selected_trkidx >= 0:
+                b.playSelected(); return True
+        if key == Qt.Key.Key_Escape and b._selected_trkidx >= 0:
+            b._selected_trkidx = -1
+            b.selectedTrackChanged.emit(-1)
+            return True
+        return False
+
+
+class FavoritesBridge(QObject):
+    # → QML theme
+    accentColorChanged        = pyqtSignal(str)
+    hoverColorChanged         = pyqtSignal(str)
+    skeletonColorChanged      = pyqtSignal(str)
+    cardBgChanged             = pyqtSignal(str)
+    cardBorderChanged         = pyqtSignal(str)
+    panelBgChanged            = pyqtSignal(str)
+    fontSizePrimaryChanged    = pyqtSignal(int)
+    fontSizeSecondaryChanged  = pyqtSignal(int)
+    fontColorPrimaryChanged   = pyqtSignal(str)
+    fontColorSecondaryChanged = pyqtSignal(str)
+    fontFamilyChanged         = pyqtSignal(str)
+    # → QML data
+    playingStatusChanged      = pyqtSignal(str, bool)
+    selectedTrackChanged      = pyqtSignal(int)
+    scrollToModelRow          = pyqtSignal(int)
+    scrollToTopOfView         = pyqtSignal()
+    scrollToBottomOfView      = pyqtSignal()
+    # → QML column visibility
+    showTrackChanged          = pyqtSignal(bool)
+    showTitleChanged          = pyqtSignal(bool)
+    showArtistChanged         = pyqtSignal(bool)
+    showFavChanged            = pyqtSignal(bool)
+    showGenreChanged          = pyqtSignal(bool)
+    showDurChanged            = pyqtSignal(bool)
+    showPlaysChanged          = pyqtSignal(bool)
+    showAlbumChanged          = pyqtSignal(bool)
+    # → QML sort
+    sortStateChanged          = pyqtSignal(str, str)   # col, 'asc'|'desc'|''
+    # → QML favorites-page state
+    tracksLoadingChanged       = pyqtSignal(bool)
+    songsStatusChanged         = pyqtSignal(str)
+    genreFilterActiveChanged   = pyqtSignal(bool)
+    clearFiltersVisibleChanged = pyqtSignal(bool)
+
+    def __init__(self, view):
+        super().__init__()
+        self._view = view
+        self._sort_col = ''
+        self._sort_dir = ''
+        self._selected_trkidx = -1
+        self.search = SearchController(
+            on_active_changed=lambda active: set_window_shortcuts_enabled(
+                view, view._qml, not active))
+
+    @pyqtProperty(QObject, constant=True)
+    def searchCtl(self):
+        return self.search
+
+    # ── Carousel slots ──────────────────────────────────────────────────────
+
+    @pyqtSlot(int)
+    def artistCardClicked(self, idx):
+        self._view._on_artist_card_clicked(idx)
+
+    @pyqtSlot(int)
+    def albumCardClicked(self, idx):
+        self._view._on_album_card_clicked(idx)
+
+    @pyqtSlot(int)
+    def albumPlayClicked(self, idx):
+        self._view._on_album_play_clicked(idx)
+
+    @pyqtSlot(int)
+    def topArtistCardClicked(self, idx):
+        self._view._on_top_artist_card_clicked(idx)
+
+    @pyqtSlot(str, str)
+    def artistNameClicked(self, name, artist_id):
+        self._view.artist_clicked.emit(name)
+
+    # ── Favorite-songs header controls ─────────────────────────────────────
+
+    @pyqtSlot()
+    def playAllClicked(self):
+        self._view._on_play_all()
+
+    @pyqtSlot()
+    def shuffleClicked(self):
+        self._view._on_shuffle_all()
+
+    @pyqtSlot(float, float)
+    def genreFilterClicked(self, gx, gy):
+        self._view._toggle_genre_popup(int(gx), int(gy))
+
+    @pyqtSlot()
+    def clearFiltersClicked(self):
+        self._view._clear_all_filters()
+
+    # ── Track list slots (TrackListView.qml contract) ──────────────────────
+
+    @pyqtSlot(int)
+    def navigateRow(self, delta: int):
+        rows = self._view._track_model._rows
+        if not rows:
+            return
+        st = self.search.text.lower()
+        if st:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows)
+                   if st in r.get('_title', '').lower()
+                   or st in r.get('_artist', '').lower()
+                   or st in r.get('_genre', '').lower()]
+        else:
+            nav = [(i, r['_idx']) for i, r in enumerate(rows)]
+        if not nav:
+            return
+        pos = next((p for p, (_, idx) in enumerate(nav) if idx == self._selected_trkidx), -1)
+        if pos == -1:
+            new_pos = 0 if delta > 0 else len(nav) - 1
+        else:
+            new_pos = pos + delta
+            if new_pos < 0:
+                self.scrollToTopOfView.emit()
+                return
+            if new_pos >= len(nav):
+                self.scrollToBottomOfView.emit()
+                return
+        mr, ti = nav[new_pos]
+        self._selected_trkidx = ti
+        self.selectedTrackChanged.emit(ti)
+        self.scrollToModelRow.emit(mr)
+
+    @pyqtSlot()
+    def playSelected(self):
+        songs = self._view._songs
+        if 0 <= self._selected_trkidx < len(songs):
+            self._view.play_track.emit(songs[self._selected_trkidx])
+
+    @pyqtSlot(int)
+    def trackPlayClicked(self, track_idx: int):
+        songs = self._view._songs
+        if 0 <= track_idx < len(songs):
+            self._selected_trkidx = track_idx
+            self.selectedTrackChanged.emit(track_idx)
+            self._view.play_track.emit(songs[track_idx])
+
+    @pyqtSlot(str)
+    def trackArtistClicked(self, name: str):
+        view = self._view
+        QTimer.singleShot(0, lambda: view.artist_clicked.emit(name))
+
+    @pyqtSlot(str)
+    def trackGenreClicked(self, genre: str):
+        pass  # no genre-badge-click filtering in favorites (use the genre-filter button)
+
+    @pyqtSlot(int)
+    def trackFavoriteClicked(self, track_idx: int):
+        self._view._toggle_track_favorite(track_idx)
+
+    @pyqtSlot(int, float, float)
+    def trackContextMenuRequested(self, track_idx: int, global_x: float, global_y: float):
+        self._view._show_track_context_menu_at(track_idx, int(global_x), int(global_y))
+
+    @pyqtSlot(str, str)
+    def trackAlbumClicked(self, album_id: str, album_name: str):
+        if not album_id:
+            return
+        album_data = {'id': album_id, 'title': album_name, 'coverArt': album_id, 'cover_id': album_id}
+        main = self._view.window()
+        if hasattr(main, 'navigate_to_album'):
+            QTimer.singleShot(0, lambda: main.navigate_to_album(album_data))
+
+    @pyqtSlot()
+    def reorderTrack(self, *_):
+        pass  # row-reorder disabled (enableRowReorder: false)
+
+    @pyqtSlot()
+    def albumHeaderClicked(self):
+        pass
+
+    @pyqtSlot()
+    def favHeaderClicked(self):
+        pass
+
+    @pyqtSlot(str)
+    def colHeaderClicked(self, col: str):
+        if self._sort_col == col:
+            next_dir = {'': 'desc', 'desc': 'asc', 'asc': ''}[self._sort_dir]
+            self._sort_dir = next_dir
+            if not next_dir:
+                self._sort_col = ''
+        else:
+            self._sort_col = col
+            self._sort_dir = 'desc'
+        QSettings().setValue('favorites/sort_col', self._sort_col)
+        QSettings().setValue('favorites/sort_dir', self._sort_dir)
+        self.sortStateChanged.emit(self._sort_col, self._sort_dir)
+        self._view._apply_sort(self._sort_col, self._sort_dir)
+
+    @pyqtSlot(result='QVariantList')
+    def getSortState(self):
+        col  = QSettings().value('favorites/sort_col', '') or ''
+        dir_ = QSettings().value('favorites/sort_dir', '') or ''
+        if dir_ not in ('asc', 'desc'):
+            dir_ = ''
+        self._sort_col = col if dir_ else ''
+        self._sort_dir = dir_
+        return [self._sort_col, self._sort_dir]
+
+    @pyqtSlot(result='QVariantList')
+    def getColWidths(self):
+        saved = QSettings().value('favorites/track_col_widths')
+        if isinstance(saved, dict):
+            return [int(saved.get('track', 450)), int(saved.get('title', 200)), int(saved.get('artist', 99)),
+                    int(saved.get('fav', 76)), int(saved.get('dur', 81)), int(saved.get('plays', 56)),
+                    int(saved.get('genre', 182)), int(saved.get('album', 213))]
+        return [450, 200, 99, 76, 81, 56, 182, 213]
+
+    @pyqtSlot(int, int, int, int, int, int, int, int)
+    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
+        QSettings().setValue('favorites/track_col_widths',
+                             {'track': track, 'title': title, 'artist': artist, 'fav': fav,
+                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album})
+
+    @pyqtSlot(result='QVariantList')
+    def getColVisibility(self):
+        saved = QSettings().value('favorites/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        if not saved:
+            return [True, False, False, True, True, True, True, True]
+        return [bool(saved.get('track',  True)), bool(saved.get('title',  True)),
+                bool(saved.get('artist', True)),  bool(saved.get('fav',    True)),
+                bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  False))]
+
+    @pyqtSlot(float, float)
+    def burgerClicked(self, gx: float, gy: float):
+        saved = QSettings().value('favorites/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        cols = [
+            ('track',  'Track',    self.showTrackChanged),
+            ('title',  'Title',    self.showTitleChanged),
+            ('artist', 'Artist',   self.showArtistChanged),
+            ('fav',    'Favorite', self.showFavChanged),
+            ('genre',  'Genre',    self.showGenreChanged),
+            ('dur',    'Duration', self.showDurChanged),
+            ('plays',  'Plays',    self.showPlaysChanged),
+            ('album',  'Album',    self.showAlbumChanged),
+        ]
+        menu = themed_shadow_menu(self._view, bg=getattr(self._view, '_bg_color', None))
+        for key, label, sig in cols:
+            vis = bool(saved.get(key, key != 'album'))
+            menu.add_action(label, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s),
+                            icon_path='img/yes.png' if vis else '')
+        popup_menu_at_global(menu, gx, gy, window=self._view.window())
+
+    def _set_col_vis(self, key: str, visible: bool, signal):
+        saved = QSettings().value('favorites/col_visibility', {})
+        if not isinstance(saved, dict): saved = {}
+        saved[key] = visible
+        QSettings().setValue('favorites/col_visibility', saved)
+        signal.emit(visible)
+
+    @pyqtSlot(result='QVariantList')
+    def getColOrder(self):
+        default = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+        known = set(default)
+        saved = QSettings().value('favorites/col_order')
+        if isinstance(saved, list) and set(saved) <= known and len(saved) > 0:
+            result = [c for c in saved if c in known]
+            for c in default:
+                if c not in result:
+                    result.append(c)
+            return result
+        return default
+
+    @pyqtSlot('QVariantList')
+    def saveColOrder(self, order):
+        QSettings().setValue('favorites/col_order', list(order))
+
+
 class FavoritesView(QWidget):
     album_clicked  = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
@@ -340,230 +658,69 @@ class FavoritesView(QWidget):
         super().__init__(parent)
         self._client       = client
         self._accent       = '#888888'
+        self._bg_color     = '14,14,14'
         self._worker       = None
         self._cover_worker = None
+        self._songs          = []
+        self._songs_original = []
+        self._selected_genres: set = set()
+        self._selected_artist: str = ''
+        self._genre_popup = None
+
+        s = QSettings()
+        self._sort_col = s.value('favorites/sort_col', '') or ''
+        self._sort_dir = s.value('favorites/sort_dir', '') or ''
+        if self._sort_dir not in ('asc', 'desc'):
+            self._sort_dir = ''
+        if not self._sort_dir:
+            self._sort_col = ''
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName('FavoritesPanel')
 
-        main = QVBoxLayout(self)
-        main.setContentsMargins(0, 0, 0, 0)
-        main.setSpacing(0)
+        self._artists_model     = AlbumModel()
+        self._albums_model      = AlbumModel()
+        self._top_artists_model = AlbumModel()
+        self._track_model       = FavoritesTrackModel()
 
-        self.scroll = QScrollArea()
-        self.scroll.setObjectName('FavScroll')
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._scroll_reveal = None
+        self._cover_provider    = CoverImageProvider()
+        self._icon_provider     = AlbumIconProvider()
+        self._playbtn_provider  = AlbumDetailCoverProvider()
+        self._track_thumb_prov  = TrackThumbProvider()
 
-        content = QWidget()
-        content.setObjectName('FavContent')
-        self._layout = QVBoxLayout(content)
-        self._layout.setContentsMargins(5, 20, 4, 50)
-        self._layout.setSpacing(10)
-        self.scroll.setWidget(content)
-        main.addWidget(self.scroll)
-        self._smooth_scroller = SmoothScroller(self.scroll)
+        self._bridge = FavoritesBridge(self)
 
-        # ── Artists row ───────────────────────────────────────────────────
-        self._artists_row = HomeAlbumRowWidget('Artists')
-        self._artists_row.album_clicked.connect(self._on_artist_card_clicked)
-        self._artists_row.delegate.clickable_artist = False
-        self._artists_row.delegate.show_play_btn    = False
-        self._artists_row.set_draggable(False)
-        self._layout.addWidget(self._artists_row)
+        self._qml_view = QQuickView()
+        self._qml_view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
+        self._qml = QWidget.createWindowContainer(self._qml_view, self)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        # ── Albums row ────────────────────────────────────────────────────
-        self._albums_row = HomeAlbumRowWidget('Albums')
-        self._albums_row.album_clicked.connect(self.album_clicked)
-        self._albums_row.play_album.connect(self.play_album)
-        self._albums_row.artist_clicked.connect(self.artist_clicked)
-        self._albums_row.set_draggable(False)
-        self._layout.addWidget(self._albums_row)
+        self._key_filter = _FavoritesKeyFilter(self._bridge, self._qml)
+        self._qml.installEventFilter(self._key_filter)
+        self._qml_view.installEventFilter(self._key_filter)
 
-        # ── Top Artists by Favorites ──────────────────────────────────────
-        self._top_row = HomeAlbumRowWidget('Top Artists by Favorites')
-        self._top_row.album_clicked.connect(self._on_top_artist_clicked)
-        self._top_row.delegate.clickable_artist = False
-        self._top_row.delegate.show_play_btn    = False
-        self._top_row.set_draggable(False)
-        self._layout.addWidget(self._top_row)
+        engine = self._qml_view.engine()
+        engine.addImageProvider("homecovers",          self._cover_provider)
+        engine.addImageProvider("favoritesicons",       self._icon_provider)
+        engine.addImageProvider("albumicons",           self._icon_provider)  # SearchBar.qml hardcodes albumicons
+        engine.addImageProvider("homeicons",            self._icon_provider)  # Carousel.qml hardcodes homeicons (arrows/refresh)
+        engine.addImageProvider("favoritesplaybtn",     self._playbtn_provider)
+        engine.addImageProvider("favoritestrackcovers", self._track_thumb_prov)
 
-        # Route wheel events on all carousel list widgets to the outer scroll area
-        for _row in (self._artists_row, self._albums_row, self._top_row):
-            _row.list_widget.viewport().installEventFilter(self._smooth_scroller)
+        ctx = self._qml_view.rootContext()
+        ctx.setContextProperty("favoritesArtistsModel",    self._artists_model)
+        ctx.setContextProperty("favoritesAlbumsModel",      self._albums_model)
+        ctx.setContextProperty("favoritesTopArtistsModel",  self._top_artists_model)
+        ctx.setContextProperty("favoritesTrackModel",       self._track_model)
+        ctx.setContextProperty("favoritesBridge",           self._bridge)
+        ctx.setContextProperty("scrollTuning",              scroll_tuning)
 
-        # ── Favorite Songs header ─────────────────────────────────────────
-        self._selected_genres: set = set()
-        self._selected_artist: str = ''
+        self._qml_view.setSource(QUrl.fromLocalFile(
+            resource_path("player/tabs/favorites/favorites.qml")))
 
-        _hdr = QWidget(); _hdr.setObjectName('FavSongsHdr')
-        _hdr.setStyleSheet('QWidget#FavSongsHdr { background: transparent; }')
-        _hdr_lo = QVBoxLayout(_hdr)
-        _hdr_lo.setContentsMargins(6, 12, 6, 4)
-        _hdr_lo.setSpacing(8)
-
-        # Row 1: "Songs" + status
-        _title_row = QHBoxLayout()
-        _title_row.setSpacing(8)
-        self._songs_lbl = QLabel('Favorite Songs')
-        self._songs_status_lbl = QLabel('')
-        self._songs_status_lbl.setStyleSheet('color: #666; font-size: 12px; background: transparent;')
-        _title_row.addWidget(self._songs_lbl)
-        _title_row.addWidget(self._songs_status_lbl)
-        _title_row.addStretch()
-        _hdr_lo.addLayout(_title_row)
-
-        # Row 2: action buttons
-        _btn_row = QHBoxLayout()
-        _btn_row.setSpacing(8)
-
-        _icon_btn_style = (
-            'QPushButton { background: transparent; border: none; border-radius: 4px; }'
-            ' QPushButton:hover { background: rgba(255,255,255,0.1); }'
-            ' QPushButton:checked { background: rgba(255,255,255,0.15); }'
-        )
-
-        from player.widgets import PlayButton as _PB
-        self._play_all_btn = _PB()
-        self._play_all_btn.setFixedSize(58, 58)
-        self._play_all_btn.setIconSize(QSize(18, 18))
-        self._play_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._play_all_btn.ensure_glow()
-        self._play_all_btn.clicked.connect(self._on_play_all)
-        _btn_row.addWidget(self._play_all_btn)
-
-        self._shuffle_btn = QPushButton()
-        self._shuffle_btn.setFlat(True)
-        self._shuffle_btn.setFixedSize(36, 36)
-        self._shuffle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._shuffle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._shuffle_btn.setStyleSheet(_icon_btn_style)
-        self._shuffle_btn.setIconSize(QSize(20, 20))
-        self._shuffle_btn.clicked.connect(self._on_shuffle_all)
-        _btn_row.addWidget(self._shuffle_btn)
-
-        self._genre_btn = QPushButton()
-        self._genre_btn.setFlat(True)
-        self._genre_btn.setCheckable(True)
-        self._genre_btn.setFixedSize(36, 36)
-        self._genre_btn.setIconSize(QSize(20, 20))
-        self._genre_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._genre_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._genre_btn.setStyleSheet(_icon_btn_style)
-        self._genre_btn.clicked.connect(self._toggle_genre_popup)
-        _btn_row.addWidget(self._genre_btn)
-
-        self._clear_artist_btn = QPushButton('✕  Clear filters')
-        self._clear_artist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._clear_artist_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._clear_artist_btn.clicked.connect(self._clear_all_filters)
-        self._clear_artist_btn.hide()
-        _btn_row.addWidget(self._clear_artist_btn)
-
-        _btn_row.addStretch()
-        _hdr_lo.addLayout(_btn_row)
-
-        self._layout.addWidget(_hdr)
-
-        self._genre_popup = _GenrePopup(self)
-        self._genre_popup.hide()
-        self._genre_popup.selection_changed.connect(self._on_genres_changed)
-
-        # Sync button checked state when popup closes
-        orig_hide = self._genre_popup.hideEvent
-        def _on_popup_hide(e):
-            orig_hide(e)
-            self._genre_btn.setChecked(bool(self._selected_genres))
-        self._genre_popup.hideEvent = _on_popup_hide
-
-        self._track_tree = QTreeWidget()
-        self._track_tree.setColumnCount(7)
-        self._track_tree.setHeaderLabels(['#', 'TITLE', 'ARTIST', 'ALBUM', 'GENRE', 'DURATION', 'PLAYS'])
-        self._track_tree.setRootIsDecorated(False)
-        self._track_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
-        self._track_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._track_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._track_tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._track_tree.setMouseTracking(True)
-        self._track_tree.viewport().setMouseTracking(True)
-        self._track_tree.setStyleSheet("""
-            QTreeWidget { background: transparent; border: none; outline: none; }
-            QTreeWidget::item { height: 38px; border: none; padding-left: 4px; }
-            QTreeWidget::item:hover { background: transparent; }
-            QTreeWidget::item:selected { background: transparent; }
-            QHeaderView { background: transparent; border: none; }
-        """)
-
-        self._track_delegate = _TrackListDelegate(self._track_tree, heart_col=-1)
-        self._track_delegate.max_genres = 3
-        self._playing_movie = QMovie(resource_path('img/playing.gif'))
-        self._playing_movie.setScaledSize(QSize(30, 30))
-        self._playing_movie.frameChanged.connect(
-            lambda: self._track_tree.viewport().update())
-        self._track_delegate.set_movie(self._playing_movie)
-
-        def _heart_pix(path, color):
-            from PyQt6.QtGui import QPixmap, QPainter as _P
-            base = QPixmap(resource_path(path)).scaled(
-                QSize(16, 16), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            out = QPixmap(base.size()); out.fill(Qt.GlobalColor.transparent)
-            p = _P(out); p.drawPixmap(0, 0, base)
-            p.setCompositionMode(_P.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(out.rect(), QColor(color)); p.end()
-            return out
-        self._track_delegate.set_heart_pixmaps(
-            _heart_pix('img/heart_filled.png', '#E91E63'),
-            _heart_pix('img/heart.png', '#555555'),
-        )
-        self._track_tree.setItemDelegate(self._track_delegate)
-
-        self._track_header = _SortableTrackHeader(self._track_tree)
-        self._track_header.sort_changed.connect(self._on_sort)
-        self._track_tree.setHeader(self._track_header)
-        hdr = self._track_header
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in range(2, 7):
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-        hdr.resizeSection(0, 50)
-        hdr.resizeSection(2, 160); hdr.resizeSection(3, 160)
-        hdr.resizeSection(4, 120); hdr.resizeSection(5, 76)
-        hdr.resizeSection(6, 60)
-        hdr.setStretchLastSection(False)
-        hdr.setMinimumSectionSize(30)
-        self._restore_col_widths()
-
-        self._col_save_timer = QTimer(self)
-        self._col_save_timer.setSingleShot(True)
-        self._col_save_timer.setInterval(400)
-        self._col_save_timer.timeout.connect(self._save_col_widths)
-        hdr.sectionResized.connect(lambda *_: self._col_save_timer.start())
-
-        self._track_tree.viewport().setAutoFillBackground(False)
-        self._track_tree.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._track_tree.itemDoubleClicked.connect(self._on_track_double_clicked)
-        self._track_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._track_tree.customContextMenuRequested.connect(self._show_context_menu)
-        # Route wheel events on the track tree directly to the outer scroll area
-        self._track_tree.viewport().installEventFilter(self._smooth_scroller)
-
-        self._track_card = _Card()
-        _tcl = QVBoxLayout(self._track_card)
-        _tcl.setContentsMargins(0, 16, 0, 0)
-        _tcl.setSpacing(0)
-        _tcl.addWidget(self._track_tree)
-        _card_wrap = QWidget(); _card_wrap.setStyleSheet('background: transparent;')
-        _cw_lo = QVBoxLayout(_card_wrap)
-        _cw_lo.setContentsMargins(7, 0, 8, 0)
-        _cw_lo.setSpacing(0)
-        _cw_lo.addWidget(self._track_card)
-        self._layout.addWidget(_card_wrap)
-
-        self._layout.addStretch()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._qml)
 
         self.set_accent_color('#888888')
 
@@ -579,58 +736,39 @@ class FavoritesView(QWidget):
 
     def set_accent_color(self, color: str):
         self._accent = color
+        b = self._bridge
         theme = getattr(self.window(), 'theme', None)
-        bg    = getattr(theme, 'main_panel_bg', '14,14,14') if theme else '14,14,14'
-        fc1   = getattr(theme, 'font_color_primary',  '#dddddd') if theme else '#dddddd'
-        fsize = getattr(theme, 'font_size_primary',   14)        if theme else 14
-        _sb_css = scrollbar_css(color)
-        self.scroll.verticalScrollBar().setStyleSheet(_sb_css)
-        self.scroll.horizontalScrollBar().setStyleSheet(_sb_css)
-        self._songs_lbl.setStyleSheet(
-            f'color: {fc1}; font-size: {fsize + 1}px; font-weight: bold;'
-            ' background: transparent; padding: 8px 6px 4px 6px;'
-        )
-        for row in (self._artists_row, self._albums_row, self._top_row):
-            row.set_accent_color(color)
-        if hasattr(self, '_track_header'):
-            self._track_header.set_accent(color)
-        if hasattr(self, '_track_card'):
-            border  = getattr(theme, 'border_color',        '#2a2a2a') if theme else '#2a2a2a'
-            card_bg = getattr(theme, 'now_playing_card_bg', '#1e1e1e') if theme else '#1e1e1e'
-            self._track_card.set_bg(card_bg)
-            self._track_card.set_border(border)
-        if self._scroll_reveal:
-            self._scroll_reveal.color = color
-        from player.mixins.visuals import resolve_menu_hover
-        hov = resolve_menu_hover(theme)
-        from player.widgets import tint_icon
-        self._play_all_btn.apply_accent(color, theme)
-        _icon_style = (
-            f'QPushButton {{ background: transparent; border: none; border-radius: 4px; }}'
-            f' QPushButton:hover {{ background: {hov}; }}'
-        )
-        from player.mixins.visuals import resolve_active_hover
-        _ah = resolve_active_hover(theme)
-        _ah_css = f'rgba({_ah.red()},{_ah.green()},{_ah.blue()},{_ah.alpha()})'
-        _filter_style = _icon_style + f' QPushButton:checked {{ background: {_ah_css}; }}'
-        sec = getattr(theme, 'font_color_secondary', '#888888') if theme else '#888888'
-        self._shuffle_btn.setIcon(tint_icon('img/shuffle.png', sec))
-        self._shuffle_btn.setStyleSheet(_icon_style)
-        self._genre_btn.setIcon(tint_icon('img/filter.png', sec))
-        self._genre_btn.setStyleSheet(_filter_style)
-        self._clear_artist_btn.setStyleSheet(
-            f'QPushButton {{ background: transparent; border: none; '
-            f'color: {color}; font-size: 11px; padding: 4px 8px; }}'
-            f'QPushButton:hover {{ text-decoration: underline; }}'
-        )
-        self._genre_popup.apply_theme(theme, color, hov)
+        b.accentColorChanged.emit(color)
+        b.hoverColorChanged.emit(resolve_menu_hover(theme) if theme else '#555555')
+        if theme:
+            b.fontSizePrimaryChanged.emit(theme.font_size_primary)
+            b.fontSizeSecondaryChanged.emit(theme.font_size_secondary)
+            b.fontColorPrimaryChanged.emit(theme.font_color_primary)
+            b.fontColorSecondaryChanged.emit(theme.font_color_secondary)
+            b.fontFamilyChanged.emit(getattr(theme, 'app_font', ''))
+            b.skeletonColorChanged.emit(getattr(theme, 'skeleton_base', '#282828'))
+            b.cardBgChanged.emit(getattr(theme, 'now_playing_card_bg', '#1e1e1e'))
+            border = getattr(theme, 'border_color', '#2a2a2a')
+            if not getattr(theme, 'auto_border_from_accent', True):
+                border = getattr(theme, 'manual_border_color', '#2a2a2a')
+            b.cardBorderChanged.emit(border)
+            raw_bg = getattr(theme, 'main_panel_bg', '14,14,14')
+            try:
+                r, g, bb = (int(x) for x in raw_bg.split(','))
+                b.panelBgChanged.emit('#{:02x}{:02x}{:02x}'.format(r, g, bb))
+            except Exception:
+                b.panelBgChanged.emit('#0e0e0e')
+        if self._genre_popup:
+            hov = resolve_menu_hover(theme)
+            self._genre_popup.apply_theme(theme, color, hov)
 
     def set_bg_color(self, c: str):
-        self.setStyleSheet(
-            f'#FavoritesPanel {{ background: rgb({c}); }}'
-            f' #FavScroll {{ background: rgb({c}); border: none; }}'
-            f' #FavContent  {{ background: rgb({c}); }}'
-        )
+        self._bg_color = c
+        try:
+            r, g, b = (int(x) for x in c.split(','))
+            self._qml_view.setColor(QColor(r, g, b))
+        except Exception:
+            pass
 
     def refresh(self):
         if not self._client:
@@ -639,32 +777,31 @@ class FavoritesView(QWidget):
             return
         self._selected_artist = ''
         self._selected_genres = set()
-        self._genre_btn.setChecked(False)
-        self._clear_artist_btn.setVisible(False)
-        if hasattr(self, '_genre_popup') and self._genre_popup._genres:
+        self._bridge.genreFilterActiveChanged.emit(False)
+        self._bridge.clearFiltersVisibleChanged.emit(False)
+        if self._genre_popup and self._genre_popup._genres:
             self._genre_popup.set_genres(self._genre_popup._genres, set())
+        self._bridge.tracksLoadingChanged.emit(True)
+        self._track_thumb_prov.set_client(self._client)
         self._worker = _StarredWorker(self._client)
         self._worker.done.connect(self._on_data)
         self._worker.start()
 
-    # ── Internal ──────────────────────────────────────────────────────────
+    # ── Internal — data load ────────────────────────────────────────────────
 
     def _on_data(self, data: dict):
+        self._bridge.tracksLoadingChanged.emit(False)
         songs   = data.get('songs',   [])
         albums  = data.get('albums',  [])
         artists = data.get('artists', [])
 
-        # Build artist-id lookup first — used by both sections
-        # _parse_song_data stores artist ID as 'artist_id' (not 'artistId')
         song_cover_lookup: dict = {}
         for s in songs:
             name = s.get('artist', '')
             aid  = s.get('artist_id') or s.get('artistId', '')
             if name and name not in song_cover_lookup and aid:
-                # Ensure ar- prefix so Navidrome serves the artist photo
                 song_cover_lookup[name] = aid if aid.startswith('ar-') else f'ar-{aid}'
 
-        # Artists row — use artist_id from songs for reliable artist photo
         artist_items = []
         for a in artists:
             card = self._artist_to_card(a)
@@ -672,46 +809,41 @@ class FavoritesView(QWidget):
             if name in song_cover_lookup:
                 card['coverArt'] = song_cover_lookup[name]
             artist_items.append(card)
-        self._artists_row.populate(artist_items)
+        self._artists_model.set_albums(artist_items)
 
-        # Albums row
         album_items = [self._album_to_card(a) for a in albums]
-        self._albums_row.populate(album_items)
+        self._albums_model.set_albums(album_items)
 
-        # Top Artists by Favorites — count songs per artist, cap at 16
         counts = Counter(s.get('artist', '') for s in songs if s.get('artist'))
         artist_lookup = {a.get('name', ''): a for a in artists}
-
         top = sorted(counts.items(), key=lambda x: -x[1])[:16]
         top_items = []
         for name, count in top:
             a = artist_lookup.get(name, {})
-            # Always prefer artistId from songs — it reliably maps to the artist
-            # photo via getCoverArt. Starred-artist coverArt can be stale/wrong.
             cid = song_cover_lookup.get(name) or a.get('id', '')
-            card = {
+            top_items.append({
                 'id':           a.get('id', ''),
                 'title':        name,
                 'artist':       f'{count} song{"s" if count != 1 else ""}',
                 'coverArt':     cid,
                 '_is_artist':   True,
                 '_artist_name': name,
-            }
-            top_items.append(card)
-        self._top_row.populate(top_items)
+            })
+        self._top_artists_model.set_albums(top_items)
 
-        self._populate_tracks(songs)
+        self._songs_original = list(songs)
+        self._apply_filters()
 
-        # Populate genre filter with genres from all songs
         all_genres: set = set()
         for s in songs:
             for g in (s.get('genre', '') or '').split('•'):
                 g = g.strip()
                 if g:
                     all_genres.add(g)
+        if self._genre_popup is None:
+            self._ensure_genre_popup()
         self._genre_popup.set_genres(sorted(all_genres), self._selected_genres)
 
-        # Queue covers through the persistent worker
         if self._client:
             self._ensure_cover_worker()
             all_cover_ids = set()
@@ -730,73 +862,99 @@ class FavoritesView(QWidget):
         self._cover_worker.start()
 
     def _on_cover(self, cover_id: str, image_data: bytes):
-        for row in (self._artists_row, self._albums_row, self._top_row):
-            row.apply_cover(cover_id, image_data)
-
-    # col → sort key function
-    _SORT_KEYS = {
-        0: lambda t, i: i,
-        1: lambda t, i: t.get('title', '').lower(),
-        2: lambda t, i: t.get('artist', '').lower(),
-        3: lambda t, i: t.get('album', '').lower(),
-        5: lambda t, i: t.get('duration_ms', 0) or 0,
-        6: lambda t, i: int(t.get('play_count', 0) or 0),
-    }
+        self._cover_provider.image_cache[str(cover_id)] = image_data
+        for m in (self._artists_model, self._albums_model, self._top_artists_model):
+            m.update_cover(str(cover_id))
 
     # ── Genre filter ──────────────────────────────────────────────────────
 
-    def _toggle_genre_popup(self):
+    def _ensure_genre_popup(self):
+        if self._genre_popup is None:
+            self._genre_popup = _GenrePopup(self)
+            self._genre_popup.hide()
+            self._genre_popup.selection_changed.connect(self._on_genres_changed)
+            orig_hide = self._genre_popup.hideEvent
+            def _on_popup_hide(e):
+                orig_hide(e)
+                self._bridge.genreFilterActiveChanged.emit(bool(self._selected_genres))
+            self._genre_popup.hideEvent = _on_popup_hide
+            theme = getattr(self.window(), 'theme', None)
+            self._genre_popup.apply_theme(theme, self._accent, resolve_menu_hover(theme))
+
+    def _toggle_genre_popup(self, gx: int, gy: int):
+        self._ensure_genre_popup()
         if self._genre_popup.isVisible():
             self._genre_popup.hide()
-            self._genre_btn.setChecked(False)
+            self._bridge.genreFilterActiveChanged.emit(bool(self._selected_genres))
             return
         pad = self._genre_popup._PAD
-        btn_pos = self._genre_btn.mapToGlobal(QPoint(-pad, self._genre_btn.height() + 4 - pad))
-        self._genre_popup.move(btn_pos)
+        self._genre_popup.move(QPoint(gx - pad, gy - pad))
         self._genre_popup.show()
         self._genre_popup.raise_()
-        self._genre_btn.setChecked(True)
+        self._bridge.genreFilterActiveChanged.emit(True)
 
     def _on_genres_changed(self, genres: set):
         self._selected_genres = genres
-        self._genre_btn.setChecked(bool(genres))
+        self._bridge.genreFilterActiveChanged.emit(True)
         self._apply_filters()
 
-    # ── Artist filter (Top Artists row) ──────────────────────────────────
+    # ── Artist filter (Top Artists carousel) ──────────────────────────────
 
-    def _on_top_artist_clicked(self, card: dict):
+    def _on_top_artist_card_clicked(self, idx: int):
+        albums = self._top_artists_model.albums
+        if not (0 <= idx < len(albums)):
+            return
+        card = albums[idx]
         name = card.get('_artist_name', card.get('title', ''))
         self._selected_artist = '' if self._selected_artist == name else name
-        # Reset genre filter when switching artist
         if self._selected_artist and self._selected_genres:
             self._selected_genres = set()
-            self._genre_btn.setChecked(False)
-            self._genre_popup.set_genres(self._genre_popup._genres, set())
+            self._bridge.genreFilterActiveChanged.emit(False)
+            if self._genre_popup:
+                self._genre_popup.set_genres(self._genre_popup._genres, set())
         self._apply_filters()
 
     def _clear_all_filters(self):
         self._selected_artist = ''
         self._selected_genres = set()
-        self._genre_btn.setChecked(False)
-        self._genre_popup.set_genres(self._genre_popup._genres, set())
+        self._bridge.genreFilterActiveChanged.emit(False)
+        if self._genre_popup:
+            self._genre_popup.set_genres(self._genre_popup._genres, set())
         self._apply_filters()
 
     def _on_play_all(self):
-        songs = getattr(self, '_songs', [])
-        if songs:
-            self.play_all.emit(songs)
+        if self._songs:
+            self.play_all.emit(self._songs)
 
     def _on_shuffle_all(self):
         import random
-        songs = list(getattr(self, '_songs', []))
+        songs = list(self._songs)
         if songs:
             random.shuffle(songs)
             self.shuffle_all.emit(songs)
 
-    # ── Combined filter application ───────────────────────────────────────
+    # ── Combined filter + sort application ─────────────────────────────────
+
+    @staticmethod
+    def _sort_songs(songs: list, col: str, dir_: str) -> list:
+        if not (dir_ and col):
+            return songs
+        def sort_key(pair):
+            _, t = pair
+            if col == 'title':  return t.get('title',  '').lower()
+            if col == 'artist': return t.get('artist', '').lower()
+            if col == 'album':  return t.get('album',  '').lower()
+            if col == 'dur':    return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            if col == 'plays':  return int(t.get('play_count') or 0)
+            if col == 'fav':    return int(bool(t.get('starred', False)))
+            return 0
+        paired = sorted(enumerate(songs), key=sort_key, reverse=(dir_ == 'desc'))
+        return [t for _, t in paired]
 
     def _apply_filters(self):
-        all_songs = list(getattr(self, '_songs_original', []))
+        """Artist/genre filter changed — row set/count changes, but
+        update_tracks avoids a full reset so scroll position is preserved."""
+        all_songs = list(self._songs_original)
         songs = all_songs
         if self._selected_artist:
             songs = [s for s in songs if s.get('artist', '') == self._selected_artist]
@@ -805,119 +963,65 @@ class FavoritesView(QWidget):
                 g = s.get('genre', '') or ''
                 return any(sel in g for sel in self._selected_genres)
             songs = [s for s in songs if _genre_match(s)]
-        self._populate_tracks(songs, update_original=False)
+        self._songs = self._sort_songs(songs, self._sort_col, self._sort_dir)
+        self._track_model.update_tracks(self._songs)
+        self._update_status_label(len(all_songs), len(songs))
 
-        # Update status label
-        total = len(all_songs)
-        shown = len(songs)
+    def _apply_sort(self, col: str, dir_: str):
+        """Re-sort the currently filtered rows in place — same row count, so
+        use reorder_tracks (no model reset) to preserve scroll position."""
+        self._songs = self._sort_songs(self._songs, col, dir_)
+        self._track_model.reorder_tracks(self._songs)
+
+    def _update_status_label(self, total: int, shown: int):
         parts = []
         if self._selected_artist:
             parts.append(self._selected_artist)
         if self._selected_genres:
             parts.append(', '.join(sorted(self._selected_genres)))
         if parts or shown != total:
-            self._songs_status_lbl.setText(
+            self._bridge.songsStatusChanged.emit(
                 f'Showing {shown} of {total}' + (f'  ({" · ".join(parts)})' if parts else ''))
         else:
-            self._songs_status_lbl.setText('')
+            self._bridge.songsStatusChanged.emit('')
+        self._bridge.clearFiltersVisibleChanged.emit(bool(self._selected_artist or self._selected_genres))
 
-        self._clear_artist_btn.setVisible(bool(self._selected_artist or self._selected_genres))
+    # ── Track interactions ──────────────────────────────────────────────────
 
-    def _on_sort(self, col: int, state: str):
-        songs = list(getattr(self, '_songs_original', self._songs))
-        if state and col in self._SORT_KEYS:
-            key = self._SORT_KEYS[col]
-            songs = sorted(enumerate(songs), key=lambda x: key(x[1], x[0]),
-                           reverse=(state == 'desc'))
-            songs = [s for _, s in songs]
-        self._populate_tracks(songs, update_original=False)
-
-    def _populate_tracks(self, songs: list, update_original: bool = True):
-        if update_original:
-            self._songs_original = list(songs)
-        tree = self._track_tree
-        tree.setUpdatesEnabled(False)
-        tree.clear()
-        theme = getattr(self.window(), 'theme', None)
-        pri = QColor(getattr(theme, 'font_color_primary',   '#dddddd') if theme else '#dddddd')
-        sec = QColor(getattr(theme, 'font_color_secondary', '#aaaaaa') if theme else '#aaaaaa')
-        for idx, t in enumerate(songs):
-            dur_ms = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-            secs   = dur_ms // 1000
-            dur    = f'{secs // 60}:{secs % 60:02d}'
-            item = QTreeWidgetItem([
-                str(idx + 1),
-                t.get('title', ''),
-                t.get('artist', ''),
-                t.get('album', '') or '',
-                t.get('genre', '') or '',
-                dur,
-                str(t.get('play_count') or 0) if t.get('play_count') else '-',
-            ])
-            item.setData(0, Qt.ItemDataRole.UserRole,
-                         {'_track_idx': idx, 'id': str(t.get('id', ''))})
-            item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setTextAlignment(6, Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            for col in range(7):
-                item.setForeground(col, pri if col == 1 else sec)
-            tree.addTopLevelItem(item)
-        tree.setUpdatesEnabled(True)
-        row_h = tree.sizeHintForRow(0) if songs else 38
-        hdr_h = tree.header().height()
-        tree.setFixedHeight(hdr_h + row_h * len(songs) + 4)
-        self._songs = songs   # store for double-click lookup
-
-    _COL_SETTINGS_KEY = 'favorites/track_col_widths'
-    _COL_MIN = {0: 30, 2: 80, 3: 80, 4: 60, 5: 50, 6: 40}
-
-    def _save_col_widths(self):
-        from PyQt6.QtCore import QSettings
-        hdr = self._track_header
-        widths = {str(i): hdr.sectionSize(i) for i in range(hdr.count()) if i != 1}
-        QSettings().setValue(self._COL_SETTINGS_KEY, widths)
-
-    def _restore_col_widths(self):
-        from PyQt6.QtCore import QSettings
-        saved = QSettings().value(self._COL_SETTINGS_KEY)
-        if not isinstance(saved, dict):
+    def _toggle_track_favorite(self, track_idx: int):
+        if not (0 <= track_idx < len(self._songs)):
             return
-        hdr = self._track_header
-        hdr.blockSignals(True)
-        for col_str, width in saved.items():
-            col = int(col_str)
-            if col != 1:
-                hdr.resizeSection(col, max(self._COL_MIN.get(col, 30), int(width)))
-        hdr.blockSignals(False)
+        track   = self._songs[track_idx]
+        raw     = track.get('starred', False)
+        cur_fav = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+        new_fav = not cur_fav
+        track_id = str(track.get('id', ''))
+        client = getattr(self, '_client', None)
+        if client:
+            threading.Thread(
+                target=lambda: client.set_favorite(track_id, new_fav), daemon=True).start()
+        if not new_fav:
+            # Un-favoriting removes just this row — this view shows only
+            # favorites — without resetting/scrolling the rest of the list.
+            self._songs_original = [s for s in self._songs_original
+                                    if str(s.get('id', '')) != track_id]
+            self._songs.pop(track_idx)
+            self._track_model.remove_track(track_idx)
+            self._update_status_label(len(self._songs_original), len(self._songs))
+        else:
+            track['starred'] = True
+            for s in self._songs_original:
+                if str(s.get('id', '')) == track_id:
+                    s['starred'] = True
+            self._track_model.update_favorite(track_idx, True)
 
-    def _show_context_menu(self, pos):
-        item = self._track_tree.itemAt(pos)
-        if not item:
+    def _show_track_context_menu_at(self, track_idx: int, gx: int, gy: int):
+        if not (0 <= track_idx < len(self._songs)):
             return
-        data = item.data(0, Qt.ItemDataRole.UserRole) or {}
-        idx  = data.get('_track_idx', -1)
-        songs = getattr(self, '_songs', [])
-        if not (0 <= idx < len(songs)):
-            return
-        track = songs[idx]
+        track = self._songs[track_idx]
         main  = self.window()
 
-        theme = getattr(main, 'theme', None)
-        bg  = getattr(theme, 'main_panel_bg',       '14,14,14') if theme else '14,14,14'
-        if theme and not getattr(theme, 'auto_border_from_accent', True):
-            bc = getattr(theme, 'manual_border_color', '#2a2a2a')
-        else:
-            bc = getattr(theme, 'border_color', '#2a2a2a') if theme else '#2a2a2a'
-        fg  = getattr(theme, 'font_color_primary',  '#dddddd')  if theme else '#dddddd'
-        fg2 = getattr(theme, 'font_color_secondary','#555555')  if theme else '#555555'
-        px  = getattr(theme, 'font_size_primary',   14)         if theme else 14
-        from player.mixins.visuals import resolve_menu_hover
-        hov = resolve_menu_hover(theme)
-
-        menu = _ShadowContextMenu(self)
-        acc = getattr(theme, 'accent', '#cccccc') if theme else '#cccccc'
-        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
-
+        menu = themed_shadow_menu(self, bg=self._bg_color)
         menu.add_action('Play Now',     lambda: self.play_track.emit(track),     icon_path='img/sub_play.png')
         menu.add_action('Play Next',    lambda: main.play_track_next(track) if hasattr(main, 'play_track_next') else None,    icon_path='img/sub_next.png')
         menu.add_action('Add to Queue', lambda: main.add_track_to_queue(track) if hasattr(main, 'add_track_to_queue') else None, icon_path='img/queue.png')
@@ -933,27 +1037,10 @@ class FavoritesView(QWidget):
         is_fav   = bool(track.get('starred', True))
         track_id = str(track.get('id', ''))
 
-        def _toggle_fav():
-            client = getattr(main, 'navidrome_client', None)
-            if not client: return
-            new_state = not is_fav
-            __import__('threading').Thread(
-                target=lambda: client.set_favorite(track_id, new_state), daemon=True).start()
-            if not new_state:
-                if hasattr(self, '_songs_original'):
-                    self._songs_original = [s for s in self._songs_original
-                                            if str(s.get('id', '')) != track_id]
-            else:
-                track['starred'] = True
-                for s in getattr(self, '_songs_original', []):
-                    if str(s.get('id', '')) == track_id:
-                        s['starred'] = True
-            self._apply_filters()
-
         playlists = getattr(getattr(main, 'playlists_browser', None), 'all_playlists', None) or []
         if track_id:
             pl_items = [('New Playlist…',
-                         lambda: __import__('threading').Thread(target=lambda: None, daemon=True).start(),
+                         lambda: threading.Thread(target=lambda: None, daemon=True).start(),
                          'img/add.png')]
             for pl in playlists:
                 pid = pl.get('id')
@@ -962,7 +1049,7 @@ class FavoritesView(QWidget):
                 lbl = f"{pl.get('name','Unnamed')}  ({cnt})" if cnt != '' else pl.get('name','Unnamed')
                 def _add(_, _pid=pid):
                     c = getattr(main, 'navidrome_client', None)
-                    if c: __import__('threading').Thread(
+                    if c: threading.Thread(
                         target=lambda: c.add_tracks_to_playlist(_pid, [track_id]), daemon=True).start()
                 pl_items.append((lbl, _add, 'img/playlist.png'))
             menu.add_submenu('Add to Playlist', pl_items, icon_path='img/playlist.png')
@@ -975,31 +1062,39 @@ class FavoritesView(QWidget):
         _HEART_COLOR = '#E91E63'
         fav_label = 'Remove from Favorites' if is_fav else 'Add to Favorites'
         fav_icon  = 'img/heart_filled.png'  if is_fav else 'img/heart.png'
-        menu.add_action(fav_label, _toggle_fav,
+        menu.add_action(fav_label, lambda: self._toggle_track_favorite(track_idx),
                         color=_HEART_COLOR, icon_path=fav_icon)
 
-        gp = self._track_tree.viewport().mapToGlobal(pos)
-        menu.exec_at(QPoint(gp.x() - menu._PAD, gp.y() - menu._PAD), window=self.window())
+        popup_menu_at_global(menu, gx, gy, window=self.window())
 
-    def _on_track_double_clicked(self, item: QTreeWidgetItem):
-        data = item.data(0, Qt.ItemDataRole.UserRole) or {}
-        idx  = data.get('_track_idx', -1)
-        if 0 <= idx < len(getattr(self, '_songs', [])):
-            self.play_track.emit(self._songs[idx])
+    # ── Carousel click routing ──────────────────────────────────────────────
 
-    def _on_artist_card_clicked(self, card: dict):
-        """Artist cards emit album_clicked with _is_artist=True — route to artist view."""
+    def _on_artist_card_clicked(self, idx: int):
+        albums = self._artists_model.albums
+        if not (0 <= idx < len(albums)):
+            return
+        card = albums[idx]
         if card.get('_is_artist') and card.get('_artist_name'):
             self.artist_clicked.emit(card['_artist_name'])
         else:
             self.album_clicked.emit(card)
 
+    def _on_album_card_clicked(self, idx: int):
+        albums = self._albums_model.albums
+        if 0 <= idx < len(albums):
+            self.album_clicked.emit(albums[idx])
+
+    def _on_album_play_clicked(self, idx: int):
+        albums = self._albums_model.albums
+        if 0 <= idx < len(albums):
+            self.play_album.emit(albums[idx])
+
+    # ── Card data builders ──────────────────────────────────────────────────
+
     @staticmethod
     def _artist_to_card(a: dict) -> dict:
         n = a.get('albumCount', a.get('album_count', ''))
         subtitle = f"{n} Album{'s' if n != 1 else ''}" if n else ''
-        # Navidrome serves artist photos at getCoverArt?id=ar-{artist_id}.
-        # Prefer explicit artistImageUrl, then build the ar- prefixed cover ID.
         artist_id = a.get('id', '')
         ar_id = artist_id if artist_id.startswith('ar-') else f'ar-{artist_id}'
         cid = a.get('artistImageUrl') or a.get('coverArt') or ar_id
@@ -1020,16 +1115,10 @@ class FavoritesView(QWidget):
             'artist':   a.get('artist', a.get('artistName', '')),
             'year':     a.get('year', ''),
             'coverArt': a.get('coverArt', ''),
-            'starred':  a.get('starred', True),   # albums in favorites are starred by definition
+            'starred':  a.get('starred', True),
         }
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self._scroll_reveal is None:
-            self._scroll_reveal = install_scroll_reveal(
-                self.scroll.viewport(),
-                self.scroll.verticalScrollBar()
-            )
-            self._scroll_reveal.color = self._accent
         # Refresh data every time the tab is shown so new favorites appear
         self.refresh()
