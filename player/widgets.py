@@ -1581,6 +1581,27 @@ class CoverImageProvider(QQuickImageProvider):
 
         return img, img.size()
 
+
+class PixmapImageProvider(QQuickImageProvider):
+    """Generic QQuickImageProvider serving pre-decoded QPixmaps from a cache
+    dict keyed by an arbitrary string id (e.g. "cover:<id>", "artist:<name>")
+    — for QML hosts that already have a QPixmap in hand (downloaded via a
+    plain urllib/QThread worker) and just need to display it, without the
+    bytes→QImage round-trip CoverImageProvider/AlbumDetailCoverProvider do."""
+    def __init__(self):
+        super().__init__(QQuickImageProvider.ImageType.Pixmap)
+        self.cache = {}
+
+    def requestPixmap(self, id, requestedSize):
+        real_id = id.split("?t=")[0]
+        pix = self.cache.get(real_id)
+        if pix is None or pix.isNull():
+            empty = QPixmap(1, 1)
+            empty.fill(Qt.GlobalColor.transparent)
+            return empty, empty.size()
+        return pix, pix.size()
+
+
 class AlbumModel(QAbstractListModel):
     TITLE_ROLE = Qt.ItemDataRole.UserRole + 1
     ARTIST_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -1795,31 +1816,40 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
     BTN_PAD = 20   # shadow bleed around button
     BTN_TOT = BTN_D + BTN_PAD * 2   # 98
 
-    def _btn_shadow(self, hex_color: str):
+    GLOW_D     = 264  # cover-art glow size — matches the Now Playing cover
+    GLOW_PAD   = 38   # shadow bleed around the glow
+    GLOW_TOT   = GLOW_D + GLOW_PAD * 2   # 340
+
+    def _blurred_shadow(self, hex_color: str, *, size: int, pad: int, total: int,
+                        sigma: float, alpha: int, oy: int, default_color: QColor,
+                        radius: int = 0):
+        """Render a Gaussian-blurred, color-tinted shadow of a shape (circle
+        if radius=0, rounded-rect otherwise) — shared by the play-button
+        shadow (`btn/<hex>`) and the Now Playing cover glow (`glow/<hex>`)."""
         import numpy as _np
         from scipy.ndimage import gaussian_filter as _gf
-        d, pad, total = self.BTN_D, self.BTN_PAD, self.BTN_TOT
-        SIGMA = 7.0   # fades to <1% at BTN_PAD boundary
-        SA    = 180
-        OY    = 3     # subtle downward offset
 
-        base = QColor("#" + hex_color) if QColor("#" + hex_color).isValid() else QColor(136, 136, 136)
+        base = QColor("#" + hex_color) if QColor("#" + hex_color).isValid() else default_color
         sr, sg, sb = base.red(), base.green(), base.blue()
 
-        # Rasterise circle at offset position
+        # Rasterise the shape mask at offset position
         mask_img = QImage(total, total, QImage.Format.Format_ARGB32)
         mask_img.fill(Qt.GlobalColor.transparent)
         mp = QPainter(mask_img)
         mp.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
-        path.addEllipse(QRectF(pad, pad + OY, d, d))
+        rect = QRectF(pad, pad + oy, size, size)
+        if radius:
+            path.addRoundedRect(rect, radius, radius)
+        else:
+            path.addEllipse(rect)
         mp.fillPath(path, QColor(255, 255, 255, 255))
         mp.end()
 
         ptr = mask_img.bits(); ptr.setsize(total * total * 4)
         alpha_f = _np.frombuffer(ptr, dtype=_np.uint8).reshape((total, total, 4))[:, :, 3].astype(_np.float32) / 255.0
-        blurred = _gf(alpha_f, sigma=SIGMA)
-        shad_a  = (blurred * SA).clip(0, 255).astype(_np.uint8)
+        blurred = _gf(alpha_f, sigma=sigma)
+        shad_a  = (blurred * alpha).clip(0, 255).astype(_np.uint8)
 
         shad_arr = _np.zeros((total, total, 4), dtype=_np.uint8)
         shad_arr[:, :, 0] = sb
@@ -1834,10 +1864,28 @@ class AlbumDetailCoverProvider(QQuickImageProvider):
         p = QPainter(img); p.drawImage(0, 0, shad_qimg); p.end()
         return img, img.size()
 
+    def _btn_shadow(self, hex_color: str):
+        return self._blurred_shadow(
+            hex_color, size=self.BTN_D, pad=self.BTN_PAD, total=self.BTN_TOT,
+            sigma=7.0, alpha=180, oy=3,   # fades to <1% at BTN_PAD boundary; subtle downward offset
+            default_color=QColor(136, 136, 136),
+        )
+
+    def _cover_glow_shadow(self, hex_color: str):
+        return self._blurred_shadow(
+            hex_color, size=self.GLOW_D, pad=self.GLOW_PAD, total=self.GLOW_TOT,
+            sigma=9.0, alpha=210, oy=10, radius=10,
+            default_color=QColor(80, 80, 80),
+        )
+
     def requestImage(self, cov_id, requestedSize):
         # "btn/<hexcolor>" → circular Gaussian shadow for play button
         if cov_id.startswith("btn/"):
             return self._btn_shadow(cov_id[4:])
+
+        # "glow/<hexcolor>" → vibrant-color-tinted shadow behind cover art
+        if cov_id.startswith("glow/"):
+            return self._cover_glow_shadow(cov_id[5:])
 
         # "art/<id>" prefix → return just the 260×260 rounded art (no shadow)
         art_only = cov_id.startswith("art/")
