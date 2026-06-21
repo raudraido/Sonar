@@ -977,6 +977,7 @@ class SonarPlayer(
         self._favorites_tab.setObjectName('FavoritesTab')
         self._favorites_tab.album_clicked.connect(self.navigate_to_album)
         self._favorites_tab.artist_clicked.connect(self.navigate_to_artist)
+        self._favorites_tab.genre_clicked.connect(self.navigate_to_genre)
         self._favorites_tab.play_album.connect(self.play_whole_album)
         self._favorites_tab.play_all.connect(self.play_whole_album)
         self._favorites_tab.shuffle_all.connect(self.play_whole_album)

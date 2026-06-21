@@ -519,7 +519,8 @@ class FavoritesBridge(QObject):
 
     @pyqtSlot(str)
     def trackGenreClicked(self, genre: str):
-        pass  # no genre-badge-click filtering in favorites (use the genre-filter button)
+        view = self._view
+        QTimer.singleShot(0, lambda: view.genre_clicked.emit(genre))
 
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
@@ -650,6 +651,7 @@ class FavoritesBridge(QObject):
 class FavoritesView(QWidget):
     album_clicked  = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
+    genre_clicked  = pyqtSignal(str)
     play_album     = pyqtSignal(dict)
     play_track     = pyqtSignal(dict)
     play_all       = pyqtSignal(object)   # emits list[dict] → play_whole_album
