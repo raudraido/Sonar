@@ -198,6 +198,20 @@ class _StarredWorker(QThread):
         self.done.emit(data)
 
 
+def _format_date_added(raw: str) -> str:
+    """ISO 8601 'created' timestamp -> '15 Dec 2024' (matches the Tracks tab)."""
+    if not raw:
+        return ''
+    try:
+        import platform as _platform
+        from datetime import datetime as _dt
+        dt = _dt.fromisoformat(raw.replace('Z', '+00:00'))
+        fmt = '%#d %b %Y' if _platform.system() == 'Windows' else '%-d %b %Y'
+        return dt.strftime(fmt)
+    except Exception:
+        return raw[:10]
+
+
 class FavoritesTrackModel(QAbstractListModel):
     """Role set mirrors PlaylistDetailTrackModel — kept local (not imported
     cross-tab) since each *DetailTrackModel is per-tab by convention."""
@@ -213,6 +227,10 @@ class FavoritesTrackModel(QAbstractListModel):
     COVER_ART_ID   = Qt.ItemDataRole.UserRole + 10
     ALBUM_NAME     = Qt.ItemDataRole.UserRole + 11
     ALBUM_ID       = Qt.ItemDataRole.UserRole + 12
+    ALBUM_TRACK_NO = Qt.ItemDataRole.UserRole + 13
+    YEAR_STR       = Qt.ItemDataRole.UserRole + 14
+    DATE_ADDED_STR = Qt.ItemDataRole.UserRole + 15
+    BPM_STR        = Qt.ItemDataRole.UserRole + 16
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -237,6 +255,10 @@ class FavoritesTrackModel(QAbstractListModel):
         if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
         if role == self.ALBUM_NAME:     return r.get('_album', '')
         if role == self.ALBUM_ID:       return r.get('_album_id', '')
+        if role == self.ALBUM_TRACK_NO: return r.get('_album_track_no', '')
+        if role == self.YEAR_STR:       return r.get('_year', '')
+        if role == self.DATE_ADDED_STR: return r.get('_date_added', '')
+        if role == self.BPM_STR:        return r.get('_bpm', '')
         return None
 
     def roleNames(self):
@@ -253,6 +275,10 @@ class FavoritesTrackModel(QAbstractListModel):
             self.COVER_ART_ID:   b"coverArtId",
             self.ALBUM_NAME:     b"albumName",
             self.ALBUM_ID:       b"albumId",
+            self.ALBUM_TRACK_NO: b"albumTrackNo",
+            self.YEAR_STR:       b"yearStr",
+            self.DATE_ADDED_STR: b"dateAddedStr",
+            self.BPM_STR:        b"bpmStr",
         }
 
     @staticmethod
@@ -268,6 +294,13 @@ class FavoritesTrackModel(QAbstractListModel):
             for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
                 genre_raw = genre_raw.replace(sep, ' • ')
             genre_parts = [g.strip() for g in genre_raw.split(' • ') if g.strip()]
+            album_track_no = t.get('trackNumber') or t.get('track') or ''
+            raw_bpm = t.get('bpm') or ''
+            try:
+                bpm_val = float(raw_bpm)
+                bpm_str = f"{bpm_val:.1f}" if bpm_val > 0 else ''
+            except (ValueError, TypeError):
+                bpm_str = ''
             rows.append({
                 '_idx':       idx,
                 '_id':        str(t.get('id', '')),
@@ -281,6 +314,10 @@ class FavoritesTrackModel(QAbstractListModel):
                 '_cover_id':  str(t.get('coverArt') or t.get('albumId') or ''),
                 '_album':     t.get('album', ''),
                 '_album_id':  str(t.get('albumId', '')),
+                '_album_track_no': str(album_track_no) if album_track_no else '',
+                '_year':           str(t.get('year') or ''),
+                '_date_added':     _format_date_added(t.get('created') or ''),
+                '_bpm':            bpm_str,
             })
         return rows
 
@@ -318,6 +355,14 @@ class FavoritesTrackModel(QAbstractListModel):
                 r['_fav'] = is_fav
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
+                break
+
+    def update_bpm(self, track_id: str, bpm_str: str):
+        for i, r in enumerate(self._rows):
+            if r.get('_id') == track_id:
+                r['_bpm'] = bpm_str
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.BPM_STR])
                 break
 
     def reorder_tracks(self, tracks: list):
@@ -403,6 +448,10 @@ class FavoritesBridge(QObject):
     showDurChanged            = pyqtSignal(bool)
     showPlaysChanged          = pyqtSignal(bool)
     showAlbumChanged          = pyqtSignal(bool)
+    showTrackNoChanged        = pyqtSignal(bool)
+    showYearChanged           = pyqtSignal(bool)
+    showDateChanged           = pyqtSignal(bool)
+    showBpmChanged            = pyqtSignal(bool)
     # → QML sort
     sortStateChanged          = pyqtSignal(str, str)   # col, 'asc'|'desc'|''
     # → QML favorites-page state
@@ -581,44 +630,54 @@ class FavoritesBridge(QObject):
         saved = QSettings().value('favorites/track_col_widths')
         if isinstance(saved, dict):
             return [int(saved.get('track', 450)), int(saved.get('title', 200)), int(saved.get('artist', 99)),
-                    int(saved.get('fav', 76)), int(saved.get('dur', 81)), int(saved.get('plays', 56)),
-                    int(saved.get('genre', 182)), int(saved.get('album', 213))]
-        return [450, 200, 99, 76, 81, 56, 182, 213]
+                    int(saved.get('fav', 81)), int(saved.get('dur', 86)), int(saved.get('plays', 56)),
+                    int(saved.get('genre', 182)), int(saved.get('album', 265)),
+                    int(saved.get('trackno', 50)), int(saved.get('year', 56)),
+                    int(saved.get('date', 110)), int(saved.get('bpm', 56))]
+        return [450, 200, 99, 81, 86, 56, 182, 265, 50, 56, 110, 56]
 
-    @pyqtSlot(int, int, int, int, int, int, int, int)
-    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
+    @pyqtSlot(int, int, int, int, int, int, int, int, int, int, int, int)
+    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int,
+                      trackno: int, year: int, date: int, bpm: int):
         QSettings().setValue('favorites/track_col_widths',
                              {'track': track, 'title': title, 'artist': artist, 'fav': fav,
-                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album})
+                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album,
+                              'trackno': trackno, 'year': year, 'date': date, 'bpm': bpm})
 
     @pyqtSlot(result='QVariantList')
     def getColVisibility(self):
         saved = QSettings().value('favorites/col_visibility', {})
         if not isinstance(saved, dict): saved = {}
         if not saved:
-            return [True, False, False, True, True, True, True, True]
+            return [True, False, False, False, True, True, True, True, False, False, False, False]
         return [bool(saved.get('track',  True)), bool(saved.get('title',  True)),
                 bool(saved.get('artist', True)),  bool(saved.get('fav',    True)),
                 bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
-                bool(saved.get('plays',  True)),  bool(saved.get('album',  False))]
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  False)),
+                bool(saved.get('trackno', False)), bool(saved.get('year',  False)),
+                bool(saved.get('date',    False)), bool(saved.get('bpm',   False))]
 
     @pyqtSlot(float, float)
     def burgerClicked(self, gx: float, gy: float):
         saved = QSettings().value('favorites/col_visibility', {})
         if not isinstance(saved, dict): saved = {}
         cols = [
-            ('track',  'Track',    self.showTrackChanged),
-            ('title',  'Title',    self.showTitleChanged),
-            ('artist', 'Artist',   self.showArtistChanged),
-            ('fav',    'Favorite', self.showFavChanged),
-            ('genre',  'Genre',    self.showGenreChanged),
-            ('dur',    'Duration', self.showDurChanged),
-            ('plays',  'Plays',    self.showPlaysChanged),
-            ('album',  'Album',    self.showAlbumChanged),
+            ('track',   'Track',      self.showTrackChanged,   True),
+            ('title',   'Title',      self.showTitleChanged,   True),
+            ('artist',  'Artist',     self.showArtistChanged,  True),
+            ('fav',     'Favorite',   self.showFavChanged,     True),
+            ('genre',   'Genre',      self.showGenreChanged,   True),
+            ('dur',     'Duration',   self.showDurChanged,     True),
+            ('plays',   'Plays',      self.showPlaysChanged,   True),
+            ('album',   'Album',      self.showAlbumChanged,   False),
+            ('trackno', 'No.',        self.showTrackNoChanged, False),
+            ('year',    'Year',       self.showYearChanged,    False),
+            ('date',    'Date Added', self.showDateChanged,    False),
+            ('bpm',     'BPM',        self.showBpmChanged,     False),
         ]
         menu = themed_shadow_menu(self._view, bg=getattr(self._view, '_bg_color', None))
-        for key, label, sig in cols:
-            vis = bool(saved.get(key, key != 'album'))
+        for key, label, sig, default_vis in cols:
+            vis = bool(saved.get(key, default_vis))
             menu.add_action(label, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s),
                             icon_path='img/yes.png' if vis else '')
         popup_menu_at_global(menu, gx, gy, window=self._view.window())
@@ -632,7 +691,7 @@ class FavoritesBridge(QObject):
 
     @pyqtSlot(result='QVariantList')
     def getColOrder(self):
-        default = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+        default = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays", "trackno", "year", "date", "bpm"]
         known = set(default)
         saved = QSettings().value('favorites/col_order')
         if isinstance(saved, list) and set(saved) <= known and len(saved) > 0:
@@ -798,6 +857,16 @@ class FavoritesView(QWidget):
 
     # ── Internal — data load ────────────────────────────────────────────────
 
+    def refresh_track_bpm(self, track_id: str, bpm: float):
+        """Live-update a single row's BPM as soon as tempo analysis finishes
+        — no need to leave and re-open Favorites for it to show up."""
+        bpm_str = f"{bpm:.1f}" if bpm > 0 else ''
+        for s in self._songs_original:
+            if str(s.get('id', '')) == track_id:
+                s['bpm'] = bpm
+                break
+        self._track_model.update_bpm(track_id, bpm_str)
+
     def _on_data(self, data: dict):
         self._bridge.tracksLoadingChanged.emit(False)
         songs   = data.get('songs',   [])
@@ -839,6 +908,16 @@ class FavoritesView(QWidget):
                 '_artist_name': name,
             })
         self._top_artists_model.set_albums(top_items)
+
+        # Detected BPM (player.bpm_cache, from live tempo analysis) always
+        # beats the ID3 tag value — same merge tracks_browser.py does.
+        win = self.window()
+        bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
+        if bpm_cache:
+            for s in songs:
+                sid = str(s.get('id', ''))
+                if sid in bpm_cache:
+                    s['bpm'] = bpm_cache[sid]
 
         self._songs_original = list(songs)
         self._apply_filters()
@@ -950,12 +1029,22 @@ class FavoritesView(QWidget):
             return songs
         def sort_key(pair):
             _, t = pair
-            if col == 'title':  return t.get('title',  '').lower()
-            if col == 'artist': return t.get('artist', '').lower()
-            if col == 'album':  return t.get('album',  '').lower()
-            if col == 'dur':    return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-            if col == 'plays':  return int(t.get('play_count') or 0)
-            if col == 'fav':    return int(bool(t.get('starred', False)))
+            if col == 'title':   return t.get('title',  '').lower()
+            if col == 'artist':  return t.get('artist', '').lower()
+            if col == 'album':   return t.get('album',  '').lower()
+            if col == 'dur':     return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            if col == 'plays':   return int(t.get('play_count') or 0)
+            if col == 'fav':     return int(bool(t.get('starred', False)))
+            if col == 'trackno':
+                try:    return int(t.get('trackNumber') or t.get('track') or 0)
+                except (TypeError, ValueError): return 0
+            if col == 'year':
+                try:    return int(t.get('year') or 0)
+                except (TypeError, ValueError): return 0
+            if col == 'date':    return t.get('created') or ''
+            if col == 'bpm':
+                try:    return float(t.get('bpm') or 0)
+                except (TypeError, ValueError): return 0
             return 0
         paired = sorted(enumerate(songs), key=sort_key, reverse=(dir_ == 'desc'))
         return [t for _, t in paired]

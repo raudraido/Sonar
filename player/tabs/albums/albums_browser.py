@@ -1,4 +1,4 @@
-﻿import time
+import time
 import random
 import json
 
@@ -217,6 +217,20 @@ class ServerCountWorker(QThread): # Fetches the server's total album count (get_
         except Exception as e:
             print(f"[ServerCountWorker] Safely caught error: {e}")
 
+def _format_date_added(raw: str) -> str:
+    """ISO 8601 'created' timestamp -> '15 Dec 2024' (matches the Tracks tab)."""
+    if not raw:
+        return ''
+    try:
+        import platform as _platform
+        from datetime import datetime as _dt
+        dt = _dt.fromisoformat(raw.replace('Z', '+00:00'))
+        fmt = '%#d %b %Y' if _platform.system() == 'Windows' else '%-d %b %Y'
+        return dt.strftime(fmt)
+    except Exception:
+        return raw[:10]
+
+
 class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing the album detail tracklist QML view, exposing per-row track number/title/artist/duration/play-count/genre/favorite roles plus disc-header rows for multi-disc albums.
     IS_DISC_HEADER = Qt.ItemDataRole.UserRole + 1
     DISC_LABEL     = Qt.ItemDataRole.UserRole + 2
@@ -230,6 +244,10 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
     PLAY_COUNT_STR = Qt.ItemDataRole.UserRole + 10
     TRACK_GENRE    = Qt.ItemDataRole.UserRole + 11
     COVER_ART_ID   = Qt.ItemDataRole.UserRole + 12
+    ALBUM_TRACK_NO = Qt.ItemDataRole.UserRole + 13
+    YEAR_STR       = Qt.ItemDataRole.UserRole + 14
+    DATE_ADDED_STR = Qt.ItemDataRole.UserRole + 15
+    BPM_STR        = Qt.ItemDataRole.UserRole + 16
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -254,6 +272,10 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
         if role == self.PLAY_COUNT_STR: return r.get('_plays', '-')
         if role == self.TRACK_GENRE:    return r.get('_genre', '')
         if role == self.COVER_ART_ID:   return r.get('_cover_id', '')
+        if role == self.ALBUM_TRACK_NO: return r.get('_album_track_no', '')
+        if role == self.YEAR_STR:       return r.get('_year', '')
+        if role == self.DATE_ADDED_STR: return r.get('_date_added', '')
+        if role == self.BPM_STR:        return r.get('_bpm', '')
         return None
 
     def roleNames(self):
@@ -270,6 +292,10 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
             self.PLAY_COUNT_STR: b"playCountStr",
             self.TRACK_GENRE:    b"trackGenre",
             self.COVER_ART_ID:   b"coverArtId",
+            self.ALBUM_TRACK_NO: b"albumTrackNo",
+            self.YEAR_STR:       b"yearStr",
+            self.DATE_ADDED_STR: b"dateAddedStr",
+            self.BPM_STR:        b"bpmStr",
         }
 
     def set_tracks(self, tracks: list, group_by_disc: bool = True):
@@ -296,6 +322,13 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
                         genre_raw = genre_raw.replace(sep, ' • ')
                 genre_parts = [g.strip() for g in genre_raw.split(' • ') if g.strip()]
                 genre = ' • '.join(genre_parts[:3])
+                album_track_no = t.get('trackNumber') or t.get('track') or ''
+                raw_bpm = t.get('bpm') or ''
+                try:
+                    bpm_val = float(raw_bpm)
+                    bpm_str = f"{bpm_val:.1f}" if bpm_val > 0 else ''
+                except (ValueError, TypeError):
+                    bpm_str = ''
                 rows.append({
                     '_disc': False,
                     '_idx':    track_idx,
@@ -308,6 +341,10 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
                     '_plays':  plays,
                     '_genre':  genre,
                     '_cover_id': str(t.get('coverArt') or t.get('albumId') or t.get('cover_id') or ''),
+                    '_album_track_no': str(album_track_no) if album_track_no else '',
+                    '_year':           str(t.get('year') or ''),
+                    '_date_added':     _format_date_added(t.get('created') or ''),
+                    '_bpm':            bpm_str,
                 })
         self.beginResetModel()
         self._rows = rows
@@ -319,6 +356,14 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
                 r['_fav'] = is_fav
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [self.IS_FAVORITE])
+                break
+
+    def update_bpm(self, track_id: str, bpm_str: str):
+        for i, r in enumerate(self._rows):
+            if not r.get('_disc') and r.get('_id') == track_id:
+                r['_bpm'] = bpm_str
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [self.BPM_STR])
                 break
 
 class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detail.qml): handles play/shuffle/track clicks, search-aware row navigation, track & album favorite toggling, artist/genre link clicks, tooltips, context menu, column-width persistence, and theme/typography/color signals to QML.
@@ -351,12 +396,16 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
     showDurChanged            = pyqtSignal(bool)
     showPlaysChanged          = pyqtSignal(bool)
     showAlbumChanged          = pyqtSignal(bool)
+    showTrackNoChanged        = pyqtSignal(bool)
+    showYearChanged           = pyqtSignal(bool)
+    showDateChanged           = pyqtSignal(bool)
+    showBpmChanged            = pyqtSignal(bool)
     # → QML sort
     sortStateChanged          = pyqtSignal(str, str)   # col, 'asc'|'desc'|''
 
     # Same shape as PlaylistDetailBridge.getColOrder's default — see comment
     # above getColWidths for why 'track'/'album' are present but inert here.
-    COL_ORDER_DEFAULT = ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+    COL_ORDER_DEFAULT = ["track", "title", "album", "artist", "fav", "genre", "dur", "plays", "trackno", "year", "date", "bpm"]
 
     def __init__(self, view):
         super().__init__()
@@ -517,16 +566,20 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
     def getColWidths(self):
         saved = QSettings().value('album_detail/track_col_widths')
         if isinstance(saved, dict):
-            return [int(saved.get('track', 240)), int(saved.get('title', 200)), int(saved.get('artist', 160)),
-                    int(saved.get('fav', 68)), int(saved.get('dur', 72)), int(saved.get('plays', 60)),
-                    int(saved.get('genre', 140)), int(saved.get('album', 160))]
-        return [240, 200, 160, 68, 72, 60, 140, 160]
+            return [int(saved.get('track', 240)), int(saved.get('title', 95)), int(saved.get('artist', 130)),
+                    int(saved.get('fav', 82)), int(saved.get('dur', 92)), int(saved.get('plays', 58)),
+                    int(saved.get('genre', 206)), int(saved.get('album', 240)),
+                    int(saved.get('trackno', 50)), int(saved.get('year', 56)),
+                    int(saved.get('date', 110)), int(saved.get('bpm', 56))]
+        return [240, 95, 130, 82, 92, 58, 206, 240, 50, 56, 110, 56]
 
-    @pyqtSlot(int, int, int, int, int, int, int, int)
-    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int):
+    @pyqtSlot(int, int, int, int, int, int, int, int, int, int, int, int)
+    def saveColWidths(self, track: int, title: int, artist: int, fav: int, dur: int, plays: int, genre: int, album: int,
+                      trackno: int, year: int, date: int, bpm: int):
         QSettings().setValue('album_detail/track_col_widths',
                              {'track': track, 'title': title, 'artist': artist, 'fav': fav,
-                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album})
+                              'dur': dur, 'plays': plays, 'genre': genre, 'album': album,
+                              'trackno': trackno, 'year': year, 'date': date, 'bpm': bpm})
 
     @pyqtSlot(result='QVariantList')
     def getColOrder(self):
@@ -550,30 +603,37 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
         if not isinstance(saved, dict): saved = {}
         if not saved:
             # New user: intentional defaults (track combined column on, plain
-            # title/artist columns off, album column on — mirrors playlist's)
-            return [True, False, False, True, True, True, True, True]
+            # title/artist columns off, album column on — mirrors playlist's).
+            # New No./Year/Date Added/BPM columns default off for everyone.
+            return [True, False, False, True, True, True, True, True, False, False, False, False]
         return [bool(saved.get('track',  True)), bool(saved.get('title',  False)),
                 bool(saved.get('artist', False)), bool(saved.get('fav',    True)),
                 bool(saved.get('genre',  True)),  bool(saved.get('dur',    True)),
-                bool(saved.get('plays',  True)),  bool(saved.get('album',  True))]
+                bool(saved.get('plays',  True)),  bool(saved.get('album',  True)),
+                bool(saved.get('trackno', False)), bool(saved.get('year',  False)),
+                bool(saved.get('date',    False)), bool(saved.get('bpm',   False))]
 
     @pyqtSlot(float, float)
     def burgerClicked(self, gx: float, gy: float):
         saved = QSettings().value('album_detail/col_visibility', {})
         if not isinstance(saved, dict): saved = {}
         cols = [
-            ('track',  'Track',    self.showTrackChanged),
-            ('title',  'Title',    self.showTitleChanged),
-            ('artist', 'Artist',   self.showArtistChanged),
-            ('fav',    'Favorite', self.showFavChanged),
-            ('genre',  'Genre',    self.showGenreChanged),
-            ('dur',    'Duration', self.showDurChanged),
-            ('plays',  'Plays',    self.showPlaysChanged),
-            ('album',  'Album',    self.showAlbumChanged),
+            ('track',   'Track',       self.showTrackChanged,   True),
+            ('title',   'Title',       self.showTitleChanged,   False),
+            ('artist',  'Artist',      self.showArtistChanged,  False),
+            ('fav',     'Favorite',    self.showFavChanged,     True),
+            ('genre',   'Genre',       self.showGenreChanged,   True),
+            ('dur',     'Duration',    self.showDurChanged,     True),
+            ('plays',   'Plays',       self.showPlaysChanged,   True),
+            ('album',   'Album',       self.showAlbumChanged,   True),
+            ('trackno', 'No.',         self.showTrackNoChanged, False),
+            ('year',    'Year',        self.showYearChanged,    False),
+            ('date',    'Date Added',  self.showDateChanged,    False),
+            ('bpm',     'BPM',         self.showBpmChanged,     False),
         ]
         menu = themed_shadow_menu(self._view)
-        for key, label, sig in cols:
-            vis = bool(saved.get(key, True))
+        for key, label, sig, default_vis in cols:
+            vis = bool(saved.get(key, default_vis))
             menu.add_action(label, lambda k=key, v=vis, s=sig: self._set_col_vis(k, not v, s),
                             icon_path='img/yes.png' if vis else '')
         popup_menu_at_global(menu, int(gx), int(gy))
@@ -739,6 +799,15 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         )
 
     def _on_tracks_ready(self, tracks: list):
+        # Detected BPM (player.bpm_cache, from live tempo analysis) always
+        # beats the ID3 tag value — same merge tracks_browser.py does.
+        win = self.window()
+        bpm_cache = getattr(win, 'bpm_cache', {}) if win else {}
+        if bpm_cache:
+            for t in tracks:
+                tid = str(t.get('id', ''))
+                if tid in bpm_cache:
+                    t['bpm'] = bpm_cache[tid]
         self._tracks_original = tracks
         self._apply_sort(self._sort_col, self._sort_dir)
         self._bridge._selected_trkidx = -1
@@ -751,6 +820,16 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
                 getattr(self, '_last_is_playing', False),
             )
 
+    def refresh_track_bpm(self, track_id: str, bpm: float):
+        """Live-update a single row's BPM as soon as tempo analysis finishes
+        — no need to leave and re-open the album for it to show up."""
+        bpm_str = f"{bpm:.1f}" if bpm > 0 else ''
+        for t in self._tracks_original:
+            if str(t.get('id', '')) == track_id:
+                t['bpm'] = bpm
+                break
+        self._track_model.update_bpm(track_id, bpm_str)
+
     def _on_sort_changed(self, col: str, dir_: str):
         self._sort_col = col
         self._sort_dir = dir_
@@ -760,11 +839,21 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
         sorting = bool(dir_ and col)
         if sorting:
             def sort_key(t):
-                if col == 'title':  return t.get('title',  '').lower()
-                if col == 'artist': return t.get('artist', '').lower()
-                if col == 'dur':    return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-                if col == 'plays':  return int(t.get('play_count') or 0)
-                if col == 'fav':    return int(bool(t.get('starred', False)))
+                if col == 'title':   return t.get('title',  '').lower()
+                if col == 'artist':  return t.get('artist', '').lower()
+                if col == 'dur':     return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                if col == 'plays':   return int(t.get('play_count') or 0)
+                if col == 'fav':     return int(bool(t.get('starred', False)))
+                if col == 'trackno':
+                    try:    return int(t.get('trackNumber') or t.get('track') or 0)
+                    except (TypeError, ValueError): return 0
+                if col == 'year':
+                    try:    return int(t.get('year') or 0)
+                    except (TypeError, ValueError): return 0
+                if col == 'date':    return t.get('created') or ''
+                if col == 'bpm':
+                    try:    return float(t.get('bpm') or 0)
+                    except (TypeError, ValueError): return 0
                 return 0
             self._tracks = sorted(self._tracks_original, key=sort_key, reverse=(dir_ == 'desc'))
         else:

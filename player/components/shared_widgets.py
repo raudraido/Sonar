@@ -551,8 +551,8 @@ class PaginationFooter(QWidget):
 
 def _fmt_bpm(raw):
     try:
-        v = int(float(raw))
-        return str(v) if v > 0 else ''
+        v = float(raw)
+        return f"{v:.1f}" if v > 0 else ''
     except (TypeError, ValueError):
         return ''
 

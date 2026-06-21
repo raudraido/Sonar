@@ -87,6 +87,10 @@ Rectangle {
     property int colPlays:   60
     property int colGenre:  140
     property int colAlbum:  160
+    property int colTrackNo: 50
+    property int colYear:    56
+    property int colDate:   110
+    property int colBpm:     56
 
     // Column visibility (burger menu)
     property bool showTrack:  true
@@ -97,13 +101,17 @@ Rectangle {
     property bool showDur:    true
     property bool showPlays:  true
     property bool showAlbum:  true
+    property bool showTrackNo: false
+    property bool showYear:    false
+    property bool showDate:    false
+    property bool showBpm:     false
 
     // ── Column layout — uniform sequential model ───────────────────────────
     // All columns have fixed user-adjustable widths, except `elasticCol`
     // which absorbs whatever's left. Total always equals the available row
     // width — nothing escapes the left/right walls. _clampCols enforces
     // this on every layout change.
-    property var    colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays"]
+    property var    colOrder: ["track", "title", "artist", "album", "fav", "genre", "dur", "plays", "trackno", "year", "date", "bpm"]
     property string sortCol:  ""
     property string sortDir:  ""   // "asc" | "desc" | ""
 
@@ -118,6 +126,10 @@ Rectangle {
         if (id === "dur")    return showDur
         if (id === "plays")  return showPlays
         if (id === "album")  return root.enableAlbumColumn && showAlbum
+        if (id === "trackno") return showTrackNo
+        if (id === "year")    return showYear
+        if (id === "date")    return showDate
+        if (id === "bpm")     return showBpm
         return false
     }
     // Stored (saved) width — always returns the raw property value
@@ -130,6 +142,10 @@ Rectangle {
         if (id === "dur")    return colDur
         if (id === "plays")  return colPlays
         if (id === "album")  return colAlbum
+        if (id === "trackno") return colTrackNo
+        if (id === "year")    return colYear
+        if (id === "date")    return colDate
+        if (id === "bpm")     return colBpm
         return 0
     }
     // elasticCol is elastic: fills all space not taken by other visible columns.
@@ -157,6 +173,10 @@ Rectangle {
         if (id === "dur")    return minColDur
         if (id === "plays")  return minColPlays
         if (id === "album")  return minColAlbum
+        if (id === "trackno") return minColTrackNo
+        if (id === "year")    return minColYear
+        if (id === "date")    return minColDate
+        if (id === "bpm")     return minColBpm
         return 40
     }
     // Next visible column after id in colOrder, or "" if none
@@ -175,6 +195,10 @@ Rectangle {
         else if (id === "dur")    colDur    = w
         else if (id === "plays")  colPlays  = w
         else if (id === "album")  colAlbum  = w
+        else if (id === "trackno") colTrackNo = w
+        else if (id === "year")    colYear    = w
+        else if (id === "date")    colDate    = w
+        else if (id === "bpm")     colBpm     = w
     }
     function _colLabel(id) {
         if (id === "track")  return "TRACK"
@@ -185,6 +209,10 @@ Rectangle {
         if (id === "dur")    return "DURATION"
         if (id === "plays")  return "PLAYS"
         if (id === "album")  return "ALBUM"
+        if (id === "trackno") return "NO."
+        if (id === "year")    return "YEAR"
+        if (id === "date")    return "DATE ADDED"
+        if (id === "bpm")     return "BPM"
         return ""
     }
     // X position: sum of rendered widths of all visible columns before id in colOrder
@@ -249,6 +277,10 @@ Rectangle {
     onShowDurChanged:    Qt.callLater(function() { _clampCols(trackList.width) })
     onShowPlaysChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
     onShowAlbumChanged:  Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowTrackNoChanged: Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowYearChanged:    Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowDateChanged:    Qt.callLater(function() { _clampCols(trackList.width) })
+    onShowBpmChanged:     Qt.callLater(function() { _clampCols(trackList.width) })
 
     Text { id: _lhRef;     visible: false; text: "X";        font.pixelSize: root.fontSizeSecondary;     font.family: root.fontFamily; renderType: Text.NativeRendering }
     Text { id: _hdrTrack;  visible: false; text: "TRACK";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
@@ -259,6 +291,10 @@ Rectangle {
     Text { id: _hdrDur;    visible: false; text: "DURATION"; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrPlays;  visible: false; text: "PLAYS";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
     Text { id: _hdrAlbum;  visible: false; text: "ALBUM";    font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrTrackNo; visible: false; text: "NO.";        font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrYear;    visible: false; text: "YEAR";       font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrDate;    visible: false; text: "DATE ADDED"; font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
+    Text { id: _hdrBpm;     visible: false; text: "BPM";        font.pixelSize: root.fontSizeSecondary - 1; font.bold: true; font.letterSpacing: 0.8; font.family: root.fontFamily }
 
     // Minimum for drag resize = header text width (column can't be dragged narrower than its label)
     readonly property int minColTrack:  Math.ceil(_hdrTrack.implicitWidth)  + 16
@@ -269,11 +305,15 @@ Rectangle {
     readonly property int minColDur:    Math.ceil(_hdrDur.implicitWidth)    + 16
     readonly property int minColPlays:  Math.ceil(_hdrPlays.implicitWidth)  + 16
     readonly property int minColAlbum:  Math.ceil(_hdrAlbum.implicitWidth)  + 16
+    readonly property int minColTrackNo: Math.ceil(_hdrTrackNo.implicitWidth) + 16
+    readonly property int minColYear:    Math.ceil(_hdrYear.implicitWidth)    + 16
+    readonly property int minColDate:    Math.ceil(_hdrDate.implicitWidth)    + 16
+    readonly property int minColBpm:     Math.ceil(_hdrBpm.implicitWidth)     + 16
 
     Timer {
         id: colSaveTimer
         interval: 400; repeat: false
-        onTriggered: root.bridge.saveColWidths(root.colTrack, root.colTitle, root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre, root.colAlbum)
+        onTriggered: root.bridge.saveColWidths(root.colTrack, root.colTitle, root.colArtist, root.colFav, root.colDur, root.colPlays, root.colGenre, root.colAlbum, root.colTrackNo, root.colYear, root.colDate, root.colBpm)
     }
 
     Component.onCompleted: {
@@ -286,6 +326,10 @@ Rectangle {
         root.colPlays  = w[5]
         root.colGenre  = w[6]
         root.colAlbum  = w[7]
+        root.colTrackNo = w[8]
+        root.colYear    = w[9]
+        root.colDate    = w[10]
+        root.colBpm     = w[11]
         var v = root.bridge.getColVisibility()
         root.showTrack  = v[0]
         root.showTitle  = v[1]
@@ -295,6 +339,10 @@ Rectangle {
         root.showDur    = v[5]
         root.showPlays  = v[6]
         root.showAlbum  = v[7]
+        root.showTrackNo = v[8]
+        root.showYear    = v[9]
+        root.showDate    = v[10]
+        root.showBpm     = v[11]
         root.colOrder = root.bridge.getColOrder()
         var s = root.bridge.getSortState()
         root.sortCol = s[0]; root.sortDir = s[1]
@@ -321,6 +369,10 @@ Rectangle {
         function onShowDurChanged(v)     { root.showDur    = v; if (v) root._clampCols(trackList.width) }
         function onShowPlaysChanged(v)   { root.showPlays  = v; if (v) root._clampCols(trackList.width) }
         function onShowAlbumChanged(v)   { root.showAlbum  = v; if (v) root._clampCols(trackList.width) }
+        function onShowTrackNoChanged(v) { root.showTrackNo = v; if (v) root._clampCols(trackList.width) }
+        function onShowYearChanged(v)    { root.showYear    = v; if (v) root._clampCols(trackList.width) }
+        function onShowDateChanged(v)    { root.showDate    = v; if (v) root._clampCols(trackList.width) }
+        function onShowBpmChanged(v)     { root.showBpm     = v; if (v) root._clampCols(trackList.width) }
         function onSortStateChanged(col, dir) { root.sortCol = col; root.sortDir = dir }
     }
 
@@ -518,7 +570,7 @@ Rectangle {
                 }
                 function _favHeaderClick()   { root.bridge.favHeaderClicked() }
                 function _albumHeaderClick() { root.bridge.albumHeaderClicked() }
-                function _isSortable(col)   { return col === "title" || col === "artist" || col === "fav" || col === "dur" || col === "plays" || col === "album" }
+                function _isSortable(col)   { return col === "title" || col === "artist" || col === "fav" || col === "dur" || col === "plays" || col === "album" || col === "trackno" || col === "year" || col === "date" || col === "bpm" }
                 function _headerClick(col)  { root.bridge.colHeaderClicked(col) }
 
                 Item {
@@ -552,7 +604,8 @@ Rectangle {
                             Item {
                                 anchors.fill: parent
                                 Row {
-                                    readonly property bool _mid: modelData === "dur" || modelData === "plays" || modelData === "fav"
+                                    readonly property bool _mid: modelData === "dur" || modelData === "plays" || modelData === "fav" ||
+                                                                  modelData === "trackno" || modelData === "year" || modelData === "bpm"
                                     anchors.verticalCenter: parent.verticalCenter
                                     x: _mid ? Math.round((parent.width - implicitWidth) / 2) : 4
                                     spacing: 3
@@ -738,6 +791,10 @@ Rectangle {
             property string coverArtId: model.coverArtId   || ""
             property string albName:    model.albumName    || ""
             property string albId:      model.albumId      || ""
+            property string albumTrkNo: model.albumTrackNo || ""
+            property string yearStr:    model.yearStr      || ""
+            property string dateStr:    model.dateAddedStr || ""
+            property string bpmStr:     model.bpmStr       || ""
 
             property bool rowHov:     false
             property bool isSelected: !isDisc && trkIdx === root.selectedTrkIdx
@@ -1037,6 +1094,43 @@ Rectangle {
                         x: root.colNum + root._colX("plays"); width: root.colPlays; height: parent.height
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         text: trackRow.playsStr; color: root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                    }
+
+                    // Track No. (real per-album metadata number, distinct from
+                    // the leading position/"#" column) — x driven by colOrder
+                    Text {
+                        visible: root.showTrackNo
+                        x: root.colNum + root._colX("trackno"); width: root.colTrackNo; height: parent.height
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: trackRow.albumTrkNo; color: root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                    }
+
+                    // Year — x driven by colOrder
+                    Text {
+                        visible: root.showYear
+                        x: root.colNum + root._colX("year"); width: root.colYear; height: parent.height
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: trackRow.yearStr; color: root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                    }
+
+                    // Date Added — x driven by colOrder
+                    Text {
+                        visible: root.showDate
+                        x: root.colNum + root._colX("date"); width: root._colRenderW("date"); height: parent.height
+                        verticalAlignment: Text.AlignVCenter; leftPadding: 4; elide: Text.ElideRight
+                        text: trackRow.dateStr; color: root.textSecondary
+                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                    }
+
+                    // BPM — x driven by colOrder
+                    Text {
+                        visible: root.showBpm
+                        x: root.colNum + root._colX("bpm"); width: root.colBpm; height: parent.height
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: trackRow.bpmStr; color: root.textSecondary
                         font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
                     }
                 }

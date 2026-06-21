@@ -794,6 +794,20 @@ class PlaybackMixin:
             if hasattr(self, 'tracks_browser'):
                 self.tracks_browser.refresh_track_bpm(track_id, bpm)
 
+            # Push to the other tracklists too (album/playlist detail —
+            # both the tab-embedded view AND the hidden "global" one used
+            # when navigating in from elsewhere, e.g. Favorites — plus
+            # favorites itself). Same live-update, no need to leave and
+            # come back for it to show up.
+            for attr in ('album_browser', 'playlists_browser'):
+                detail = getattr(getattr(self, attr, None), 'detail_view', None)
+                if detail:
+                    detail.refresh_track_bpm(track_id, bpm)
+            for attr in ('global_album_view', 'global_playlist_view', '_favorites_tab'):
+                view = getattr(self, attr, None)
+                if view:
+                    view.refresh_track_bpm(track_id, bpm)
+
             current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
             if track_id == current_track_id:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")

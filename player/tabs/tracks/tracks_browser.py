@@ -3296,8 +3296,8 @@ class TracksBrowser(QWidget):
 
         raw_bpm = t.get('bpm') or ''
         try:
-            bpm_val = int(float(raw_bpm))
-            bpm_str = str(bpm_val) if bpm_val > 0 else ''
+            bpm_val = float(raw_bpm)
+            bpm_str = f"{bpm_val:.1f}" if bpm_val > 0 else ''
         except (ValueError, TypeError):
             bpm_str = ''
         item.setText(12, bpm_str)
@@ -3338,7 +3338,7 @@ class TracksBrowser(QWidget):
             if str(t.get('id', '')) != str(track_id):
                 continue
             t['bpm'] = bpm
-            bpm_str = str(int(round(bpm))) if bpm > 0 else ''
+            bpm_str = f"{bpm:.1f}" if bpm > 0 else ''
             item.setText(12, bpm_str)
             break
 
