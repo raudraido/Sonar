@@ -1,6 +1,7 @@
 """favorites_view.py — Favorites tab: starred artists, albums, top artists
 and songs. QML (Carousel.qml + TrackListView.qml), per UI_MANIFEST.md."""
 import threading
+import time
 from collections import Counter
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem, QLineEdit, QFrame, QPushButton
@@ -654,6 +655,10 @@ class FavoritesView(QWidget):
     play_all       = pyqtSignal(object)   # emits list[dict] → play_whole_album
     shuffle_all    = pyqtSignal(object)   # emits list[dict] → play_whole_album shuffled
 
+    # Skip re-fetching everything from the server on every tab visit —
+    # only refresh if data is missing or older than this many seconds.
+    _REFRESH_STALE_SECS = 30
+
     def __init__(self, client=None, parent=None):
         super().__init__(parent)
         self._client       = client
@@ -661,6 +666,7 @@ class FavoritesView(QWidget):
         self._bg_color     = '14,14,14'
         self._worker       = None
         self._cover_worker = None
+        self._last_refresh_at = 0.0
         self._songs          = []
         self._songs_original = []
         self._selected_genres: set = set()
@@ -775,6 +781,7 @@ class FavoritesView(QWidget):
             return
         if self._worker and self._worker.isRunning():
             return
+        self._last_refresh_at = time.monotonic()
         self._selected_artist = ''
         self._selected_genres = set()
         self._bridge.genreFilterActiveChanged.emit(False)
@@ -1120,5 +1127,8 @@ class FavoritesView(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Refresh data every time the tab is shown so new favorites appear
-        self.refresh()
+        # Refresh so new favorites appear, but skip it if we just refreshed
+        # (e.g. fast tab-shuffling) to avoid piling up redundant network
+        # calls and worker threads on top of other tabs' own background work.
+        if time.monotonic() - self._last_refresh_at >= self._REFRESH_STALE_SECS:
+            self.refresh()

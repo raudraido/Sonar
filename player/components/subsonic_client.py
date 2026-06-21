@@ -399,13 +399,23 @@ class SubsonicClient:
                     r = self.session.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
             
            
+            # X-Total-Count can be dropped under concurrent load — retry once
+            # rather than silently treating len(data) (often just `end-start`,
+            # e.g. 1 for a count-only probe) as the true total.
+            if 'X-Total-Count' not in r.headers:
+                r2 = self.session.get(f"{self.base_url}/api/artist", params=params, headers=headers, timeout=10)
+                if 'X-Total-Count' in r2.headers:
+                    r = r2
+
             data = r.json()
             if not isinstance(data, list):
                 print(f"[DEBUG API] ERROR: Server returned {type(data)} instead of list. Content: {data}")
                 return [], 0
 
+            if 'X-Total-Count' not in r.headers:
+                print(f"[DEBUG API] WARNING: X-Total-Count header missing after retry; falling back to len(data)={len(data)}")
             total_count = int(r.headers.get('X-Total-Count', len(data)))
-            
+
             print(f"[DEBUG API] RESPONSE STATUS: {r.status_code}")
             print(f"[DEBUG API] X-TOTAL-COUNT: {total_count}")
             print(f"[DEBUG API] TOP 3 RAW ARTISTS FROM SERVER:")
@@ -618,6 +628,14 @@ class SubsonicClient:
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
                     r = self.session.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
 
+            # X-Total-Count can be dropped under concurrent load — retry once
+            # rather than silently treating len(data) (often just `end-start`)
+            # as the true total.
+            if 'X-Total-Count' not in r.headers:
+                r2 = self.session.get(f"{self.base_url}/api/song", params=params, headers=headers, timeout=10)
+                if 'X-Total-Count' in r2.headers:
+                    r = r2
+
             data = r.json()
             if not isinstance(data, list):
                 return [], 0
@@ -713,12 +731,20 @@ class SubsonicClient:
             
         try:
             r = self.session.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
-            
-            if r.status_code == 401: 
+
+            if r.status_code == 401:
                 if self.authenticate_native():
                     headers["x-nd-authorization"] = f"Bearer {self.native_jwt}"
                     r = self.session.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
-            
+
+            # X-Total-Count can be dropped under concurrent load — retry once
+            # rather than silently treating len(data) (often just `end-start`)
+            # as the true total.
+            if 'X-Total-Count' not in r.headers:
+                r2 = self.session.get(f"{self.base_url}/api/album", params=params, headers=headers, timeout=10)
+                if 'X-Total-Count' in r2.headers:
+                    r = r2
+
             data = r.json()
             if not isinstance(data, list):
                 return [], 0

@@ -34,7 +34,7 @@ elif platform.system() == "Linux":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # Use XWayland so Qt stylesheets apply to tooltips
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
-from PyQt6.QtCore import QSettings, qInstallMessageHandler, QtMsgType
+from PyQt6.QtCore import Qt, QSettings, qInstallMessageHandler, QtMsgType
 from PyQt6.QtGui import QIcon, QFont, QFontDatabase, QSurfaceFormat
 
 _FONT_NOISE = (
@@ -108,6 +108,13 @@ if __name__ == '__main__':
         _fmt.setVersion(3, 3)
         _fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
         QSurfaceFormat.setDefaultFormat(_fmt)
+
+    # Required by Qt whenever an app uses multiple QQuickWidget/QQuickView
+    # instances (Home, Albums, Artists, Playlists, Favorites, Now Playing
+    # tabs each host one) — without it, their render threads can race on
+    # OpenGL context creation during startup, causing intermittent freezes
+    # and garbled/missing text. Must be set before QApplication() is built.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
 
