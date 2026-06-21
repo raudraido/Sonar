@@ -978,6 +978,7 @@ class SonarPlayer(
         self._favorites_tab.album_clicked.connect(self.navigate_to_album)
         self._favorites_tab.artist_clicked.connect(self.navigate_to_artist)
         self._favorites_tab.genre_clicked.connect(self.navigate_to_genre)
+        self._favorites_tab.year_clicked.connect(self.navigate_to_year)
         self._favorites_tab.play_album.connect(self.play_whole_album)
         self._favorites_tab.play_all.connect(self.play_whole_album)
         self._favorites_tab.shuffle_all.connect(self.play_whole_album)
@@ -1035,6 +1036,7 @@ class SonarPlayer(
         self.global_album_view.artist_clicked.connect(self.navigate_to_artist)
         self.global_album_view.track_artist_clicked.connect(self.navigate_to_artist)
         self.global_album_view.genre_clicked.connect(self.navigate_to_genre)
+        self.global_album_view.year_clicked.connect(self.navigate_to_year)
         self.global_album_view.track_play_signal.connect(lambda tracks, idx: self.play_whole_album([tracks[idx]]))
         
         self.tabs.addTab(self.global_album_view, "")
@@ -1087,6 +1089,7 @@ class SonarPlayer(
         self.global_playlist_view.play_next_signal.connect(self.play_track_next)
         self.global_playlist_view.track_artist_clicked.connect(self.navigate_to_artist)
         self.global_playlist_view.genre_clicked.connect(self.navigate_to_genre)
+        self.global_playlist_view.year_clicked.connect(self.navigate_to_year)
 
         self.global_playlist_view.play_clicked.connect(self.play_global_playlist)
         self.global_playlist_view.shuffle_clicked.connect(self.shuffle_global_playlist)
@@ -1122,7 +1125,9 @@ class SonarPlayer(
         self.home_tab.album_clicked.connect(lambda data: self.navigate_to_album(data))
         self.album_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.album_browser.genre_filter_requested.connect(self.navigate_to_genre)
+        self.album_browser.year_filter_requested.connect(self.navigate_to_year)
         self.playlists_browser.genre_filter_requested.connect(self.navigate_to_genre)
+        self.playlists_browser.year_filter_requested.connect(self.navigate_to_year)
         self.artist_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         # artist_clicked / album_clicked already connected above during NowPlayingInfoTab init
         self.tabs.currentChanged.connect(self.on_tab_changed_global)

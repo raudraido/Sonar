@@ -138,6 +138,30 @@ class DragDropHelper(QObject):
 # ── Playlist detail — QML-based (mirrors AlbumDetailView) ─────────────────────
 
 
+def _track_duration_secs(t: dict) -> int:
+    """Duration in seconds — 'duration' is usually numeric seconds, but some
+    libraries store it as a 'M:SS'/'H:MM:SS' string; handle both safely."""
+    dur_ms = t.get('duration_ms')
+    if dur_ms:
+        try:    return int(dur_ms) // 1000
+        except (TypeError, ValueError): pass
+    raw = t.get('duration', 0)
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw or '').strip()
+    if not s:
+        return 0
+    try:
+        parts = s.split(':')
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        return int(float(s))
+    except (ValueError, IndexError):
+        return 0
+
+
 def _format_date_added(raw: str) -> str:
     """ISO 8601 'created' timestamp -> '15 Dec 2024' (matches the Tracks tab)."""
     if not raw:
@@ -225,8 +249,7 @@ class PlaylistDetailTrackModel(QAbstractListModel):
         for idx, t in enumerate(tracks):
             raw_star = t.get('starred', False)
             is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
-            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-            secs     = dur_ms // 1000
+            secs     = _track_duration_secs(t)
             plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
             num      = str(idx + 1)
             genre_raw = t.get('genre', '') or ''
@@ -448,6 +471,13 @@ class PlaylistDetailBridge(QObject):
         view = self._view
         QTimer.singleShot(0, lambda: view.genre_clicked.emit(genre))
 
+    @pyqtSlot(str)
+    def trackYearClicked(self, year: str):
+        if not year:
+            return
+        view = self._view
+        QTimer.singleShot(0, lambda: view.year_clicked.emit(year))
+
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
         tracks = self._view._tracks
@@ -667,6 +697,7 @@ class PlaylistDetailView(QWidget):
     track_artist_clicked = pyqtSignal(str)
     favorite_toggled     = pyqtSignal(str, bool)
     genre_clicked        = pyqtSignal(str)
+    year_clicked         = pyqtSignal(str)
     play_next_signal     = pyqtSignal(dict)
     queue_track_signal   = pyqtSignal(dict)
 
@@ -774,7 +805,7 @@ class PlaylistDetailView(QWidget):
                 if col == 'title':   return t.get('title',  '').lower()
                 if col == 'artist':  return t.get('artist', '').lower()
                 if col == 'album':   return t.get('album',  '').lower()
-                if col == 'dur':     return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                if col == 'dur':     return _track_duration_secs(t)
                 if col == 'plays':   return int(t.get('play_count') or 0)
                 if col == 'fav':     return int(bool(t.get('starred', False)))
                 if col == 'trackno':
@@ -814,8 +845,7 @@ class PlaylistDetailView(QWidget):
 
         title  = playlist_data.get('title') or playlist_data.get('name') or 'Unknown Playlist'
         owner  = playlist_data.get('owner', '')
-        dur    = sum(t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000 for t in tracks)
-        secs   = dur // 1000
+        secs   = sum(_track_duration_secs(t) for t in tracks)
         hrs, rem = divmod(secs, 3600)
         mins = rem // 60
         time_str = f"{hrs} hr {mins} min" if hrs else f"{mins} min"
@@ -1003,6 +1033,7 @@ class PlaylistsBrowser(QWidget):
     play_next_signal = pyqtSignal(dict)
     switch_to_artist_tab   = pyqtSignal(str)
     genre_filter_requested = pyqtSignal(str)
+    year_filter_requested = pyqtSignal(str)
     playlist_clicked = pyqtSignal(dict, object)
     album_clicked = pyqtSignal(dict)
 
@@ -1093,7 +1124,8 @@ class PlaylistsBrowser(QWidget):
         self.detail_view.play_next_signal.connect(self.play_next_signal.emit)
         self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab.emit)
         self.detail_view.genre_clicked.connect(self.genre_filter_requested.emit)
-        
+        self.detail_view.year_clicked.connect(self.year_filter_requested.emit)
+
         self.stack.addWidget(self.grid_view)
         self.stack.addWidget(self.detail_view)
         self.main_layout.addWidget(self.stack)

@@ -217,6 +217,30 @@ class ServerCountWorker(QThread): # Fetches the server's total album count (get_
         except Exception as e:
             print(f"[ServerCountWorker] Safely caught error: {e}")
 
+def _track_duration_secs(t: dict) -> int:
+    """Duration in seconds — 'duration' is usually numeric seconds, but some
+    libraries store it as a 'M:SS'/'H:MM:SS' string; handle both safely."""
+    dur_ms = t.get('duration_ms')
+    if dur_ms:
+        try:    return int(dur_ms) // 1000
+        except (TypeError, ValueError): pass
+    raw = t.get('duration', 0)
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw or '').strip()
+    if not s:
+        return 0
+    try:
+        parts = s.split(':')
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        return int(float(s))
+    except (ValueError, IndexError):
+        return 0
+
+
 def _format_date_added(raw: str) -> str:
     """ISO 8601 'created' timestamp -> '15 Dec 2024' (matches the Tracks tab)."""
     if not raw:
@@ -312,8 +336,7 @@ class AlbumDetailTrackModel(QAbstractListModel): # Read-only list model backing 
             for disc_pos, (track_idx, t) in enumerate(disc_groups[disc_num], 1):
                 raw_star = t.get('starred', False)
                 is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
-                dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-                secs     = dur_ms // 1000
+                secs     = _track_duration_secs(t)
                 plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
                 num      = str(t.get('track') or (disc_pos if multi_disc else track_idx + 1))
                 genre_raw = t.get('genre', '') or ''
@@ -484,6 +507,11 @@ class AlbumDetailBridge(QObject): # Bridge for the album detail QML (album_detai
     @pyqtSlot(str)
     def trackGenreClicked(self, genre: str):
         self._view.genre_clicked.emit(genre)
+
+    @pyqtSlot(str)
+    def trackYearClicked(self, year: str):
+        if year:
+            self._view.year_clicked.emit(year)
 
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
@@ -715,6 +743,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
     favorite_toggled = pyqtSignal(str, bool)   # track_id, is_fav
     fav_header_clicked = pyqtSignal()
     genre_clicked = pyqtSignal(str)
+    year_clicked = pyqtSignal(str)
     _meta_ready = pyqtSignal(str, str)
     _tracks_ready = pyqtSignal(list)
     _album_star_ready = pyqtSignal(bool)
@@ -841,7 +870,7 @@ class AlbumDetailView(QWidget): # The single-album detail page: a QML view (albu
             def sort_key(t):
                 if col == 'title':   return t.get('title',  '').lower()
                 if col == 'artist':  return t.get('artist', '').lower()
-                if col == 'dur':     return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+                if col == 'dur':     return _track_duration_secs(t)
                 if col == 'plays':   return int(t.get('play_count') or 0)
                 if col == 'fav':     return int(bool(t.get('starred', False)))
                 if col == 'trackno':
@@ -1151,6 +1180,7 @@ class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStacked
     play_next_signal = pyqtSignal(dict)
     switch_to_artist_tab = pyqtSignal(str)
     genre_filter_requested = pyqtSignal(str)
+    year_filter_requested = pyqtSignal(str)
     album_clicked = pyqtSignal(dict)
     
     def __init__(self, client):
@@ -1280,6 +1310,7 @@ class LibraryGridBrowser(QWidget): # Top-level album-browsing widget: a QStacked
         self.detail_view.artist_clicked.connect(self.switch_to_artist_tab)
         self.detail_view.track_artist_clicked.connect(self.switch_to_artist_tab)
         self.detail_view.genre_clicked.connect(self.genre_filter_requested)
+        self.detail_view.year_clicked.connect(self.year_filter_requested)
         self.detail_view.track_play_signal.connect(self._on_detail_track_play)
         
         self.stack.addWidget(self.detail_view)

@@ -198,6 +198,30 @@ class _StarredWorker(QThread):
         self.done.emit(data)
 
 
+def _track_duration_secs(t: dict) -> int:
+    """Duration in seconds — 'duration' is usually numeric seconds, but some
+    libraries store it as a 'M:SS'/'H:MM:SS' string; handle both safely."""
+    dur_ms = t.get('duration_ms')
+    if dur_ms:
+        try:    return int(dur_ms) // 1000
+        except (TypeError, ValueError): pass
+    raw = t.get('duration', 0)
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw or '').strip()
+    if not s:
+        return 0
+    try:
+        parts = s.split(':')
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        return int(float(s))
+    except (ValueError, IndexError):
+        return 0
+
+
 def _format_date_added(raw: str) -> str:
     """ISO 8601 'created' timestamp -> '15 Dec 2024' (matches the Tracks tab)."""
     if not raw:
@@ -287,8 +311,7 @@ class FavoritesTrackModel(QAbstractListModel):
         for idx, t in enumerate(tracks):
             raw_star = t.get('starred', False)
             is_fav   = raw_star.lower() in ('true', '1') if isinstance(raw_star, str) else bool(raw_star)
-            dur_ms   = t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
-            secs     = dur_ms // 1000
+            secs     = _track_duration_secs(t)
             plays    = str(t.get('play_count') or 0) if t.get('play_count') else '-'
             genre_raw = t.get('genre', '') or ''
             for sep in ['; ', ';', ' | ', '|', ' / ', '/']:
@@ -571,6 +594,13 @@ class FavoritesBridge(QObject):
         view = self._view
         QTimer.singleShot(0, lambda: view.genre_clicked.emit(genre))
 
+    @pyqtSlot(str)
+    def trackYearClicked(self, year: str):
+        if not year:
+            return
+        view = self._view
+        QTimer.singleShot(0, lambda: view.year_clicked.emit(year))
+
     @pyqtSlot(int)
     def trackFavoriteClicked(self, track_idx: int):
         self._view._toggle_track_favorite(track_idx)
@@ -711,6 +741,7 @@ class FavoritesView(QWidget):
     album_clicked  = pyqtSignal(dict)
     artist_clicked = pyqtSignal(str)
     genre_clicked  = pyqtSignal(str)
+    year_clicked   = pyqtSignal(str)
     play_album     = pyqtSignal(dict)
     play_track     = pyqtSignal(dict)
     play_all       = pyqtSignal(object)   # emits list[dict] → play_whole_album
@@ -1032,7 +1063,7 @@ class FavoritesView(QWidget):
             if col == 'title':   return t.get('title',  '').lower()
             if col == 'artist':  return t.get('artist', '').lower()
             if col == 'album':   return t.get('album',  '').lower()
-            if col == 'dur':     return t.get('duration_ms', 0) or int(t.get('duration', 0)) * 1000
+            if col == 'dur':     return _track_duration_secs(t)
             if col == 'plays':   return int(t.get('play_count') or 0)
             if col == 'fav':     return int(bool(t.get('starred', False)))
             if col == 'trackno':

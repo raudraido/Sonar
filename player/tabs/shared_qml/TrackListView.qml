@@ -1108,12 +1108,29 @@ Rectangle {
                     }
 
                     // Year — x driven by colOrder
-                    Text {
+                    Item {
                         visible: root.showYear
                         x: root.colNum + root._colX("year"); width: root.colYear; height: parent.height
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                        text: trackRow.yearStr; color: root.textSecondary
-                        font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                        property bool hov: false
+                        Text {
+                            anchors.centerIn: parent
+                            text: trackRow.yearStr
+                            color: parent.hov ? root.accentColor : root.textSecondary
+                            font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                            Rectangle {
+                                visible: parent.parent.hov && trackRow.yearStr !== ""
+                                y: parent.baselineOffset + 2
+                                width: parent.paintedWidth; height: 1
+                                color: parent.color
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true
+                            enabled: trackRow.yearStr !== ""
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: parent.hov = true; onExited: parent.hov = false
+                            onClicked: mouse => { root.bridge.trackYearClicked(trackRow.yearStr); mouse.accepted = true }
+                        }
                     }
 
                     // Date Added — x driven by colOrder

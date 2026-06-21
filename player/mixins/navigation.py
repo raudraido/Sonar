@@ -3,10 +3,30 @@ player/mixins/navigation.py — Tab navigation, back/forward history,
 spotlight routing, and footer label click handlers.
 """
 from PyQt6.QtWidgets import QApplication, QAbstractItemView, QPushButton, QListWidget
-from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel, QPoint
+from PyQt6.QtCore import Qt, QTimer, QItemSelectionModel, QPoint, QThread, pyqtSignal
 
 from player.workers import SyncCheckWorker
 from player.widgets import ArrowButton
+
+
+class _GenreIdResolveWorker(QThread):
+    """One-off fetch of the genre name→id map, independent of the Tracks
+    tab's own filter-values worker — avoids racing with its automatic
+    background kick-off (see navigate_to_genre). get_genres_native() is
+    cached on the client, so this is cheap after the first call."""
+    done = pyqtSignal(dict)
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+
+    def run(self):
+        try:
+            genre_map = self.client.get_genres_native() or {}
+        except Exception:
+            genre_map = {}
+        self.done.emit(genre_map)
+
 
 class NavigationMixin:
     def setup_global_navigation(self):
@@ -104,7 +124,13 @@ class NavigationMixin:
                 if hasattr(self, 'tracks_browser') and data and data.get('genre'):
                     self.tracks_browser._col_filters = {}
                     self.tracks_browser._apply_col_filter(6, {data['genre']})
-            
+
+            elif view == 'year_filter':
+                if hasattr(self, 'tracks_browser') and data and data.get('year'):
+                    self.tracks_browser._col_filters = {}
+                    self.tracks_browser._apply_col_filter(5, {str(data['year'])})
+
+
             elif view == 'playlists_browser':
                 if hasattr(self, 'playlists_browser'): 
                     self.playlists_browser.go_to_root()
@@ -276,16 +302,81 @@ class NavigationMixin:
         finally:
             self._tab_move_in_progress = False
 
+    def _ensure_tracks_client_ready(self):
+        """The Tracks tab sets its client lazily on first-ever visit, deferred
+        via QTimer.singleShot(0, ...) from _ensure_tab_initialized (which
+        fires synchronously off tabs.currentChanged, including for a
+        programmatic tab switch). That defer races with applying a filter
+        immediately after switching tabs: the filter's own fetch would run
+        with client=None and silently return nothing. Do the
+        client-assignment part of that init synchronously here first, and
+        mark the tab as already-initialized so the deferred callback (about
+        to be scheduled by setCurrentIndex) becomes a no-op."""
+        tb = self.tracks_browser
+        if not getattr(tb, 'client', None):
+            client = getattr(self, '_pending_client', None) or getattr(self, 'navidrome_client', None)
+            if client:
+                if not hasattr(self, '_initialized_tabs'):
+                    self._initialized_tabs = set()
+                self._initialized_tabs.add('tracks')
+                tb.client = client
+
     def navigate_to_genre(self, genre_name):
         if not genre_name:
             return
         tracks_idx = self.tabs.indexOf(self.tracks_browser)
+        tb = self.tracks_browser
+        self._ensure_tracks_client_ready()
+
         self.programmatic_nav = True
         self.tabs.setCurrentIndex(tracks_idx)
         self.programmatic_nav = False
-        self.tracks_browser._col_filters = {}
-        self.tracks_browser._apply_col_filter(6, {genre_name})
+        tb._col_filters = {}
         self.add_global_nav(tracks_idx, 'genre_filter', {'genre': genre_name})
+
+        def _do_filter():
+            tb._apply_col_filter(6, {genre_name})
+
+        if genre_name in getattr(tb, '_col_id_map', {}).get(6, {}):
+            # Genre name→id map already has this genre — filter immediately.
+            _do_filter()
+            return
+
+        # Genre name→id map isn't ready yet (the Tracks tab's own background
+        # filter-values worker hasn't finished — e.g. right after launch).
+        # Applying now would silently match nothing since _build_server_filters
+        # can't resolve genre_name to a genre_id. Resolve it via a dedicated,
+        # cache-backed one-off fetch instead — reusing tb's own worker here
+        # would race with the automatic kick-off it does after its first load,
+        # which can cancel the very worker we'd be waiting on.
+        client = getattr(tb, 'client', None)
+        if not client:
+            _do_filter()  # best effort — at least the tab switch happened
+            return
+        worker = _GenreIdResolveWorker(client)
+        def _on_done(genre_map, _w=worker):
+            if genre_map:
+                tb._col_id_map.setdefault(6, {}).update(genre_map)
+            _do_filter()
+        worker.done.connect(_on_done)
+        self._genre_id_worker = worker  # keep a strong ref while it runs
+        worker.start()
+
+    def navigate_to_year(self, year):
+        if not year:
+            return
+        tracks_idx = self.tabs.indexOf(self.tracks_browser)
+        tb = self.tracks_browser
+        self._ensure_tracks_client_ready()
+
+        self.programmatic_nav = True
+        self.tabs.setCurrentIndex(tracks_idx)
+        self.programmatic_nav = False
+        tb._col_filters = {}
+        self.add_global_nav(tracks_idx, 'year_filter', {'year': year})
+        # Year filtering is a direct value (no name→id lookup needed, unlike
+        # genre/artist/album), so it's always safe to apply immediately.
+        tb._apply_col_filter(5, {str(year)})
 
     def navigate_to_album(self, album_data):
         self.add_global_nav(self.global_album_tab_idx, 'album', album_data)
