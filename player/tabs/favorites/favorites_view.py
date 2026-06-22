@@ -1080,11 +1080,8 @@ class FavoritesView(QWidget):
         paired = sorted(enumerate(songs), key=sort_key, reverse=(dir_ == 'desc'))
         return [t for _, t in paired]
 
-    def _apply_filters(self):
-        """Artist/genre filter changed — row set/count changes, but
-        update_tracks avoids a full reset so scroll position is preserved."""
-        all_songs = list(self._songs_original)
-        songs = all_songs
+    def _filtered_songs(self) -> list:
+        songs = self._songs_original
         if self._selected_artist:
             songs = [s for s in songs if s.get('artist', '') == self._selected_artist]
         if self._selected_genres:
@@ -1092,14 +1089,22 @@ class FavoritesView(QWidget):
                 g = s.get('genre', '') or ''
                 return any(sel in g for sel in self._selected_genres)
             songs = [s for s in songs if _genre_match(s)]
+        return songs
+
+    def _apply_filters(self):
+        """Artist/genre filter changed — row set/count changes, but
+        update_tracks avoids a full reset so scroll position is preserved."""
+        songs = self._filtered_songs()
         self._songs = self._sort_songs(songs, self._sort_col, self._sort_dir)
         self._track_model.update_tracks(self._songs)
-        self._update_status_label(len(all_songs), len(songs))
+        self._update_status_label(len(self._songs_original), len(songs))
 
     def _apply_sort(self, col: str, dir_: str):
-        """Re-sort the currently filtered rows in place — same row count, so
+        """Re-sort the currently filtered rows — rebuilt from the unsorted
+        filtered set (not the already-sorted self._songs) so that cycling
+        back to no sort restores the original order. Same row count, so
         use reorder_tracks (no model reset) to preserve scroll position."""
-        self._songs = self._sort_songs(self._songs, col, dir_)
+        self._songs = self._sort_songs(self._filtered_songs(), col, dir_)
         self._track_model.reorder_tracks(self._songs)
 
     def _update_status_label(self, total: int, shown: int):
