@@ -271,12 +271,17 @@ Rectangle {
                                 delegate: Text {
                                     property bool hov: false
                                     text: modelData.text
-                                    opacity: modelData.isSep ? 1.0 : 1.0
-                                    color: !modelData.isSep && hov ? root.textPrimary : root.textSecondary
+                                    opacity: modelData.isSep ? 0.5 : 1.0
+                                    color: !modelData.isSep && hov ? root.accentColor : root.textSecondary
                                     font.pixelSize: root.fontSizePrimary
                                     font.bold: true
                                     font.family: root.fontFamily
-                                    font.underline: !modelData.isSep && hov
+                                    Rectangle {
+                                        visible: !modelData.isSep && parent.hov
+                                        y: parent.baselineOffset + 2
+                                        width: parent.paintedWidth; height: 1
+                                        color: parent.color
+                                    }
                                     MouseArea {
                                         anchors.fill: parent
                                         enabled: !modelData.isSep
@@ -290,7 +295,7 @@ Rectangle {
                             }
                             Text {
                                 visible: root.albumName !== ""
-                                text: "  --  "
+                                text: "  -  "
                                 color: root.textSecondary
                                 font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
                             }
@@ -299,9 +304,14 @@ Rectangle {
                                 visible: root.albumName !== ""
                                 property bool hov: false
                                 text: root.albumName
-                                color: hov ? root.textPrimary : root.textSecondary
+                                color: hov ? root.accentColor : root.textSecondary
                                 font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
-                                font.underline: hov
+                                Rectangle {
+                                    visible: albumLinkText.hov
+                                    y: albumLinkText.baselineOffset + 2
+                                    width: albumLinkText.paintedWidth; height: 1
+                                    color: albumLinkText.color
+                                }
                                 MouseArea {
                                     anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onEntered: albumLinkText.hov = true; onExited: albumLinkText.hov = false
@@ -310,9 +320,28 @@ Rectangle {
                             }
                             Text {
                                 visible: root.yearText !== ""
-                                text: " • " + root.yearText
+                                text: " • "
                                 color: root.textSecondary
                                 font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
+                            }
+                            Text {
+                                id: yearLinkText
+                                visible: root.yearText !== ""
+                                property bool hov: false
+                                text: root.yearText
+                                color: hov ? root.accentColor : root.textSecondary
+                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
+                                Rectangle {
+                                    visible: yearLinkText.hov
+                                    y: yearLinkText.baselineOffset + 2
+                                    width: yearLinkText.paintedWidth; height: 1
+                                    color: yearLinkText.color
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onEntered: yearLinkText.hov = true; onExited: yearLinkText.hov = false
+                                    onClicked: nowPlayingBridge.yearClicked(root.yearText)
+                                }
                             }
                         }
 
@@ -326,10 +355,15 @@ Rectangle {
                                     property bool hov: false
                                     text: modelData.text
                                     opacity: modelData.isSep ? 0.5 : 1.0
-                                    color: !modelData.isSep && hov ? root.textPrimary : root.textSecondary
+                                    color: !modelData.isSep && hov ? root.accentColor : root.textSecondary
                                     font.pixelSize: root.fontSizeSecondary
                                     font.family: root.fontFamily
-                                    font.underline: !modelData.isSep && hov
+                                    Rectangle {
+                                        visible: !modelData.isSep && parent.hov
+                                        y: parent.baselineOffset + 2
+                                        width: parent.paintedWidth; height: 1
+                                        color: parent.color
+                                    }
                                     MouseArea {
                                         anchors.fill: parent
                                         enabled: !modelData.isSep

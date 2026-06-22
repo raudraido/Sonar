@@ -11,6 +11,10 @@ import time
 
 _ARTIST_SEP = re.compile(r'\s*(?:///|•|feat\.|Feat\.|vs\.)\s*')
 _GENRE_SEP  = re.compile(r' /// | • | / |,\s*|;\s*')
+# Capturing group keeps the separator text itself (" feat. ", " vs. ", " • ",
+# " /// ", " / ") in the split result, so the original wording survives —
+# mirrors the JS regex TrackListView.qml uses for the same artist string.
+_ARTIST_TOKEN_RE = re.compile(r'( /// | • | / | feat\. | Feat\. | vs\. )')
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import (Qt, QThread, pyqtSignal, pyqtSlot, pyqtProperty, QSettings, QTimer,
@@ -336,6 +340,16 @@ def _tokenize(parts: list[str]) -> list[dict]:
     return tokens
 
 
+def _tokenize_artist(artist: str) -> list[dict]:
+    """Raw artist string -> [{text, isSep}, ...], keeping the original
+    separator wording ("feat.", "vs.", "///", "•", "/") instead of
+    normalizing everything to ' • ' like _tokenize() does."""
+    if not artist:
+        return []
+    parts = [p for p in _ARTIST_TOKEN_RE.split(artist) if p != '']
+    return [{'text': p, 'isSep': bool(_ARTIST_TOKEN_RE.fullmatch(p))} for p in parts]
+
+
 # ── Cover-zoom overlay (Pattern A — top-level window, see UI_MANIFEST.md §3) ─
 
 class _CoverOverlay(QWidget):
@@ -498,6 +512,11 @@ class NowPlayingBridge(QObject):
     def genreClicked(self, genre: str):
         self._view.genre_clicked.emit(genre)
 
+    @pyqtSlot(str)
+    def yearClicked(self, year: str):
+        if year:
+            self._view.year_clicked.emit(year)
+
     @pyqtSlot(int, str)
     def trackPlayClicked(self, index: int, source: str):
         rows = self._view._album_tracks_sorted if source == 'album' else self._view._top_songs_tracks
@@ -534,6 +553,7 @@ class NowPlayingInfoTab(QWidget):
     artist_clicked    = pyqtSignal(str)
     album_clicked     = pyqtSignal(dict)
     genre_clicked     = pyqtSignal(str)
+    year_clicked      = pyqtSignal(str)
     favorite_toggled  = pyqtSignal(str, bool)   # (track_id, new_starred_state)
     lyrics_requested  = pyqtSignal()
     play_requested = pyqtSignal(dict)
@@ -883,8 +903,7 @@ class NowPlayingInfoTab(QWidget):
         album_id = track.get('albumId') or track.get('album_id', '')
         year     = str(track.get('year', '') or '')
 
-        artists = [a for a in _ARTIST_SEP.split(artist) if a.strip()] if artist else []
-        b.artistTokensChanged.emit(_tokenize(artists))
+        b.artistTokensChanged.emit(_tokenize_artist(artist))
         b.albumNameChanged.emit(album)
         b.albumIdChanged.emit(album_id)
         b.yearTextChanged.emit(year)

@@ -300,7 +300,47 @@ widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
   stored `"r,g,b"` theme string into a `QColor` are the standard way to share
   one color across QML clear-color and native-overlay backgrounds.
 
-## 5. Scrollbars
+## 5. Clickable inline text tokens
+
+Pattern for inline lists of clickable names interleaved with non-clickable
+separators (artist tokens, genre chips, "Go to Album/Artist" links, bio
+"Read more") — used in `now_playing.qml`, `TrackListView.qml`,
+`album_detail.qml`, `artist_detail_page.qml`, `album_grid.qml`:
+
+- **Data shape**: `[{text, isSep}, ...]`. Build this in Python with a
+  capturing-group split (e.g. `_tokenize_artist()` in
+  `now_playing_info.py`) so the original separator text survives — don't
+  normalize every separator to a literal `" • "` if the source string uses
+  varied separators (`feat.`, `vs.`, `///`, `/`). When the QML side does its
+  own splitting in JS instead (`TrackListView.qml`), use the same
+  capturing-group regex and an `isSep` test against the same pattern.
+- **Non-separator (clickable) token**: `color: hov ? root.accentColor :
+  root.textSecondary`. `root.accentColor` is the theme's master/accent
+  color — never `textPrimary` for hover state on these tokens.
+- **Underline on hover — always the `Rectangle` line, never
+  `font.underline`**: `font.underline` draws right against the glyph
+  baseline with no gap, which reads as cramped/touching the text (seen in
+  `now_playing.qml`'s artist-token row before this was fixed). Use a child
+  `Rectangle` instead, matching every other underline in the codebase
+  (`TrackListView.qml`, the album-tracks/top-songs rows in
+  `now_playing.qml`):
+  ```qml
+  Rectangle {
+      visible: !isSep && parent.hov
+      y: parent.baselineOffset + 2
+      width: parent.paintedWidth; height: 1
+      color: parent.color
+  }
+  ```
+  The `+ 2` gives the visible gap between text and underline; `paintedWidth`
+  (not `width`) keeps the line exactly as wide as the rendered glyphs.
+- **Separator token**: not clickable (`enabled: !isSep` on the `MouseArea`,
+  or omit the `MouseArea` entirely), dimmed via `opacity: isSep ? 0.4-0.5 :
+  1.0`, never colored/underlined on hover.
+- **MouseArea**: `hoverEnabled: true`, `cursorShape: Qt.PointingHandCursor`,
+  toggles a local `hov` bool on `onEntered`/`onExited`.
+
+## 6. Scrollbars
 
 Use `scrollbar_css(color)` (`player/mixins/visuals.py:420`) for any
 `QScrollBar` stylesheet — hidden by default, shown in the accent/master color

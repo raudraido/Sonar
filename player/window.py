@@ -909,6 +909,7 @@ class SonarPlayer(
         self._now_playing_panel.artist_clicked.connect(self.navigate_to_artist)
         self._now_playing_panel.album_clicked.connect(self.navigate_to_album)
         self._now_playing_panel.genre_clicked.connect(self.navigate_to_genre)
+        self._now_playing_panel.year_clicked.connect(self.navigate_to_year)
         self._now_playing_panel.play_requested.connect(self._play_track_from_info)
         self._now_playing_panel.favorite_toggled.connect(
             lambda tid, state: (
