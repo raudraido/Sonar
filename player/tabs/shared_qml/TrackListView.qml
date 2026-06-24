@@ -1214,17 +1214,24 @@ Rectangle {
                         readonly property string _albName: root.fixedAlbumName !== "" ? root.fixedAlbumName : trackRow.albName
                         readonly property string _albId:   root.fixedAlbumName !== "" ? root.fixedAlbumId   : trackRow.albId
                         Text {
+                            id: albText
                             x: 4; width: parent.width - 4
                             anchors.verticalCenter: parent.verticalCenter
                             text: parent._albName
                             color: parent.hov ? root.accentColor : root.textSecondary
                             font.pixelSize: root.fontSizeSecondary; elide: Text.ElideRight; font.family: root.fontFamily
                             Rectangle { visible: parent.parent.hov; y: parent.baselineOffset + 2; width: parent.paintedWidth; height: 1; color: parent.color }
-                        }
-                        MouseArea {
-                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onEntered: parent.hov = true; onExited: parent.hov = false
-                            onClicked: mouse => { root.bridge.trackAlbumClicked(parent._albId, parent._albName); mouse.accepted = true }
+                            // Click/hover area matches only the rendered glyphs
+                            // (paintedWidth), not the whole column cell — so
+                            // navigating to the album only fires when the
+                            // pointer is directly over the album title text.
+                            MouseArea {
+                                x: 0; y: 0
+                                width: albText.paintedWidth; height: albText.height
+                                hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onEntered: albText.parent.hov = true; onExited: albText.parent.hov = false
+                                onClicked: mouse => { root.bridge.trackAlbumClicked(albText.parent._albId, albText.parent._albName); mouse.accepted = true }
+                            }
                         }
                     }
 

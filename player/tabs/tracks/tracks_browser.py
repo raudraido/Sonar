@@ -3165,7 +3165,14 @@ class TracksBrowser(QWidget):
                 for _ in range(60):  # wait up to 30s
                     time.sleep(0.5)
                     if not self.client.is_scanning():
-                        break
+                        # Navidrome's is_scanning() flag can flip to "done"
+                        # slightly before the index write actually commits —
+                        # settle briefly and re-check once before trusting it,
+                        # so the refetch that follows doesn't race a still-
+                        # finishing scan and silently return pre-scan data.
+                        time.sleep(1.5)
+                        if not self.client.is_scanning():
+                            break
             except Exception as e:
                 print(f"[Refresh] scan error: {e}")
             finally:
