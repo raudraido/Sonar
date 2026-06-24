@@ -190,13 +190,10 @@ class NavigationMixin:
         else:                                      view_type = 'unknown'
 
         if widget is self.tracks_browser:
-            tree = self.tracks_browser.tree
-            tree.setFocus(Qt.FocusReason.OtherFocusReason)
-            if tree.topLevelItemCount() > 0 and not tree.currentItem():
-                tree.setCurrentItem(
-                    tree.topLevelItem(0), 0,
-                    QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows
-                )
+            tb = self.tracks_browser
+            tb.qml_view.setFocus(Qt.FocusReason.OtherFocusReason)
+            if tb.tracks and tb.tracks_bridge._selected_trkidx < 0:
+                tb.tracks_bridge.selectedTrackChanged.emit(0)
         elif widget is self.album_browser:
             self.album_browser.grid_view.setFocus(Qt.FocusReason.OtherFocusReason)
         elif widget is self.artist_browser:

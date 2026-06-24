@@ -69,6 +69,39 @@ Rectangle {
     readonly property string searchText: root._searchBar ? root._searchBar.searchText : ""
     property int    selectedTrkIdx: -1
 
+    // ── Multi-select (opt-in — defaults false so existing single-select
+    //    consumers (album/playlist/artist) are completely unaffected) ───────
+    property bool   enableMultiSelect: false
+    property var    multiSelected: ({})   // {trkIdx: true, ...} set surrogate
+    property int    _selectAnchorRow: -1  // ListView row index, not trkIdx (rows aren't contiguous after sort/filter)
+    // Column ids that get a header filter-icon (value-checklist popup),
+    // opened via bridge.colFilterClicked. Empty by default — only Tracks sets this.
+    property var    filterableCols: []
+
+    // ── Toolbar row customization (opt-in, default = today's behavior) ─────
+    // Show the built-in search box (on by default, like today).
+    property bool   enableOwnSearch: true
+    // When true, the search box's text is forwarded to
+    // bridge.trackSearchTextChanged(text) instead of (not in addition to)
+    // locally hiding non-matching rows — for hosts whose rows are already a
+    // single server-paginated page, where client-side substring matching
+    // against just that page would be misleading (Tracks).
+    property bool   searchIsServerSide: false
+    // Show a refresh icon button in the toolbar — emits bridge.refreshClicked().
+    property bool   enableRefreshButton: false
+    // Show a "clear filters" icon button — visible only while filtersActive
+    // is true. Emits bridge.clearFiltersClicked().
+    property bool   enableClearFiltersButton: false
+    // Show a "play filtered tracks" icon button (click = play, press+hold =
+    // shuffle) — visible only while filtersActive is true. Emits
+    // bridge.playFilteredClicked() / bridge.shuffleFilteredClicked().
+    property bool   enablePlayFilteredButton: false
+    // Host-driven: whether any column filter is currently active (controls
+    // enableClearFiltersButton/enablePlayFilteredButton visibility).
+    property bool   filtersActive: false
+    // Free-text status shown at the toolbar's left edge (e.g. "35,730 tracks").
+    property string toolbarStatusText: ""
+
     // ── Drag-reorder state (only live when enableRowReorder) ────────────────
     property int    _dragFromIdx:    -1
     property int    _dragToIdx:      -1
@@ -354,6 +387,13 @@ Rectangle {
     Connections {
         target: root.bridge
         function onSelectedTrackChanged(idx)    { root.selectedTrkIdx = idx }
+        // Shift+arrow range select (Tracks only — other bridges don't have
+        // this signal, which Connections simply ignores).
+        function onMultiSelectRangeChanged(ids) {
+            var m = {}
+            for (var i = 0; i < ids.length; i++) m[ids[i]] = true
+            root.multiSelected = m
+        }
         function onPlayingStatusChanged(tid, playing) {
             root.playingTrackId     = tid
             root.isCurrentlyPlaying = playing
@@ -453,7 +493,7 @@ Rectangle {
         header: Item {
             id: pageHeader
             width: trackList.width
-            height: headerLoader.y + headerLoader.height + 10 + cardLid.height + skeletonRows.height
+            height: headerLoader.y + headerLoader.height + (root.headerCard ? 10 : 0) + cardLid.height + skeletonRows.height
 
             Component.onCompleted: root._searchBar = trackSearchBar
 
@@ -468,7 +508,11 @@ Rectangle {
             Rectangle {
                 id: cardLid
                 x: 12
-                y: headerLoader.y + headerLoader.height + 10
+                // The +10 gap separates the page-specific headerCard from
+                // the tracklist card below it — skip it when there's no
+                // headerCard (Tracks) so the tracklist sits a plain 12px
+                // from the top, matching every other page's outer inset.
+                y: headerLoader.y + headerLoader.height + (root.headerCard ? 10 : 0)
                 width: parent.width - 24
                 height: 12 + toolbarRow.height + colHeader.height
                 color: root.cardBgColor
@@ -489,7 +533,86 @@ Rectangle {
                 x: 20; y: cardLid.y + 12
                 width: parent.width - 40; height: 36
 
-                // Burger button — column picker (right of search)
+                // "Play filtered tracks" button — leftmost; click = play,
+                // press+hold = shuffle. Visible only while filtersActive.
+                Item {
+                    id: playFilteredBtn
+                    readonly property bool _shown: root.enablePlayFilteredButton && root.filtersActive
+                    visible: width > 0
+                    width: _shown ? 32 : 0; height: 32
+                    anchors.left:           parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    clip: true
+
+                    Rectangle {
+                        anchors.fill: parent; radius: 4
+                        color: playFilteredHov.containsMouse ? root.hoverColor : "transparent"
+                    }
+                    Image {
+                        anchors.centerIn: parent; width: 18; height: 18
+                        source: "image://albumicons/play-button_" + root.accentColor.replace("#","")
+                        cache: false; mipmap: true; smooth: true
+                    }
+                    MouseArea {
+                        id: playFilteredHov
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onPressed: playFilteredHoldTimer.restart()
+                        onReleased: {
+                            if (playFilteredHoldTimer.running) {
+                                playFilteredHoldTimer.stop()
+                                root.bridge.playFilteredClicked()
+                            }
+                        }
+                        onCanceled: playFilteredHoldTimer.stop()
+                        Timer {
+                            id: playFilteredHoldTimer
+                            interval: 600
+                            onTriggered: root.bridge.shuffleFilteredClicked()
+                        }
+                    }
+                }
+
+                // "Clear filters" button — right after play-filtered, visible
+                // only while filtersActive.
+                Item {
+                    id: clearFiltersBtn
+                    readonly property bool _shown: root.enableClearFiltersButton && root.filtersActive
+                    visible: width > 0
+                    width: _shown ? 32 : 0; height: 32
+                    anchors.left:           playFilteredBtn.right
+                    anchors.leftMargin:     _shown ? 4 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    clip: true
+
+                    Rectangle {
+                        anchors.fill: parent; radius: 4
+                        color: clearFiltersHov.containsMouse ? root.hoverColor : "transparent"
+                    }
+                    Image {
+                        anchors.centerIn: parent; width: 18; height: 18
+                        source: "image://albumicons/filter_off-2_" + root.accentColor.replace("#","")
+                        cache: false; mipmap: true; smooth: true
+                    }
+                    MouseArea {
+                        id: clearFiltersHov
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.bridge.clearFiltersClicked()
+                    }
+                }
+
+                Text {
+                    visible: root.toolbarStatusText !== ""
+                    anchors.left:           clearFiltersBtn.right
+                    anchors.leftMargin:     (playFilteredBtn._shown || clearFiltersBtn._shown) ? 8 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.toolbarStatusText
+                    color: root.textSecondary; font.bold: true
+                    font.pixelSize: root.fontSizePrimary; font.family: root.fontFamily
+                }
+
+                // Burger button — column picker (always rightmost)
                 Item {
                     id: burgerBtn
                     anchors.right:          parent.right
@@ -516,9 +639,39 @@ Rectangle {
                     }
                 }
 
+                // Refresh button — left of the burger, opt-in. width:0 (not
+                // just visible:false) so the chain below collapses cleanly
+                // with no reserved gap when disabled.
+                Item {
+                    id: refreshBtn
+                    visible: width > 0
+                    width: root.enableRefreshButton ? 32 : 0; height: 32
+                    anchors.right:          burgerBtn.left
+                    anchors.rightMargin:    root.enableRefreshButton ? 4 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    clip: true
+
+                    Rectangle {
+                        anchors.fill: parent; radius: 4
+                        color: refreshHov.containsMouse ? root.hoverColor : "transparent"
+                    }
+                    Image {
+                        anchors.centerIn: parent; width: 18; height: 18
+                        source: "image://albumicons/refresh_" + root.accentColor.replace("#","")
+                        cache: false; mipmap: true; smooth: true
+                    }
+                    MouseArea {
+                        id: refreshHov
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.bridge.refreshClicked()
+                    }
+                }
+
                 SearchBar {
                     id: trackSearchBar
-                    anchors.right:  burgerBtn.left
+                    visible: root.enableOwnSearch
+                    anchors.right:  refreshBtn.left
                     anchors.top:    parent.top
                     anchors.bottom: parent.bottom
                     accentColor:       root.accentColor
@@ -532,6 +685,7 @@ Rectangle {
                     placeholderText:   "Search tracks..."
                     onOpened: root.bridge.searchCtl.setSearchActive(true)
                     onClosed: root.bridge.searchCtl.setSearchActive(false)
+                    onSearchTextChanged: if (root.searchIsServerSide) root.bridge.trackSearchTextChanged(trackSearchBar.searchText)
                 }
             }
 
@@ -601,8 +755,12 @@ Rectangle {
                             opacity: colHeader._dragFrom === index ? 0 : 1
 
                             // ── label + sort arrow ────────────────────────
+                            // z:6 — must paint above the drag/sort MouseArea (z:5) on this
+                            // same hdrCell so the filter icon's nested MouseArea (below) can
+                            // actually receive clicks instead of always losing the hit-test.
                             Item {
                                 anchors.fill: parent
+                                z: 6
                                 Row {
                                     readonly property bool _mid: modelData === "dur" || modelData === "plays" || modelData === "fav" ||
                                                                   modelData === "trackno" || modelData === "year" || modelData === "bpm"
@@ -621,6 +779,34 @@ Rectangle {
                                         color: root.accentColor
                                         font.pixelSize: root.fontSizeSecondary - 3; font.bold: true
                                         verticalAlignment: Text.AlignVCenter
+                                    }
+                                    // ── Filter icon (opt-in via filterableCols — only Tracks sets
+                                    //    this) — opens the host's existing value-checklist popup. ──
+                                    Item {
+                                        visible: root.filterableCols.indexOf(modelData) >= 0
+                                        width: 14; height: 14
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "▾"
+                                            color: filterIconHov.containsMouse ? root.accentColor : root.textSecondary
+                                            font.pixelSize: root.fontSizeSecondary
+                                            font.bold: true
+                                        }
+                                        MouseArea {
+                                            id: filterIconHov
+                                            anchors.fill: parent; anchors.margins: -4
+                                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            z: 6
+                                            onClicked: mouse => {
+                                                // Use hdrCell's own bounds (not this icon's) so the
+                                                // popup anchors under the whole column section, matching
+                                                // the QWidget SmartSortHeader.filter_clicked's QRect.
+                                                var gp = hdrCell.mapToGlobal(0, hdrCell.height)
+                                                root.bridge.colFilterClicked(modelData, gp.x, gp.y, hdrCell.width, hdrCell.height)
+                                                mouse.accepted = true
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -797,9 +983,14 @@ Rectangle {
             property string bpmStr:     model.bpmStr       || ""
 
             property bool rowHov:     false
-            property bool isSelected: !isDisc && trkIdx === root.selectedTrkIdx
+            // selectedTrkIdx drives keyboard/single-row selection (always
+            // checked); multiSelected additionally lights up Ctrl/Shift
+            // multi-selected rows when enableMultiSelect is on. Both can be
+            // true at once (e.g. keyboard-navigate, then Ctrl-click more).
+            property bool isSelected: !isDisc && (trkIdx === root.selectedTrkIdx
+                || (root.enableMultiSelect && !!root.multiSelected[trkIdx]))
             property bool isPlaying:  root.isCurrentlyPlaying && trkId === root.playingTrackId
-            property bool matchSearch: root.searchText === ""
+            property bool matchSearch: root.searchIsServerSide || root.searchText === ""
                 || trkTitle.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
                 || artName.toLowerCase().indexOf(root.searchText.toLowerCase())  >= 0
                 || genreStr.toLowerCase().indexOf(root.searchText.toLowerCase()) >= 0
@@ -1159,10 +1350,65 @@ Rectangle {
                     acceptedButtons: Qt.LeftButton | Qt.RightButton; z: 2
                     propagateComposedEvents: true
                     onClicked: mouse => {
+                        // Clicking inside a native createWindowContainer surface
+                        // doesn't reliably hand OS-level keyboard focus back to
+                        // the embedding QWidget — ask the host page to reclaim
+                        // it explicitly so Up/Down navigation keeps working
+                        // after the user interacts with a row.
+                        if (typeof root.bridge.rowInteracted === "function") root.bridge.rowInteracted()
                         if (mouse.button === Qt.RightButton) {
                             var gp = mapToGlobal(mouse.x, mouse.y)
-                            root.bridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
+                            if (root.enableMultiSelect && Object.keys(root.multiSelected).length > 1
+                                    && root.multiSelected[trackRow.trkIdx]) {
+                                var idxList = Object.keys(root.multiSelected).map(Number)
+                                root.bridge.trackMultiContextMenuRequested(idxList, gp.x, gp.y)
+                            } else {
+                                if (root.enableMultiSelect) {
+                                    var sel = {}; sel[trackRow.trkIdx] = true
+                                    root.multiSelected = sel
+                                    root._selectAnchorRow = trackRow.rowIdx
+                                }
+                                root.bridge.trackContextMenuRequested(trackRow.trkIdx, gp.x, gp.y)
+                            }
                             mouse.accepted = true
+                        } else if (root.enableMultiSelect) {
+                            // A mouse click takes over from keyboard
+                            // selection — clear it so the two highlight
+                            // mechanisms don't show two different rows
+                            // selected at once.
+                            root.selectedTrkIdx = -1
+                            if (mouse.modifiers & Qt.ControlModifier) {
+                                var next = {}
+                                for (var k in root.multiSelected) next[k] = true
+                                if (next[trackRow.trkIdx]) delete next[trackRow.trkIdx]
+                                else next[trackRow.trkIdx] = true
+                                root.multiSelected = next
+                                root._selectAnchorRow = trackRow.rowIdx
+                            } else if ((mouse.modifiers & Qt.ShiftModifier) && root._selectAnchorRow >= 0) {
+                                var lo = Math.min(root._selectAnchorRow, trackRow.rowIdx)
+                                var hi = Math.max(root._selectAnchorRow, trackRow.rowIdx)
+                                var range = {}
+                                for (var r = lo; r <= hi; r++) {
+                                    // Prefer the live delegate's trkIdx (correct even when grouped/
+                                    // reordered); fall back to the row position itself for rows
+                                    // outside the ListView's cacheBuffer (flat, ungrouped lists —
+                                    // the only current enableMultiSelect consumer — have trkIdx === row).
+                                    var rowItem = trackList.itemAtIndex(r)
+                                    range[rowItem ? rowItem.trkIdx : r] = true
+                                }
+                                root.multiSelected = range
+                            } else {
+                                var single = {}; single[trackRow.trkIdx] = true
+                                root.multiSelected = single
+                                root._selectAnchorRow = trackRow.rowIdx
+                            }
+                            // Leave unaccepted (with propagateComposedEvents
+                            // above) so the click still reaches the artist/
+                            // album/year/genre link MouseAreas underneath —
+                            // this row-select bookkeeping has already run as
+                            // a side effect regardless of who else handles
+                            // the click in the same spot.
+                            mouse.accepted = false
                         } else {
                             mouse.accepted = false
                         }
