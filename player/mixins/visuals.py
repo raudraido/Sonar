@@ -922,9 +922,6 @@ class VisualsMixin:
         if hasattr(self, '_queue_tree_panel') and hasattr(self._queue_tree_panel, 'set_bg_color'):
             self._queue_tree_panel.set_bg_color(bg)
         if hasattr(self, '_queue_panel') and hasattr(self._queue_panel, '_panel_header'):
-            self._queue_panel._panel_header.setStyleSheet(
-                f'QWidget {{ background: transparent; border-bottom: {bw}px solid {bc}; }}'
-            )
             from PyQt6.QtWidgets import QWidget as _QW
             _bb = self._queue_panel.findChild(_QW, 'QueueBottomBar')
             if _bb:

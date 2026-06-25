@@ -1438,7 +1438,12 @@ class SonarPlayer(
             return
         track = self.playlist_data[idx]
         raw = track.get('starred', False)
-        current = raw.lower() in ('true', '1') if isinstance(raw, str) else bool(raw)
+        # Subsonic returns 'starred' as a timestamp string when favorited
+        # ('' when not) — only a manual toggle ever produces a literal
+        # 'true'/'1'/bool, so checking for those specifically left
+        # server-sourced favorited tracks unable to be un-favorited here.
+        current = (raw.strip().lower() not in ('', 'false', '0', 'none')
+                   if isinstance(raw, str) else bool(raw))
         new_state = not current
         track['starred'] = new_state
         if idx == self.current_index and hasattr(self, 'heart_btn'):

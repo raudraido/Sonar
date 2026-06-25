@@ -1628,9 +1628,9 @@ Rectangle {
             x: 12
             y: Math.max(0, Math.min(dragOverlay.height - 52, root._dragGhostY - 26))
             width: parent.width - 24; height: 52
-            color: root.cardBgColor
+            color: Qt.lighter(root.cardBgColor, 1.05)
             border.color: root.accentColor; border.width: 1
-            radius: 4; opacity: 0.93
+            radius: 4; opacity: 0.80
 
             Row {
                 x: 24; y: 0; height: parent.height; width: ghostRow.width - 48
