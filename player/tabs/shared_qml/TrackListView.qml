@@ -404,6 +404,11 @@ Rectangle {
     // ── Bridge connections ─────────────────────────────────────────────────
     Connections {
         target: root.bridge
+        // Several handlers below (multiSelectRangeChanged, activeFilterColsChanged,
+        // ...) are Tracks-only signals — other bridges don't have them, and
+        // since `bridge` is `property var` Qt can't statically verify that at
+        // parse time, so it'd otherwise warn on every non-Tracks host page.
+        ignoreUnknownSignals: true
         function onSelectedTrackChanged(idx)    { root.selectedTrkIdx = idx }
         // Shift+arrow range select (Tracks only — other bridges don't have
         // this signal, which Connections simply ignores).
