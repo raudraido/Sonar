@@ -801,8 +801,7 @@ Rectangle {
                                             z: 6
                                             onClicked: mouse => {
                                                 // Use hdrCell's own bounds (not this icon's) so the
-                                                // popup anchors under the whole column section, matching
-                                                // the QWidget SmartSortHeader.filter_clicked's QRect.
+                                                // popup anchors under the whole column section.
                                                 var gp = hdrCell.mapToGlobal(0, hdrCell.height)
                                                 root.bridge.colFilterClicked(modelData, gp.x, gp.y, hdrCell.width, hdrCell.height)
                                                 mouse.accepted = true
