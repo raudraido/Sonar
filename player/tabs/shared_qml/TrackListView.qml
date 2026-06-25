@@ -77,6 +77,9 @@ Rectangle {
     // Column ids that get a header filter-icon (value-checklist popup),
     // opened via bridge.colFilterClicked. Empty by default — only Tracks sets this.
     property var    filterableCols: []
+    // Column ids whose filter currently has an active value selection —
+    // their filter icon is shown in accentColor instead of textSecondary.
+    property var    activeFilterCols: []
 
     // ── Toolbar row customization (opt-in, default = today's behavior) ─────
     // Show the built-in search box (on by default, like today).
@@ -379,6 +382,10 @@ Rectangle {
         root.colOrder = root.bridge.getColOrder()
         var s = root.bridge.getSortState()
         root.sortCol = s[0]; root.sortDir = s[1]
+        // getActiveFilterCols is Tracks-only (column value filters) — other
+        // host bridges (favorites/albums/playlists) don't implement it.
+        if (typeof root.bridge.getActiveFilterCols === "function")
+            root.activeFilterCols = root.bridge.getActiveFilterCols()
         // _clampCols is NOT called here — trackList.width is 0 at this point and would
         // destroy saved widths. The onWidthChanged handler below runs it once on first layout.
     }
@@ -398,6 +405,8 @@ Rectangle {
             root.playingTrackId     = tid
             root.isCurrentlyPlaying = playing
         }
+        // Tracks-only (column value filters) — other bridges never emit this.
+        function onActiveFilterColsChanged(cols) { root.activeFilterCols = cols }
         function onScrollToModelRow(row)        { trackList.positionViewAtIndex(row, ListView.Contain) }
         function onScrollToTopOfView()          { trackList.contentY = trackList.originY }
         function onScrollToBottomOfView()       { trackList.contentY = trackList.originY + Math.max(0, trackList.contentHeight - trackList.height) }
@@ -785,14 +794,15 @@ Rectangle {
                                     //    this) — opens the host's existing value-checklist popup. ──
                                     Item {
                                         visible: root.filterableCols.indexOf(modelData) >= 0
-                                        width: 14; height: 14
+                                        width: 15; height: 15
                                         anchors.verticalCenter: parent.verticalCenter
-                                        Text {
+                                        Image {
                                             anchors.centerIn: parent
-                                            text: "▾"
-                                            color: filterIconHov.containsMouse ? root.accentColor : root.textSecondary
-                                            font.pixelSize: root.fontSizeSecondary
-                                            font.bold: true
+                                            width: 14; height: 14
+                                            source: "image://albumicons/filter_" +
+                                                ((filterIconHov.containsMouse || root.activeFilterCols.indexOf(modelData) >= 0)
+                                                    ? root.accentColor : root.textSecondary).replace("#","")
+                                            cache: true; mipmap: true; smooth: true
                                         }
                                         MouseArea {
                                             id: filterIconHov

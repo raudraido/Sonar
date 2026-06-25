@@ -1705,6 +1705,7 @@ class TracksBridge(QObject):
     tracksLoadingChanged      = pyqtSignal(bool)
     trackCountChanged         = pyqtSignal(str)
     filtersActiveChanged      = pyqtSignal(bool)
+    activeFilterColsChanged   = pyqtSignal('QVariantList')  # col ids with an active value filter
     playingStatusChanged      = pyqtSignal(str, bool)
     selectedTrackChanged      = pyqtSignal(int)
     multiSelectRangeChanged   = pyqtSignal('QVariantList')  # trkIdx values to highlight (Shift+arrow range)
@@ -1901,6 +1902,10 @@ class TracksBridge(QObject):
         col = self._COL_INT_TO_STR.get(view.sort_col, '')
         dir_ = 'asc' if view.sort_order == Qt.SortOrder.AscendingOrder else 'desc'
         return [col, dir_]
+
+    @pyqtSlot(result='QVariantList')
+    def getActiveFilterCols(self):
+        return [self._COL_INT_TO_STR[c] for c in self._view._col_filters if c in self._COL_INT_TO_STR]
 
     @pyqtSlot()
     def favHeaderClicked(self):
@@ -2393,7 +2398,13 @@ class TracksBrowser(QWidget):
         )
         self.live_worker.results_ready.connect(self.on_worker_finished)
 
-        self.show_skeleton_ui()
+        # Only show the loading skeleton on the genuine first load — the
+        # header (search/column titles) never changes, and on pagination/
+        # sort/filter reloads the previous page's rows can just stay on
+        # screen until the new ones replace them, instead of flashing the
+        # skeleton placeholder rows under the header every single time.
+        if not self.tracks:
+            self.show_skeleton_ui()
         self.live_worker.start()
 
     def on_worker_finished(self, tracks, total_items, total_pages, target_page):
@@ -2576,6 +2587,9 @@ class TracksBrowser(QWidget):
 
     def _update_clear_filters_btn(self):
         self.tracks_bridge.filtersActiveChanged.emit(bool(self._col_filters))
+        cols = [self.tracks_bridge._COL_INT_TO_STR[c] for c in self._col_filters
+                if c in self.tracks_bridge._COL_INT_TO_STR]
+        self.tracks_bridge.activeFilterColsChanged.emit(cols)
 
     def _get_filtered_tracks(self):
         return list(self.tracks)
