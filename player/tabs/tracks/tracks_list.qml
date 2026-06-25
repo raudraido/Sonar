@@ -2,9 +2,10 @@ import QtQuick
 import "../shared_qml"
 
 // Tracks tab host — thin wrapper around the shared TrackListView. No
-// headerCard (the page header — search/refresh/pagination — stays the
-// existing Python QWidget toolbar/footer above/below this QQuickView, per
-// UI_MANIFEST.md's "reuse SmartSearchContainer/PaginationFooter" pattern).
+// headerCard (the page header is just the toolbar/column-titles card, pinned
+// via stickyHeader). Pagination is the sticky in-card footer (enablePagination)
+// rather than a separate QWidget below the QQuickView, so header/rows/footer
+// read as one continuous card while paginating/sorting/filtering.
 Rectangle {
     id: root
     color: "transparent"
@@ -25,6 +26,8 @@ Rectangle {
     property bool   tracksLoading:   false
     property string trackCountText:  ""
     property bool   filtersActive:   false
+    property int    currentPage:     1
+    property int    totalPages:      1
 
     Connections {
         target: tracksBridge
@@ -42,6 +45,8 @@ Rectangle {
         function onTracksLoadingChanged(v)      { root.tracksLoading     = v }
         function onTrackCountChanged(t)         { root.trackCountText    = t }
         function onFiltersActiveChanged(v)      { root.filtersActive     = v }
+        function onCurrentPageChanged(p)        { root.currentPage       = p }
+        function onTotalPagesChanged(p)         { root.totalPages        = p }
     }
 
     TrackListView {
@@ -65,6 +70,10 @@ Rectangle {
         enablePlayFilteredButton:  true
         filtersActive:             root.filtersActive
         toolbarStatusText:         root.trackCountText
+        stickyHeader:              true
+        enablePagination:          true
+        currentPage:               root.currentPage
+        totalPages:                root.totalPages
 
         accentColor:       root.accentColor
         hoverColor:        root.hoverColor
@@ -77,5 +86,10 @@ Rectangle {
         cardBgColor:       root.cardBgColor
         cardBorderColor:   root.cardBorderColor
         panelBgColor:      root.panelBgColor
+    }
+
+    Component.onCompleted: {
+        var s = tracksBridge.getPaginationState()
+        root.currentPage = s[0]; root.totalPages = s[1]
     }
 }

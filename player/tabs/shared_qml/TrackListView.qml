@@ -104,6 +104,17 @@ Rectangle {
     property bool   filtersActive: false
     // Free-text status shown at the toolbar's left edge (e.g. "35,730 tracks").
     property string toolbarStatusText: ""
+    // Show a sticky page-number footer (server-paginated hosts only —
+    // Tracks). Emits bridge.pageClicked(page). Footer positioning follows
+    // this (pinned to the bottom while it's shown).
+    property bool   enablePagination: false
+    property int    currentPage: 1
+    property int    totalPages:  1
+    // Pin the toolbar/column-header card to the top of the viewport while
+    // scrolling, instead of it scrolling away with the rows (opt-in — pages
+    // with a large page-specific headerCard, e.g. album/playlist detail,
+    // keep the default scroll-away behavior).
+    property bool   stickyHeader: false
 
     // ── Drag-reorder state (only live when enableRowReorder) ────────────────
     property int    _dragFromIdx:    -1
@@ -439,12 +450,13 @@ Rectangle {
         function onWidthChanged() { root._clampCols(trackList.width) }
     }
 
-    // ── Freestanding scrollbar ───────────────────────────────────────────────
+    // ── Freestanding scrollbar — spans only the scrolling rows area (between
+    //    the sticky header/footer when present), never the whole card ───────
     ScrollBar {
         id: vbar
         anchors.right:  parent.right
-        anchors.top:    parent.top
-        anchors.bottom: parent.bottom
+        anchors.top:    trackList.top
+        anchors.bottom: trackList.bottom
         width: 10
         z: 10
 
@@ -470,11 +482,36 @@ Rectangle {
         background: Rectangle { color: "transparent" }
     }
 
+    // ── Card body filler (sticky mode only) — the ListView between the fixed
+    //    header/footer always fills that whole gap (it's anchored, not sized
+    //    to content), but when there are too few rows to fill it the rest is
+    //    just transparent. This keeps the card looking continuous even with
+    //    a handful of (filtered) rows, matching the header/footer's 12px inset.
+    Rectangle {
+        visible: root.stickyHeader
+        x: 12; width: parent.width - 24
+        // .bottom/.top are AnchorLine objects (only valid inside anchors.*
+        // bindings) — use the loaders' actual y/height instead for this plain
+        // numeric geometry.
+        y: stickyHeaderLoader.y + stickyHeaderLoader.height
+        height: (root.enablePagination ? stickyFooterLoader.y : parent.height) - y
+        color: root.cardBgColor
+    }
+
     // ── Main scrolling view ──────────────────────────────────────────────────
     ListView {
         id: trackList
         objectName: "trackList"
-        anchors.fill: parent
+        // When sticky, the header/footer are fixed siblings (stickyHeaderLoader/
+        // stickyFooterLoader below) instead of ListView.header/footer overlays —
+        // ListView.OverlayHeader/Footer desyncs from this app's custom
+        // contentY-driven momentum scroll (interactive: false below), letting
+        // rows render above/below the "pinned" header/footer. A real sibling
+        // with the ListView anchored between them has no such gap.
+        anchors.left:   parent.left
+        anchors.right:  parent.right
+        anchors.top:    root.stickyHeader     ? stickyHeaderLoader.bottom : parent.top
+        anchors.bottom: root.enablePagination ? stickyFooterLoader.top    : parent.bottom
         flickableDirection: Flickable.VerticalFlick
         boundsBehavior: Flickable.StopAtBounds
         interactive: false
@@ -499,7 +536,13 @@ Rectangle {
         }
 
         // ── HEADER: page-specific card (loaded) + tracklist toolbar/column headers ──
-        header: Item {
+        // Component, not an inline value — when stickyHeader is set the fixed
+        // Loader sibling below instantiates this instead, so it never scrolls.
+        header: root.stickyHeader ? null : pageHeaderComponent
+
+        Component {
+        id: pageHeaderComponent
+        Item {
             id: pageHeader
             width: trackList.width
             height: headerLoader.y + headerLoader.height + (root.headerCard ? 10 : 0) + cardLid.height + skeletonRows.height
@@ -950,21 +993,126 @@ Rectangle {
                 }
             }
         }
+        }
 
-        // ── FOOTER: bottom rounded corner ───────────────────────────────────
-        footer: Item {
+        // ── FOOTER: bottom rounded corner, or — when enablePagination is set
+        // (Tracks only) — a sticky page-number bar closing the same card.
+        // Component, not an inline value — when enablePagination is set the
+        // fixed Loader sibling below instantiates this instead of it scrolling.
+        footer: root.enablePagination ? null : pageFooterComponent
+
+        Component {
+        id: pageFooterComponent
+        Item {
+            id: pageFooter
+            readonly property bool showPagination: root.enablePagination && root.totalPages > 1
             width: trackList.width
-            height: 12 + 32
+            height: showPagination ? 50 : (12 + 32)
 
             Rectangle {
                 x: 12; y: 0
-                width: parent.width - 24; height: 12
+                width: parent.width - 24
+                height: pageFooter.showPagination ? parent.height : 12
                 color: root.cardBgColor
                 border.color: root.cardBorderColor; border.width: 1
                 topLeftRadius: 0;     topRightRadius: 0
                 bottomLeftRadius: 10; bottomRightRadius: 10
             }
             Rectangle { x: 13; y: 0; width: parent.width - 26; height: 1; color: root.cardBgColor }
+
+            Row {
+                id: paginationRow
+                visible: pageFooter.showPagination
+                anchors.left: parent.left; anchors.leftMargin: 15
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 5
+
+                function _slots() {
+                    var cur = root.currentPage, total = root.totalPages
+                    var items = []
+                    if (total <= 7) {
+                        for (var p = 1; p <= total; p++) items.push(p)
+                    } else {
+                        items.push(1)
+                        if (cur > 4) items.push("…")
+                        var wStart = Math.max(2, cur - 1)
+                        var wEnd   = Math.min(total - 1, cur + 1)
+                        if (cur <= 4) { wStart = 2; wEnd = 5 }
+                        else if (cur >= total - 3) { wStart = total - 4; wEnd = total - 1 }
+                        for (var p2 = wStart; p2 <= wEnd; p2++) items.push(p2)
+                        if (cur < total - 3) items.push("…")
+                        items.push(total)
+                    }
+                    while (items.length < 7) items.push(null)
+                    return items.slice(0, 7)
+                }
+
+                // PREV
+                Item {
+                    width: 32; height: 32
+                    readonly property bool _en: root.currentPage > 1
+                    Rectangle { anchors.fill: parent; radius: 4; color: prevHov.containsMouse && parent._en ? root.hoverColor : "transparent" }
+                    Text {
+                        anchors.centerIn: parent; text: "‹"; font.pixelSize: root.fontSizePrimary + 2
+                        font.family: root.fontFamily
+                        color: parent._en ? root.textPrimary : root.textSecondary
+                        opacity: parent._en ? 1 : 0.4
+                    }
+                    MouseArea {
+                        id: prevHov; anchors.fill: parent; hoverEnabled: true; enabled: parent._en
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.bridge.pageClicked(root.currentPage - 1)
+                    }
+                }
+
+                Repeater {
+                    model: paginationRow._slots()
+                    delegate: Item {
+                        required property var modelData
+                        width: 32; height: 32
+                        visible: modelData !== null
+                        readonly property bool _isEllipsis: modelData === "…"
+                        readonly property bool _isActive:   modelData === root.currentPage
+                        Rectangle {
+                            anchors.fill: parent; radius: 4
+                            color: (!parent._isEllipsis && !parent._isActive && pageHov.containsMouse) ? root.hoverColor : "transparent"
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData !== null ? String(modelData) : ""
+                            font.pixelSize: root.fontSizePrimary; font.bold: parent._isActive
+                            font.family: root.fontFamily
+                            color: parent._isActive ? root.accentColor : (parent._isEllipsis ? root.textSecondary : root.textPrimary)
+                            opacity: parent._isEllipsis ? 0.6 : 1
+                        }
+                        MouseArea {
+                            id: pageHov; anchors.fill: parent; hoverEnabled: true
+                            enabled: !parent._isEllipsis && !parent._isActive
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.bridge.pageClicked(modelData)
+                        }
+                    }
+                }
+
+                // NEXT
+                Item {
+                    width: 32; height: 32
+                    readonly property bool _en: root.currentPage < root.totalPages
+                    Rectangle { anchors.fill: parent; radius: 4; color: nextHov.containsMouse && parent._en ? root.hoverColor : "transparent" }
+                    Text {
+                        anchors.centerIn: parent; text: "›"; font.pixelSize: root.fontSizePrimary + 2
+                        font.family: root.fontFamily
+                        color: parent._en ? root.textPrimary : root.textSecondary
+                        opacity: parent._en ? 1 : 0.4
+                    }
+                    MouseArea {
+                        id: nextHov; anchors.fill: parent; hoverEnabled: true; enabled: parent._en
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.bridge.pageClicked(root.currentPage + 1)
+                    }
+                }
+            }
+        }
         }
 
         // ── TRACK ROWS ──────────────────────────────────────────────────────
@@ -1434,6 +1582,30 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // ── Sticky header/footer (opt-in — Tracks only) ─────────────────────────
+    // Real siblings of trackList, not ListView.header/footer, so they never
+    // scroll and the scrollbar/MomentumScroll below only ever covers the rows
+    // between them — see the anchors comment on trackList above.
+    Loader {
+        id: stickyHeaderLoader
+        active: root.stickyHeader
+        visible: active
+        z: 10
+        width: parent.width
+        anchors.top: parent.top
+        sourceComponent: pageHeaderComponent
+    }
+    Loader {
+        id: stickyFooterLoader
+        active: root.enablePagination
+        visible: active
+        z: 10
+        width: parent.width
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 12   // match the header card's 12px top inset
+        sourceComponent: pageFooterComponent
     }
 
     // ── Drag-reorder overlay (visual-only — no MouseArea; grab stays in the

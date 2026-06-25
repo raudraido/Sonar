@@ -19,7 +19,7 @@ from PyQt6.QtCore import (Qt, pyqtSignal, pyqtSlot, pyqtProperty, QTimer, QModel
 from PyQt6.QtGui import QAction, QColor, QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QFont
 
 from player import resource_path
-from player.components.shared_widgets import PaginationFooter, SmartSearchContainer, TrackInfoDialog
+from player.components.shared_widgets import SmartSearchContainer, TrackInfoDialog
 from player.widgets import QMLGridWrapper, TrackThumbProvider, AlbumIconProvider
 from player.qml_search import SearchController, SearchKeyFilter, set_window_shortcuts_enabled
 from PyQt6.QtQuickWidgets import QQuickWidget
@@ -1706,6 +1706,8 @@ class TracksBridge(QObject):
     trackCountChanged         = pyqtSignal(str)
     filtersActiveChanged      = pyqtSignal(bool)
     activeFilterColsChanged   = pyqtSignal('QVariantList')  # col ids with an active value filter
+    currentPageChanged        = pyqtSignal(int)
+    totalPagesChanged         = pyqtSignal(int)
     playingStatusChanged      = pyqtSignal(str, bool)
     selectedTrackChanged      = pyqtSignal(int)
     multiSelectRangeChanged   = pyqtSignal('QVariantList')  # trkIdx values to highlight (Shift+arrow range)
@@ -1907,6 +1909,10 @@ class TracksBridge(QObject):
     def getActiveFilterCols(self):
         return [self._COL_INT_TO_STR[c] for c in self._view._col_filters if c in self._COL_INT_TO_STR]
 
+    @pyqtSlot(result='QVariantList')
+    def getPaginationState(self):
+        return [self._view.current_page, self._view.total_pages]
+
     @pyqtSlot()
     def favHeaderClicked(self):
         pass
@@ -1914,6 +1920,10 @@ class TracksBridge(QObject):
     @pyqtSlot()
     def refreshClicked(self):
         self._view.refresh_btn.click()
+
+    @pyqtSlot(int)
+    def pageClicked(self, page):
+        self._view.change_page(page)
 
     @pyqtSlot()
     def rowInteracted(self):
@@ -2193,11 +2203,6 @@ class TracksBrowser(QWidget):
 
         self.main_layout.addWidget(self.qml_view, 1)
 
-        # --- SETUP FOOTER ---
-        self.footer = PaginationFooter()
-        self.footer.page_changed.connect(self.change_page)
-        self.main_layout.addWidget(self.footer)
-
         self.is_loading_db = False
         self.load_from_db(reset=True, invalidate_filter_cache=True)
 
@@ -2286,11 +2291,10 @@ class TracksBrowser(QWidget):
     
     def change_page(self, page):
         if page < 1 or page > self.total_pages: return
-        
+
         self.current_page = page
-        if hasattr(self, 'footer'):
-            self.footer.render_pagination(self.current_page, self.total_pages)
-        
+        self.tracks_bridge.currentPageChanged.emit(self.current_page)
+
         self.load_from_db(reset=False)
 
     def _execute_load(self):
@@ -2421,8 +2425,8 @@ class TracksBrowser(QWidget):
 
         count_text = f"{self.total_items:,} tracks".replace(",", " ")
         self.tracks_bridge.trackCountChanged.emit(count_text)
-        if hasattr(self, 'footer'):
-            self.footer.render_pagination(self.current_page, self.total_pages)
+        self.tracks_bridge.currentPageChanged.emit(self.current_page)
+        self.tracks_bridge.totalPagesChanged.emit(self.total_pages)
 
         # Detected BPM always beats the ID3 tag value
         win = self.window()
@@ -2952,9 +2956,6 @@ class TracksBrowser(QWidget):
         _theme = getattr(self.window(), 'theme', None)
         if hasattr(self, 'refresh_btn'):
             self.refresh_btn.set_color(color)
-
-        if hasattr(self, 'footer'):
-            self.footer.set_accent_color(color)
 
         self.current_accent = color
 
