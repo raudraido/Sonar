@@ -2657,6 +2657,7 @@ class TracksBridge(QObject):
                        'plays': 8, 'dur': 9, 'trackno': 10, 'date': 11, 'bpm': 12}
     _COL_INT_TO_STR = {v: k for k, v in _COL_STR_TO_INT.items()}
     _DESC_FIRST_COLS = {8, 9, 11, 12}  # plays, length, date added, bpm
+    _DEFAULT_SORT_COL = 11  # date added — the "none" sort state
 
     def __init__(self, view):
         super().__init__()
@@ -2795,16 +2796,22 @@ class TracksBridge(QObject):
         if col_idx is None:
             return
         view = self._view
+        first_dir = (Qt.SortOrder.DescendingOrder if col_idx in self._DESC_FIRST_COLS
+                     else Qt.SortOrder.AscendingOrder)
         if view.sort_col == col_idx:
-            view.sort_order = (Qt.SortOrder.DescendingOrder
-                               if view.sort_order == Qt.SortOrder.AscendingOrder
-                               else Qt.SortOrder.AscendingOrder)
+            if view.sort_order == first_dir:
+                view.sort_order = (Qt.SortOrder.AscendingOrder if first_dir == Qt.SortOrder.DescendingOrder
+                                    else Qt.SortOrder.DescendingOrder)
+            else:
+                # Third click: back to the default state — date added, descending.
+                view.sort_col = self._DEFAULT_SORT_COL
+                view.sort_order = Qt.SortOrder.DescendingOrder
         else:
             view.sort_col = col_idx
-            view.sort_order = (Qt.SortOrder.DescendingOrder if col_idx in self._DESC_FIRST_COLS
-                               else Qt.SortOrder.AscendingOrder)
+            view.sort_order = first_dir
         view.save_sort_state()
-        self.sortStateChanged.emit(col, 'asc' if view.sort_order == Qt.SortOrder.AscendingOrder else 'desc')
+        active_col = self._COL_INT_TO_STR.get(view.sort_col, '')
+        self.sortStateChanged.emit(active_col, 'asc' if view.sort_order == Qt.SortOrder.AscendingOrder else 'desc')
         view.load_from_db(reset=True)
 
     @pyqtSlot(result='QVariantList')

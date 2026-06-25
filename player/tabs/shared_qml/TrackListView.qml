@@ -609,7 +609,8 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.toolbarStatusText
                     color: root.textSecondary; font.bold: true
-                    font.pixelSize: root.fontSizePrimary; font.family: root.fontFamily
+                    font.pixelSize: root.fontSizeSecondary; font.family: root.fontFamily
+                    renderType: Text.NativeRendering
                 }
 
                 // Burger button — column picker (always rightmost)
