@@ -42,7 +42,7 @@ class AudioEngine(QObject):
         self.lib.preload_track.argtypes = [ctypes.c_char_p]
         self.lib.preload_track.restype  = None
 
-        self.lib.play_network_stream.argtypes    = [ctypes.c_char_p]
+        self.lib.play_network_stream.argtypes    = [ctypes.c_char_p, ctypes.c_longlong]
         self.lib.play_network_stream.restype     = ctypes.c_int
         self.lib.preload_network_stream.argtypes = [ctypes.c_char_p]
         self.lib.preload_network_stream.restype  = None

@@ -2437,6 +2437,17 @@ class TracksBrowser(QWidget):
                 if tid in bpm_cache:
                     t['bpm'] = bpm_cache[tid]
 
+        # The server sorts by the raw ID3 BPM tag, but the column above just
+        # overrode some rows' displayed value with the locally-detected BPM —
+        # which can differ from the tag — so the page can look out of order
+        # even though the server-side sort key was honored correctly. Re-sort
+        # this page by the now-displayed value so what's shown matches asc/desc.
+        if self.sort_col == 12 and bpm_cache:  # 12 == BPM column
+            def _bpm_key(t):
+                try: return float(t.get('bpm') or 0)
+                except (TypeError, ValueError): return 0.0
+            tracks.sort(key=_bpm_key, reverse=(self.sort_order == Qt.SortOrder.DescendingOrder))
+
         self.tracks = tracks
         offset = (self.current_page - 1) * self.page_size
         self.tracks_model.set_tracks(tracks, index_offset=offset)

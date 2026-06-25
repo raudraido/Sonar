@@ -471,6 +471,16 @@ class PlaybackMixin:
         self.update_window_title()
         self._refresh_queue_panel()
        
+    def _scrobble_complete(self, track_id):
+        """Report a fully-played track to the server (submission=True) — this
+        is what actually increments the server-side play count; submission=False
+        (sent on track start) only marks "now playing" and never does."""
+        if not (track_id and hasattr(self, 'navidrome_client') and self.navidrome_client):
+            return
+        import threading as _t
+        _c = self.navidrome_client; _tid = track_id
+        _t.Thread(target=lambda: _c.scrobble(_tid, submission=True), daemon=True).start()
+
     def on_track_finished(self):
         # Safety 1: If a gapless transition just happened, ignore this "End" signal.
         if time.time() - self.last_gapless_time < 2.0:
@@ -479,6 +489,9 @@ class PlaybackMixin:
         # Safety 2: If we have a gapless track queued, let the engine handle the switch.
         if self.queued_next_index != -1:
              return
+
+        if 0 <= self.current_index < len(self.playlist_data):
+            self._scrobble_complete(self.playlist_data[self.current_index].get('id'))
 
         # Standard Behavior: Playlist ended naturally or user stopped playback.
         next_idx = self.get_next_index_calculated()
@@ -491,13 +504,16 @@ class PlaybackMixin:
 
     def on_gapless_transition(self):
         print("Gapless transition triggered.")
-        
+
+        if 0 <= self.current_index < len(self.playlist_data):
+            self._scrobble_complete(self.playlist_data[self.current_index].get('id'))
+
         # Keep motor running on gapless changes
         if hasattr(self, 'seek_bar'):
             self.seek_bar.is_playing = True
-            
-        self.last_gapless_time = time.time() 
-        
+
+        self.last_gapless_time = time.time()
+
         new_index = -1
         if self.queued_next_index != -1:
             new_index = self.queued_next_index

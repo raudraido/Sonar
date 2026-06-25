@@ -181,13 +181,18 @@ class PlaybackManager(QThread):
             # --- NETWORK STREAM LOGIC ---
             if stream_url:
                 print(f"[TIMING] +{time.time() - t0:.3f}s | Passing URL to Native C++ Engine")
-                
-                res = self.audio_engine.lib.play_network_stream(stream_url.encode('utf-8'))
+
+                # Pass the already-known duration (from server metadata) so the
+                # native engine can skip its expensive fallback duration scan —
+                # for MP3 over a network stream that scan means waiting on the
+                # entire remote file before playback can even start.
+                known_duration_ms = int(track_data.get('duration_ms') or 0)
+                res = self.audio_engine.lib.play_network_stream(stream_url.encode('utf-8'), known_duration_ms)
 
                 if res == 1:
                     print(f"[TIMING] +{time.time() - t0:.3f}s | Native Decoder Init SUCCESS. Playing now.")
-                    if 'duration_ms' in track_data:
-                        self.audio_engine.set_duration(track_data['duration_ms'])
+                    if known_duration_ms > 0:
+                        self.audio_engine.set_duration(known_duration_ms)
                     self.audio_engine.play()
                     self.track_started.emit(track_data)
                 else:

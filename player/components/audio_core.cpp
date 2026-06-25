@@ -837,7 +837,7 @@ extern "C" {
         return 0;
     }
     
-    EXPORT int play_network_stream(const char* url) {
+    EXPORT int play_network_stream(const char* url, long long known_duration_ms) {
         std::lock_guard<std::mutex> lock(engine.decode_mutex);
         current_preload_session++;
         engine.playing = false;
@@ -845,25 +845,35 @@ extern "C" {
         {
             std::lock_guard<std::mutex> slock(stream_ctx.mutex);
             stream_ctx.buffer.clear();
-            stream_ctx.buffer.shrink_to_fit(); 
+            stream_ctx.buffer.shrink_to_fit();
             stream_ctx.read_cursor = 0;
             stream_ctx.finished = false;
         }
         if (engine.decoder_loaded) { ma_decoder_uninit(&engine.decoder); engine.decoder_loaded = false; }
-        
+
         // Prevent old preloads from executing during stream buffering!
         if (engine.next_decoder_loaded) { ma_decoder_uninit(&engine.next_decoder); engine.next_decoder_loaded = false; }
         engine.next_file_data.clear();
-        
+
         std::thread(live_stream_thread, std::string(url), my_session).detach();
         ma_decoder_config config = ma_decoder_config_init(ma_format_f32, CHANNELS, SAMPLE_RATE);
         ma_result result = ma_decoder_init(MyReadCallback, MySeekCallback, NULL, &config, &engine.decoder);
         if (result == MA_SUCCESS) {
             engine.decoder_loaded = true;
-            ma_uint64 len;
-            if (ma_decoder_get_length_in_pcm_frames(&engine.decoder, &len) == MA_SUCCESS) {
-                engine.total_frames = len;
-            } else { engine.total_frames = 0; }
+            if (known_duration_ms > 0) {
+                // Caller already knows the duration (from server metadata) —
+                // skip ma_decoder_get_length_in_pcm_frames entirely. For MP3,
+                // that call has no fast path (no reliable frame-count header
+                // like FLAC's STREAMINFO) and falls back to scanning every
+                // frame in the file, which over a network stream means
+                // waiting on the whole remote file before playback can start.
+                engine.total_frames = (known_duration_ms * SAMPLE_RATE) / 1000;
+            } else {
+                ma_uint64 len;
+                if (ma_decoder_get_length_in_pcm_frames(&engine.decoder, &len) == MA_SUCCESS) {
+                    engine.total_frames = len;
+                } else { engine.total_frames = 0; }
+            }
             engine.current_frame = 0;
             engine.buffer.clear();
             return 1;
