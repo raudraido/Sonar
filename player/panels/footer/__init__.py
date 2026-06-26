@@ -10,8 +10,6 @@ is the public API surface other code talks to — callers use
 directly (mirrors player/panels/right/queue_panel.py's QueueBridge pattern).
 """
 
-import numpy as np
-
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -19,7 +17,7 @@ from PyQt6.QtQuickWidgets import QQuickWidget
 
 from player import resource_path
 from player.widgets import QMLGridWrapper, AlbumIconProvider, AlbumDetailCoverProvider, _round_pixmap
-from player.panels.footer.footer_bridge import FooterBridge, FooterArtProvider, WaveformImageProvider
+from player.panels.footer.footer_bridge import FooterBridge, FooterArtProvider
 
 
 class FooterPanel(QWidget):
@@ -67,16 +65,11 @@ class FooterPanel(QWidget):
         self._cover_version = 0
 
         # ── Waveform state (ported from WaveformScrubber) ───────────────────
+        # Scratch-mode rendering itself happens entirely in QML now (see
+        # footer_bar.qml's paintScratch) — _samples is just pulled on demand
+        # via the bridge's getSamples(), no numpy mirror/buffer needed here.
         self._samples = [0.0] * 5000
-        self._samples_np = np.zeros(5000, dtype=np.float64)
-        self._total_samples = 5000
         self._has_real_data = False
-        self._fade_lookup_np = np.array([], dtype=np.float64)
-        self._fade_lookup_width = None
-        self._waveform_buf = None
-        self._wave_version = 0
-        self._user_picked = False
-        self._master_color = QColor(getattr(window.theme, 'accent', '#cccccc'))
         self._display_mode = 2
         try:
             saved_mode = int(window.settings.value('waveform_mode', 2))
@@ -104,7 +97,6 @@ class FooterPanel(QWidget):
         # (UI_MANIFEST.md "Image Provider Strong Reference" gotcha).
         self._icon_provider = AlbumIconProvider()
         self._art_provider = FooterArtProvider()
-        self._wave_provider = WaveformImageProvider()
         # Reuses album_detail.qml's blurred-shadow play-button glow ("btn/<hex>")
         # so the footer's play button matches that page's halo exactly.
         self._btn_glow_provider = AlbumDetailCoverProvider()
@@ -129,7 +121,6 @@ class FooterPanel(QWidget):
         engine = self._qml.engine()
         engine.addImageProvider("footericons", self._icon_provider)
         engine.addImageProvider("footerart", self._art_provider)
-        engine.addImageProvider("waveformbuf", self._wave_provider)
         engine.addImageProvider("footerbtnglow", self._btn_glow_provider)
 
         ctx = self._qml.rootContext()
@@ -242,8 +233,6 @@ class FooterPanel(QWidget):
     def reset_waveform(self):
         self._has_real_data = False
         self._samples = [0.0] * 5000
-        self._total_samples = 5000
-        self._samples_np = np.zeros(5000, dtype=np.float64)
         self._bridge.hasRealDataChanged.emit(False)
         self._bridge.samplesChanged.emit()
 
@@ -252,8 +241,6 @@ class FooterPanel(QWidget):
             return
         self._has_real_data = True
         self._samples = new_samples
-        self._total_samples = len(new_samples)
-        self._samples_np = np.asarray(new_samples, dtype=np.float64)
         self._bridge.hasRealDataChanged.emit(True)
         self._bridge.samplesChanged.emit()
 
@@ -269,35 +256,6 @@ class FooterPanel(QWidget):
     def _on_remaining_toggled(self, on):
         self._show_remaining = bool(on)
         self._bridge.showRemainingChanged.emit(self._show_remaining)
-
-    def _compute_scratch_frame(self, current_index, pixels_per_sample, width, height):
-        width, height = int(width), int(height)
-        if width <= 0 or height <= 0:
-            return
-        if self._fade_lookup_width != width:
-            cx = width / 2.0
-            x = np.arange(width, dtype=np.float64)
-            self._fade_lookup_np = np.maximum(0.0, 1.0 - (np.abs(x - cx) / cx) ** 1.6) if cx > 0 else np.array([])
-            self._fade_lookup_width = width
-
-        buf = self._waveform_buf
-        if buf is None or buf.shape[0] != height or buf.shape[1] != width:
-            buf = np.zeros((height, width, 4), dtype=np.uint8)
-            self._waveform_buf = buf
-
-        max_bar_height = (height / 2.0) * 0.90
-        base_hue = self._master_color.hue() if self._master_color.hue() >= 0 else (0 if self._user_picked else 150)
-
-        from player.panels.footer.waveform_renderer import render_scratch_waveform
-        render_scratch_waveform(
-            buf, width, height,
-            self._samples_np, self._total_samples,
-            current_index, pixels_per_sample, self._fade_lookup_np,
-            base_hue, max_bar_height, self._user_picked, self._master_color,
-        )
-        self._wave_provider.set_buffer(buf, width, height)
-        self._wave_version += 1
-        self._bridge.waveformBufVersionChanged.emit(self._wave_version)
 
     # ── Now-playing info ─────────────────────────────────────────────────────
     def set_track(self, track):
@@ -358,7 +316,6 @@ class FooterPanel(QWidget):
 
     # ── Theming ──────────────────────────────────────────────────────────────
     def set_accent_color(self, color):
-        self._master_color = QColor(color)
         self._bridge.accentColorChanged.emit(color)
 
     @staticmethod
@@ -399,7 +356,6 @@ class FooterPanel(QWidget):
 
     def apply_theme(self, theme):
         v = self._compute_theme_values(theme)
-        self._master_color = QColor(v['accent'])
 
         self.setStyleSheet(
             f"QWidget#FooterPanel {{ background-color: rgb({v['bg']}); border-top: {v['bw']}px solid {v['bc']}; }}"

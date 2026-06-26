@@ -30,32 +30,6 @@ class FooterArtProvider(QQuickImageProvider):
         return img, img.size()
 
 
-class WaveformImageProvider(QQuickImageProvider):
-    """Serves the scratch-mode (display mode 0) RGBA buffer as
-    image://waveformbuf/frame. The buffer itself is still computed by
-    render_scratch_waveform() (waveform_renderer.py, numpy-vectorized) —
-    only the blit target changed, from a QWidget paintEvent to a QML
-    Canvas's drawImage()."""
-
-    def __init__(self):
-        super().__init__(QQuickImageProvider.ImageType.Image)
-        self._image = QImage()
-
-    def set_buffer(self, buf, width, height):
-        # .copy() is required: `buf` is reused/mutated next frame by the
-        # caller, and QImage(buf.data, ...) only wraps the existing memory.
-        self._image = QImage(
-            buf.data, width, height, width * 4, QImage.Format.Format_RGBA8888
-        ).copy()
-
-    def requestImage(self, id, requestedSize):
-        if self._image.isNull():
-            empty = QImage(1, 1, QImage.Format.Format_ARGB32)
-            empty.fill(Qt.GlobalColor.transparent)
-            return empty, empty.size()
-        return self._image, self._image.size()
-
-
 class FooterBridge(QObject):
     # ── Signals: Python -> QML ──────────────────────────────────────────
     accentColorChanged        = pyqtSignal(str)
@@ -83,7 +57,6 @@ class FooterBridge(QObject):
     showRemainingChanged       = pyqtSignal(bool)
     samplesChanged             = pyqtSignal()
     hasRealDataChanged         = pyqtSignal(bool)
-    waveformBufVersionChanged  = pyqtSignal(int)
 
     coverVersionChanged        = pyqtSignal(int)
     trackInfoChanged           = pyqtSignal(str, str, str)   # title, artist, album
@@ -99,10 +72,6 @@ class FooterBridge(QObject):
     @pyqtSlot(result=list)
     def getSamples(self):
         return list(self._panel._samples)
-
-    @pyqtSlot(float, float, int, int)
-    def computeScratchFrame(self, current_index, pixels_per_sample, width, height):
-        self._panel._compute_scratch_frame(current_index, pixels_per_sample, width, height)
 
     # ── Slots: QML -> Python ─────────────────────────────────────────────
     @pyqtSlot()

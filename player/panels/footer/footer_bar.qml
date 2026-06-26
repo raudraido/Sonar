@@ -55,7 +55,6 @@ Rectangle {
     property int  displayMode:        2       // 0=scratch 1=minimal 2=bars
     property bool showRemainingTime:  false   // totalTimeLbl: total vs. countdown-to-end
     property bool hasRealData:        false
-    property int  waveformBufVersion: 0
     property var  samples:            []
 
     // ── Track info ───────────────────────────────────────────────────────────
@@ -152,10 +151,6 @@ Rectangle {
         function onDisplayModeChanged(v) { root.displayMode = v; waveformCanvas.requestPaint() }
         function onShowRemainingChanged(v) { root.showRemainingTime = v }
         function onHasRealDataChanged(v) { root.hasRealData = v; waveformCanvas.requestPaint() }
-        function onWaveformBufVersionChanged(v) {
-            root.waveformBufVersion = v
-            waveformCanvas.scratchImgSrc = "image://waveformbuf/frame?v=" + v
-        }
         function onSamplesChanged() {
             root.samples = footerBridge.getSamples()
             waveformCanvas.barPathDirty = true
@@ -612,26 +607,17 @@ Rectangle {
                         // drawn (no track loaded, empty mode-1 groove gaps, etc.).
                         renderTarget: Canvas.Image
 
-                        property string scratchImgSrc: ""
-                        // Most recently *fully loaded* scratch frame — distinct from
-                        // scratchImgSrc, which is reassigned every animation frame
-                        // (cache-busted via ?v=) and is therefore usually still
-                        // in-flight. Painting scratchImgSrc directly meant onPaint
-                        // almost always hit the not-yet-loaded case and fell back to
-                        // the "ANALYZING WAVEFORM..." text, flashing every frame
-                        // during scratch playback. Painting loadedImgSrc instead
-                        // keeps the previous frame on screen until the next one
-                        // actually finishes loading.
-                        property string loadedImgSrc: ""
                         property bool barPathDirty: true
                         property var barPath: []
 
-                        onScratchImgSrcChanged: { if (scratchImgSrc) loadImage(scratchImgSrc) }
-                        onImageLoaded: {
-                            loadedImgSrc = scratchImgSrc
-                            if (root.displayMode === 0) requestPaint()
-                        }
-                        onWidthChanged: { barPathDirty = true; requestPaint() }
+                        // Scratch-mode fade-to-edges lookup (cached per width,
+                        // same caching strategy the old Python renderer used —
+                        // see fadeLookupWidth check in paintScratch) — avoids
+                        // recomputing Math.pow() per pixel every frame.
+                        property var fadeLookup: []
+                        property int fadeLookupWidth: -1
+
+                        onWidthChanged: { barPathDirty = true; fadeLookupWidth = -1; requestPaint() }
                         onHeightChanged: { barPathDirty = true; requestPaint() }
                         // Canvas only repaints reactively (onXChanged: requestPaint()
                         // above) — since the root's initial property values are
@@ -763,9 +749,99 @@ Rectangle {
                             ctx.fillText("ANALYZING WAVEFORM...", width / 2, height / 2)
                         }
 
+                        // Ported from the old Python numpy renderer's HSV->RGB
+                        // helper (scalar instead of vectorized) — h: 0-359, s/v: 0-255.
+                        function hsvToRgb(h, s, v) {
+                            var hi = h / 60.0
+                            var i = Math.floor(hi) % 6
+                            var f = hi - Math.floor(hi)
+                            var vv = v / 255.0, ss = s / 255.0
+                            var p = vv * (1.0 - ss)
+                            var q = vv * (1.0 - f * ss)
+                            var t = vv * (1.0 - (1.0 - f) * ss)
+                            var r, g, b
+                            switch (i) {
+                                case 0: r = vv; g = t;  b = p;  break
+                                case 1: r = q;  g = vv; b = p;  break
+                                case 2: r = p;  g = vv; b = t;  break
+                                case 3: r = p;  g = q;  b = vv; break
+                                case 4: r = t;  g = p;  b = vv; break
+                                default: r = vv; g = p; b = q;  break
+                            }
+                            return {
+                                r: Math.max(0, Math.min(255, Math.round(r * 255))),
+                                g: Math.max(0, Math.min(255, Math.round(g * 255))),
+                                b: Math.max(0, Math.min(255, Math.round(b * 255)))
+                            }
+                        }
+
+                        function rebuildFadeLookup() {
+                            var w = Math.ceil(width)
+                            var cx = w / 2.0
+                            var arr = new Array(w)
+                            for (var i = 0; i < w; i++) {
+                                arr[i] = cx > 0 ? Math.max(0, 1.0 - Math.pow(Math.abs(i - cx) / cx, 1.6)) : 0
+                            }
+                            fadeLookup = arr
+                            fadeLookupWidth = w
+                        }
+
+                        // Renders scratch mode directly in QML/JS — was
+                        // previously a Python+numpy round-trip (compute a
+                        // (height,width,4) RGBA buffer, wrap in a QImage, serve
+                        // it through an image:// provider, async-load it back
+                        // into this canvas). That async hop introduced latency
+                        // that, at high zoom (large pixelsPerSample), got
+                        // visually amplified into a noticeable stutter since
+                        // each frame's on-screen shift is much bigger per
+                        // sample of playback time. Drawing per-column here
+                        // instead runs synchronously on the same thread as the
+                        // paint itself, eliminating that round-trip entirely.
+                        // Math mirrors the old renderer's per-pixel formula
+                        // exactly (its user_picked flag was always false in
+                        // practice, so that branch is folded in directly
+                        // rather than plumbed through as a property).
                         function paintScratch(ctx) {
-                            if (root.hasRealData && loadedImgSrc && isImageLoaded(loadedImgSrc)) {
-                                ctx.drawImage(loadedImgSrc, 0, 0, width, height)
+                            var total = root.samples.length
+                            if (root.hasRealData && total >= 2) {
+                                if (fadeLookupWidth !== Math.ceil(width)) rebuildFadeLookup()
+
+                                var centerX0 = width / 2.0, centerY0 = height / 2.0
+                                var maxBarH0 = (height / 2.0) * 0.90
+                                var currentIndex = scratchArea.scratchCurrentIndex
+                                var pxPerSample = scratchArea.pixelsPerSample
+                                var hue = root.accentQColor.hsvHue
+                                var baseHue = hue >= 0 ? hue * 360.0 : 150.0
+                                var w = Math.ceil(width)
+
+                                for (var x = 0; x < w; x++) {
+                                    var exactIndex = currentIndex + (x - centerX0) / pxPerSample
+                                    if (exactIndex < 0 || exactIndex >= total - 1) continue
+
+                                    var fade = fadeLookup[x]
+                                    var isLeft = x < centerX0
+                                    var alpha = isLeft ? (255.0 * fade) : (180.0 * fade)
+                                    if (alpha < 1.0) continue
+
+                                    var idx1 = Math.floor(exactIndex)
+                                    var frac = exactIndex - idx1
+                                    var rawVal = root.samples[idx1] + (root.samples[idx1 + 1] - root.samples[idx1]) * frac
+                                    var val = rawVal * rawVal * 0.5 + rawVal * 0.5
+                                    var barH = val * maxBarH0
+
+                                    var brightness = isLeft ? (120.0 + 135.0 * fade) : (70.0 + 130.0 * fade)
+                                    var hueShift = Math.floor(20.0 * rawVal)
+                                    var finalHue = ((baseHue + hueShift) % 360 + 360) % 360
+                                    var saturation = 255.0 * Math.max(0.3, 1.0 - rawVal * 0.6)
+
+                                    var rgb = hsvToRgb(finalHue,
+                                        Math.max(0, Math.min(255, saturation)),
+                                        Math.max(0, Math.min(255, brightness)))
+
+                                    var top = centerY0 - barH
+                                    ctx.fillStyle = "rgba(" + rgb.r + "," + rgb.g + "," + rgb.b + "," + (Math.min(255, alpha) / 255.0).toFixed(3) + ")"
+                                    ctx.fillRect(x, top, 1, barH * 2)
+                                }
                             } else if (root.durationMs > 1) {
                                 paintAnalyzing(ctx)
                             }
@@ -807,8 +883,11 @@ Rectangle {
 
                         function nowSec() { return Date.now() / 1000.0 }
 
+                        // Scratch rendering now happens entirely in
+                        // waveformCanvas.paintScratch() (reads scratchCurrentIndex/
+                        // pixelsPerSample directly) — this just triggers a repaint.
                         function requestScratchFrame() {
-                            footerBridge.computeScratchFrame(scratchCurrentIndex, pixelsPerSample, width, height)
+                            waveformCanvas.requestPaint()
                         }
 
                         onPressed: (mouse) => {

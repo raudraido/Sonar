@@ -479,7 +479,6 @@ class VisualsMixin:
             dominant_color = dominant_color[:7]
         self.theme.accent = dominant_color
         self._auto_tint_bg_colors()
-        self._footer_panel._user_picked = False
         if getattr(self, 'visualizer', None): self.visualizer.bar_color = QColor(self.theme.accent)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
         self._footer_panel.set_accent_color(self.theme.accent)
