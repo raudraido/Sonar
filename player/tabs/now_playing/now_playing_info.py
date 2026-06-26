@@ -6,6 +6,7 @@ layer (6 background workers + the cover-zoom overlay) is unchanged from the
 QWidget version; only the rendering moved to QML.
 """
 
+import os
 import re
 import time
 
@@ -913,11 +914,23 @@ class NowPlayingInfoTab(QWidget):
         b.genreTokensChanged.emit(_tokenize(genre_tokens))
 
         info_parts = []
+        # Real format, not a bitrate guess (a 512kbps FLAC or a 900kbps MP3
+        # would otherwise show as the wrong codec) — same fields the footer
+        # (player/mixins/visuals.py) and Track Info dialog
+        # (player/components/shared_widgets.py) already use correctly.
+        codec = (track.get('suffix') or track.get('codec') or '').upper()
+        if not codec:
+            target_path = track.get('path', '')
+            if target_path:
+                codec = os.path.splitext(target_path)[1].upper().lstrip('.')
+            elif track.get('stream_url'):
+                codec = 'STREAM'
+        if codec:
+            info_parts.append(codec)
         bitrate = track.get('bitRate') or track.get('bit_rate')
         if bitrate:
             try:
                 br  = int(bitrate)
-                info_parts.append('FLAC' if br > 900 else 'MP3')
                 info_parts.append(f'{br} kbps')
             except (TypeError, ValueError):
                 pass

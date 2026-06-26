@@ -263,7 +263,57 @@ Rectangle {
                             font.family: root.fontFamily
                         }
 
-                        // Artist(s) • Album • Year
+                        // Album • Year — own row, no leading separator before album
+                        Row {
+                            width: parent.width
+                            visible: root.albumName !== "" || root.yearText !== ""
+                            Text {
+                                id: albumLinkText
+                                visible: root.albumName !== ""
+                                property bool hov: false
+                                text: root.albumName
+                                color: hov ? root.accentColor : root.textSecondary
+                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
+                                Rectangle {
+                                    visible: albumLinkText.hov
+                                    y: albumLinkText.baselineOffset + 2
+                                    width: albumLinkText.paintedWidth; height: 1
+                                    color: albumLinkText.color
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onEntered: albumLinkText.hov = true; onExited: albumLinkText.hov = false
+                                    onClicked: nowPlayingBridge.albumClicked(root.albumId, root.albumName)
+                                }
+                            }
+                            Text {
+                                visible: root.albumName !== "" && root.yearText !== ""
+                                text: " • "
+                                color: root.textSecondary
+                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
+                            }
+                            Text {
+                                id: yearLinkText
+                                visible: root.yearText !== ""
+                                property bool hov: false
+                                text: root.yearText
+                                color: hov ? root.accentColor : root.textSecondary
+                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
+                                Rectangle {
+                                    visible: yearLinkText.hov
+                                    y: yearLinkText.baselineOffset + 2
+                                    width: yearLinkText.paintedWidth; height: 1
+                                    color: yearLinkText.color
+                                }
+                                MouseArea {
+                                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onEntered: yearLinkText.hov = true; onExited: yearLinkText.hov = false
+                                    onClicked: nowPlayingBridge.yearClicked(root.yearText)
+                                }
+                            }
+                        }
+
+                        // Artist(s)
                         Row {
                             width: parent.width
                             Repeater {
@@ -291,56 +341,6 @@ Rectangle {
                                         onExited:  parent.hov = false
                                         onClicked: nowPlayingBridge.artistClicked(modelData.text)
                                     }
-                                }
-                            }
-                            Text {
-                                visible: root.albumName !== ""
-                                text: "  -  "
-                                color: root.textSecondary
-                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
-                            }
-                            Text {
-                                id: albumLinkText
-                                visible: root.albumName !== ""
-                                property bool hov: false
-                                text: root.albumName
-                                color: hov ? root.accentColor : root.textSecondary
-                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
-                                Rectangle {
-                                    visible: albumLinkText.hov
-                                    y: albumLinkText.baselineOffset + 2
-                                    width: albumLinkText.paintedWidth; height: 1
-                                    color: albumLinkText.color
-                                }
-                                MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onEntered: albumLinkText.hov = true; onExited: albumLinkText.hov = false
-                                    onClicked: nowPlayingBridge.albumClicked(root.albumId, root.albumName)
-                                }
-                            }
-                            Text {
-                                visible: root.yearText !== ""
-                                text: " • "
-                                color: root.textSecondary
-                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
-                            }
-                            Text {
-                                id: yearLinkText
-                                visible: root.yearText !== ""
-                                property bool hov: false
-                                text: root.yearText
-                                color: hov ? root.accentColor : root.textSecondary
-                                font.pixelSize: root.fontSizePrimary; font.bold: true; font.family: root.fontFamily
-                                Rectangle {
-                                    visible: yearLinkText.hov
-                                    y: yearLinkText.baselineOffset + 2
-                                    width: yearLinkText.paintedWidth; height: 1
-                                    color: yearLinkText.color
-                                }
-                                MouseArea {
-                                    anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onEntered: yearLinkText.hov = true; onExited: yearLinkText.hov = false
-                                    onClicked: nowPlayingBridge.yearClicked(root.yearText)
                                 }
                             }
                         }

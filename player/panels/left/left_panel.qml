@@ -126,25 +126,78 @@ Rectangle {
                 color: "#121212"
             }
 
+            // Rounded-corner cover, drawn via Canvas clip (same technique as
+            // now_playing.qml's coverCanvas / playlist_detail.qml's
+            // artCanvas) — a plain Image can't clip itself to rounded
+            // corners, and the image provider rounding a tiny radius into
+            // its (much higher-resolution) source pixmap before QML scales
+            // it down made the corners imperceptible.
+
             // Old cover — crossfades out
-            Image {
+            Canvas {
+                id: oldArtCanvas
                 anchors.fill: parent
-                source: (root.oldArtId !== "" && root.crossfadeProgress < 1.0)
-                    ? "image://leftpanelcover/old/" + root.oldArtId : ""
-                fillMode: Image.PreserveAspectCrop
-                cache: false; mipmap: true; smooth: true
-                visible: source !== ""
+                visible: root.oldArtId !== "" && root.crossfadeProgress < 1.0
+
+                property string artUrl: visible ? "image://leftpanelcover/old/" + root.oldArtId : ""
+                onArtUrlChanged: { if (artUrl !== "") loadImage(artUrl); else requestPaint() }
+                onImageLoaded: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    if (artUrl === "" || !isImageLoaded(artUrl)) return
+                    ctx.save()
+                    ctx.imageSmoothingEnabled = true
+                    ctx.imageSmoothingQuality = "high"
+                    var r = 5
+                    ctx.beginPath()
+                    ctx.moveTo(r, 0); ctx.lineTo(width - r, 0)
+                    ctx.arcTo(width, 0, width, r, r)
+                    ctx.lineTo(width, height - r)
+                    ctx.arcTo(width, height, width - r, height, r)
+                    ctx.lineTo(r, height)
+                    ctx.arcTo(0, height, 0, height - r, r)
+                    ctx.lineTo(0, r)
+                    ctx.arcTo(0, 0, r, 0, r)
+                    ctx.closePath(); ctx.clip()
+                    ctx.drawImage(artUrl, 0, 0, width, height)
+                    ctx.restore()
+                }
             }
 
             // Current cover — crossfades in
-            Image {
+            Canvas {
+                id: currentArtCanvas
                 anchors.fill: parent
-                source: root.currentArtId !== ""
-                    ? "image://leftpanelcover/current/" + root.currentArtId : ""
-                fillMode: Image.PreserveAspectCrop
-                cache: false; mipmap: true; smooth: true
+                visible: root.currentArtId !== ""
                 opacity: root.crossfadeProgress
-                visible: source !== ""
+
+                property string artUrl: visible ? "image://leftpanelcover/current/" + root.currentArtId : ""
+                onArtUrlChanged: { if (artUrl !== "") loadImage(artUrl); else requestPaint() }
+                onImageLoaded: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    if (artUrl === "" || !isImageLoaded(artUrl)) return
+                    ctx.save()
+                    ctx.imageSmoothingEnabled = true
+                    ctx.imageSmoothingQuality = "high"
+                    var r = 5
+                    ctx.beginPath()
+                    ctx.moveTo(r, 0); ctx.lineTo(width - r, 0)
+                    ctx.arcTo(width, 0, width, r, r)
+                    ctx.lineTo(width, height - r)
+                    ctx.arcTo(width, height, width - r, height, r)
+                    ctx.lineTo(r, height)
+                    ctx.arcTo(0, height, 0, height - r, r)
+                    ctx.lineTo(0, r)
+                    ctx.arcTo(0, 0, r, 0, r)
+                    ctx.closePath(); ctx.clip()
+                    ctx.drawImage(artUrl, 0, 0, width, height)
+                    ctx.restore()
+                }
             }
 
             // Empty-state placeholder
