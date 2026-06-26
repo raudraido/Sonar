@@ -65,9 +65,12 @@ class FooterPanel(QWidget):
         self._cover_version = 0
 
         # ── Waveform state (ported from WaveformScrubber) ───────────────────
-        # Scratch-mode rendering itself happens entirely in QML now (see
-        # footer_bar.qml's paintScratch) — _samples is just pulled on demand
-        # via the bridge's getSamples(), no numpy mirror/buffer needed here.
+        # Scratch-mode (displayMode 0) visualization is built by the native
+        # ScratchWaveformItem QML plugin (player/native/scratch_waveform/,
+        # see footer_bar.qml's `import FooterNativeWaveform 1.0`) bound
+        # directly to root.samples/root.hasRealData — _samples also still
+        # gets pulled on demand via the bridge's getSamples() for the
+        # bars/minimal display modes, which render in QML/JS directly.
         self._samples = [0.0] * 5000
         self._has_real_data = False
         self._display_mode = 2
@@ -122,6 +125,14 @@ class FooterPanel(QWidget):
         engine.addImageProvider("footericons", self._icon_provider)
         engine.addImageProvider("footerart", self._art_provider)
         engine.addImageProvider("footerbtnglow", self._btn_glow_provider)
+        # Native scratch-waveform QML plugin (player/native/scratch_waveform/)
+        # — a custom QSGGeometryNode-based QQuickItem, built with CMake/Qt6
+        # dev tools (not part of build.py's plain-ctypes audio_core.cpp
+        # pipeline). footer_bar.qml's `import FooterNativeWaveform 1.0`
+        # resolves via this path. NOTE: build_exe.py/build_appimage.py don't
+        # yet bundle this plugin directory for distribution — dev-mode only
+        # until that's wired up.
+        engine.addImportPath(resource_path("player/native/scratch_waveform/build/qml"))
 
         ctx = self._qml.rootContext()
         ctx.setContextProperty("footerBridge", self._bridge)
@@ -248,6 +259,12 @@ class FooterPanel(QWidget):
         self._display_mode = int(mode)
         self._bridge.displayModeChanged.emit(self._display_mode)
         self.mode_toggled.emit(self._display_mode)
+        # Mirrors the restore-on-launch read in __init__ — only minimal/bars
+        # ever get persisted (never resume straight into the DJ-scratch view
+        # on launch); picking scratch mode just leaves the stored setting at
+        # whichever minimal/bars mode was last active.
+        if self._display_mode in (1, 2):
+            self._window.settings.setValue('waveform_mode', self._display_mode)
 
     @property
     def show_remaining(self):

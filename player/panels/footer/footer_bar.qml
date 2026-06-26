@@ -1,4 +1,5 @@
 ﻿import QtQuick
+import FooterNativeWaveform 1.0
 import "../../tabs/shared_qml"
 
 // Footer transport bar — now-playing info, transport controls, waveform
@@ -137,8 +138,22 @@ Rectangle {
             if (p) root.enginePositionAtMs = Date.now()
         }
         function onPositionMsChanged(v, hard) {
-            root.enginePositionMs = v
-            root.enginePositionAtMs = Date.now()
+            // Python polls the native decoder at 62Hz, but on Linux the
+            // decoder's own position counter only advances once per audio
+            // callback (ma_performance_profile_conservative uses much larger
+            // buffer periods than the default, to avoid underruns — see
+            // audio_core.cpp) — likely ~6-10 times/sec, not continuously. So
+            // most of these 62Hz signals carry the exact same v as last time.
+            // Resetting enginePositionAtMs to "now" on every signal (even
+            // when v hasn't changed) made the extrapolation below freeze at
+            // whatever it last reached instead of smoothly interpolating
+            // across the real gap until the next genuine position change —
+            // only rebase the anchor when v actually moved (or it's a hard
+            // jump), so extrapolation keeps counting from the last real fact.
+            if (hard || v !== root.enginePositionMs) {
+                root.enginePositionMs = v
+                root.enginePositionAtMs = Date.now()
+            }
             if (hard) root.displayPositionMs = v
         }
         function onDurationMsChanged(v) { root.durationMs = v; waveformCanvas.requestPaint() }
@@ -605,19 +620,15 @@ Rectangle {
                         // instead, which properly supports alpha, letting the
                         // footer's real background show through wherever nothing is
                         // drawn (no track loaded, empty mode-1 groove gaps, etc.).
-                        renderTarget: Canvas.Image
+                        // Only Windows/ANGLE has the alpha bug, and the CPU path is
+                        // far too slow for scratch-mode's per-frame repaints on
+                        // Linux/Wayland (~15fps), so keep the fast GPU target there.
+                        renderTarget: Qt.platform.os === "windows" ? Canvas.Image : Canvas.FramebufferObject
 
                         property bool barPathDirty: true
                         property var barPath: []
 
-                        // Scratch-mode fade-to-edges lookup (cached per width,
-                        // same caching strategy the old Python renderer used —
-                        // see fadeLookupWidth check in paintScratch) — avoids
-                        // recomputing Math.pow() per pixel every frame.
-                        property var fadeLookup: []
-                        property int fadeLookupWidth: -1
-
-                        onWidthChanged: { barPathDirty = true; fadeLookupWidth = -1; requestPaint() }
+                        onWidthChanged: { barPathDirty = true; requestPaint() }
                         onHeightChanged: { barPathDirty = true; requestPaint() }
                         // Canvas only repaints reactively (onXChanged: requestPaint()
                         // above) — since the root's initial property values are
@@ -749,152 +760,65 @@ Rectangle {
                             ctx.fillText("ANALYZING WAVEFORM...", width / 2, height / 2)
                         }
 
-                        // Ported from the old Python numpy renderer's HSV->RGB
-                        // helper (scalar instead of vectorized) — h: 0-359, s/v: 0-255.
-                        function hsvToRgb(h, s, v) {
-                            var hi = h / 60.0
-                            var i = Math.floor(hi) % 6
-                            var f = hi - Math.floor(hi)
-                            var vv = v / 255.0, ss = s / 255.0
-                            var p = vv * (1.0 - ss)
-                            var q = vv * (1.0 - f * ss)
-                            var t = vv * (1.0 - (1.0 - f) * ss)
-                            var r, g, b
-                            switch (i) {
-                                case 0: r = vv; g = t;  b = p;  break
-                                case 1: r = q;  g = vv; b = p;  break
-                                case 2: r = p;  g = vv; b = t;  break
-                                case 3: r = p;  g = q;  b = vv; break
-                                case 4: r = t;  g = p;  b = vv; break
-                                default: r = vv; g = p; b = q;  break
-                            }
-                            return {
-                                r: Math.max(0, Math.min(255, Math.round(r * 255))),
-                                g: Math.max(0, Math.min(255, Math.round(g * 255))),
-                                b: Math.max(0, Math.min(255, Math.round(b * 255)))
-                            }
-                        }
-
-                        function rebuildFadeLookup() {
-                            var w = Math.ceil(width)
-                            var cx = w / 2.0
-                            var arr = new Array(w)
-                            for (var i = 0; i < w; i++) {
-                                arr[i] = cx > 0 ? Math.max(0, 1.0 - Math.pow(Math.abs(i - cx) / cx, 1.6)) : 0
-                            }
-                            fadeLookup = arr
-                            fadeLookupWidth = w
-                        }
-
-                        // Renders scratch mode directly in QML/JS — was
-                        // previously a Python+numpy round-trip (compute a
-                        // (height,width,4) RGBA buffer, wrap in a QImage, serve
-                        // it through an image:// provider, async-load it back
-                        // into this canvas). That async hop introduced latency
-                        // that, at high zoom (large pixelsPerSample), got
-                        // visually amplified into a noticeable stutter since
-                        // each frame's on-screen shift is much bigger per
-                        // sample of playback time. Drawing per-column here
-                        // instead runs synchronously on the same thread as the
-                        // paint itself, eliminating that round-trip entirely.
-                        // Math mirrors the old renderer's per-pixel formula
-                        // exactly (its user_picked flag was always false in
-                        // practice, so that branch is folded in directly
-                        // rather than plumbed through as a property).
-                        //
-                        // Columns are written into a single ImageData buffer
-                        // instead of one ctx.fillStyle (CSS string parse) +
-                        // ctx.fillRect call per column. With renderTarget:
-                        // Canvas.Image (required above for alpha support),
-                        // every fillRect goes through Qt's software QPainter
-                        // rasterizer, and on Linux that per-call overhead
-                        // (style parse + raster op, ~600-900x per mouse-move
-                        // frame) dominates; one putImageData at the end does
-                        // a single raw pixel-buffer blit instead.
-                        property var scratchImgData: null
-                        property int scratchImgW: -1
-                        property int scratchImgH: -1
-
-                        function paintScratch(ctx) {
-                            var total = root.samples.length
-                            if (root.hasRealData && total >= 2) {
-                                if (fadeLookupWidth !== Math.ceil(width)) rebuildFadeLookup()
-
-                                var centerX0 = width / 2.0, centerY0 = height / 2.0
-                                var maxBarH0 = (height / 2.0) * 0.90
-                                var currentIndex = scratchArea.scratchCurrentIndex
-                                var pxPerSample = scratchArea.pixelsPerSample
-                                var hue = root.accentQColor.hsvHue
-                                var baseHue = hue >= 0 ? hue * 360.0 : 150.0
-                                var w = Math.ceil(width)
-                                var h = Math.ceil(height)
-
-                                if (!scratchImgData || scratchImgW !== w || scratchImgH !== h) {
-                                    scratchImgData = ctx.createImageData(w, h)
-                                    scratchImgW = w
-                                    scratchImgH = h
-                                } else {
-                                    scratchImgData.data.fill(0)
-                                }
-                                var data = scratchImgData.data
-
-                                for (var x = 0; x < w; x++) {
-                                    var exactIndex = currentIndex + (x - centerX0) / pxPerSample
-                                    if (exactIndex < 0 || exactIndex >= total - 1) continue
-
-                                    var fade = fadeLookup[x]
-                                    var isLeft = x < centerX0
-                                    var alpha = isLeft ? (255.0 * fade) : (180.0 * fade)
-                                    if (alpha < 1.0) continue
-                                    alpha = Math.round(Math.min(255, alpha))
-
-                                    var idx1 = Math.floor(exactIndex)
-                                    var frac = exactIndex - idx1
-                                    var rawVal = root.samples[idx1] + (root.samples[idx1 + 1] - root.samples[idx1]) * frac
-                                    var val = rawVal * rawVal * 0.5 + rawVal * 0.5
-                                    var barH = val * maxBarH0
-
-                                    var brightness = isLeft ? (120.0 + 135.0 * fade) : (70.0 + 130.0 * fade)
-                                    var hueShift = Math.floor(20.0 * rawVal)
-                                    var finalHue = ((baseHue + hueShift) % 360 + 360) % 360
-                                    var saturation = 255.0 * Math.max(0.3, 1.0 - rawVal * 0.6)
-
-                                    var rgb = hsvToRgb(finalHue,
-                                        Math.max(0, Math.min(255, saturation)),
-                                        Math.max(0, Math.min(255, brightness)))
-
-                                    var top = centerY0 - barH
-                                    var y0 = Math.max(0, Math.round(top))
-                                    var y1 = Math.min(h, Math.round(top + barH * 2))
-                                    for (var y = y0; y < y1; y++) {
-                                        var idx = (y * w + x) * 4
-                                        data[idx] = rgb.r
-                                        data[idx + 1] = rgb.g
-                                        data[idx + 2] = rgb.b
-                                        data[idx + 3] = alpha
-                                    }
-                                }
-                                ctx.putImageData(scratchImgData, 0, 0)
-                            } else if (root.durationMs > 1) {
-                                paintAnalyzing(ctx)
-                            }
-                            var centerX = width / 2.0, centerY = height / 2.0
-                            var maxBarH = (height / 2.0) * 0.90
-                            ctx.lineCap = "butt"
-                            ctx.strokeStyle = "rgba(255,255,255,0.45)"
-                            ctx.lineWidth = 3
-                            ctx.beginPath(); ctx.moveTo(centerX, centerY - maxBarH - 4); ctx.lineTo(centerX, centerY + maxBarH + 4); ctx.stroke()
-                            ctx.strokeStyle = "rgba(255,255,255,1.0)"
-                            ctx.lineWidth = 1
-                            ctx.beginPath(); ctx.moveTo(centerX, centerY - maxBarH - 4); ctx.lineTo(centerX, centerY + maxBarH + 4); ctx.stroke()
-                        }
-
                         onPaint: {
                             var ctx = getContext("2d")
                             ctx.clearRect(0, 0, width, height)
-                            if (root.displayMode === 0) paintScratch(ctx)
+                            if (root.displayMode === 0) {
+                                if (!root.hasRealData && root.durationMs > 1) paintAnalyzing(ctx)
+                            }
                             else if (root.displayMode === 1) paintMinimal(ctx)
                             else paintBars(ctx)
+                        }
+                    }
+
+                    // Scratch-mode (displayMode === 0) waveform visualization —
+                    // a native C++ QQuickItem (player/native/scratch_waveform/,
+                    // built separately with CMake/Qt6 dev tools, loaded via
+                    // engine.addImportPath in player/panels/footer/__init__.py)
+                    // that builds one QSGGeometryNode of colored triangles per
+                    // repaint — a single batched GPU draw call, mirroring
+                    // Mixxx's GPU waveform renderer's actual technique
+                    // (src/waveform/renderers/allshader/waveformrendererhsv.cpp
+                    // upstream). Three pure-QML/Python approaches were tried
+                    // first and all hit a ceiling well below this: a Canvas
+                    // with putImageData (pixel blit doesn't reliably sync to
+                    // the GPU FBO texture Canvas uses on Linux — invisible
+                    // waveform); a Repeater of ~700 individually-bound
+                    // Rectangle items (~10fps — hundreds of scene-graph
+                    // bindings re-evaluating per frame); and a
+                    // QQuickPaintedItem rebuilding a QImage every update()
+                    // (still capped well below the display's real refresh
+                    // rate even though the underlying numpy math measured
+                    // sub-millisecond). PyQt6 doesn't expose QSGGeometryNode
+                    // from Python, so reaching this technique needed an actual
+                    // compiled Qt Quick plugin.
+                    ScratchWaveformItem {
+                        id: scratchImg
+                        anchors.fill: parent
+                        visible: root.displayMode === 0
+                        samples: root.samples
+                        hasRealData: root.hasRealData
+                        currentIndex: scratchArea.scratchCurrentIndex
+                        pixelsPerSample: scratchArea.pixelsPerSample
+                        hue: root.accentQColor.hsvHue
+
+                        // Center scratch-cursor line — always drawn in scratch
+                        // mode regardless of data availability, mirroring the
+                        // old Canvas code's unconditional draw after the
+                        // scratch/analyzing branch.
+                        Rectangle {
+                            x: Math.round(scratchImg.width / 2) - 1
+                            y: scratchImg.height / 2 - (scratchImg.height / 2 * 0.90) - 4
+                            width: 3
+                            height: (scratchImg.height / 2 * 0.90 + 4) * 2
+                            color: Qt.rgba(1, 1, 1, 0.45)
+                        }
+                        Rectangle {
+                            x: Math.round(scratchImg.width / 2)
+                            y: scratchImg.height / 2 - (scratchImg.height / 2 * 0.90) - 4
+                            width: 1
+                            height: (scratchImg.height / 2 * 0.90 + 4) * 2
+                            color: "white"
                         }
                     }
 
@@ -916,12 +840,13 @@ Rectangle {
 
                         function nowSec() { return Date.now() / 1000.0 }
 
-                        // Scratch rendering now happens entirely in
-                        // waveformCanvas.paintScratch() (reads scratchCurrentIndex/
-                        // pixelsPerSample directly) — this just triggers a repaint.
-                        function requestScratchFrame() {
-                            waveformCanvas.requestPaint()
-                        }
+                        // scratchImg (the native ScratchWaveformItem sibling
+                        // above) has its currentIndex/pixelsPerSample properties
+                        // bound directly to scratchCurrentIndex/pixelsPerSample,
+                        // so it repaints itself automatically on change — no
+                        // explicit repaint needed. Kept as a no-op call site so
+                        // callers don't need to change.
+                        function requestScratchFrame() {}
 
                         onPressed: (mouse) => {
                             isDraggingLocal = true
@@ -1064,9 +989,39 @@ Rectangle {
                     FrameAnimation {
                         id: positionClock
                         running: root.isPlaying && !scratchArea.isDraggingLocal && !scratchArea.isSpinningFreely
+
+                        // 0 is the "needs (re)init" sentinel — real Date.now()
+                        // values are huge, so this can't collide. Reset
+                        // whenever running flips true (resume from pause/
+                        // drag/spin) so the first post-resume tick doesn't see
+                        // a stale lastFrameMs and compute a huge bogus dt.
+                        property real lastFrameMs: 0
+                        onRunningChanged: if (running) lastFrameMs = 0
+
                         onTriggered: {
-                            var candidate = root.enginePositionMs + (Date.now() - root.enginePositionAtMs)
-                            root.displayPositionMs = Math.min(root.durationMs, Math.max(root.displayPositionMs, candidate))
+                            var now = Date.now()
+                            if (lastFrameMs === 0) lastFrameMs = now
+                            var dt = now - lastFrameMs
+                            lastFrameMs = now
+
+                            // Free-run forward every frame by real elapsed
+                            // wall time — never stalls waiting on Python's
+                            // next position update, unlike anchoring directly
+                            // to enginePositionMs/enginePositionAtMs every
+                            // tick (that froze in lockstep with the native
+                            // decoder's actual position-update granularity,
+                            // ~6-10Hz on Linux due to audio_core.cpp's larger
+                            // conservative-profile buffer — see
+                            // onPositionMsChanged's comment above). Only nudge
+                            // toward the real anchor when it has drifted
+                            // noticeably, and gently (15%/frame) rather than
+                            // snapping, so the correction itself stays
+                            // imperceptible at 144Hz.
+                            var advanced = root.displayPositionMs + dt
+                            var anchorCandidate = root.enginePositionMs + (now - root.enginePositionAtMs)
+                            var drift = anchorCandidate - advanced
+                            var next = Math.abs(drift) > 60 ? advanced + drift * 0.15 : advanced
+                            root.displayPositionMs = Math.min(root.durationMs, Math.max(root.displayPositionMs, next))
 
                             if (root.displayMode === 0) {
                                 var total = root.samples.length

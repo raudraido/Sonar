@@ -19,7 +19,15 @@
       "Bash(python main.py)",
       "Bash(taskkill /F /IM python.exe /T)",
       "PowerShell(\\(Get-Content \"c:\\\\Users\\\\raido\\\\Desktop\\\\Player\\\\Sonar\\\\home.py\"\\).Count)",
-      "PowerShell(Add-Type -AssemblyName System.Drawing; $src = [System.Drawing.Image]::FromFile\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\screen1.png\"\\); $crop = New-Object System.Drawing.Bitmap\\(900, 300\\); $g = [System.Drawing.Graphics]::FromImage\\($crop\\); $g.DrawImage\\($src, [System.Drawing.Rectangle]::new\\(0,0,900,300\\), [System.Drawing.Rectangle]::new\\(130,230,900,300\\), [System.Drawing.GraphicsUnit]::Pixel\\); $g.Dispose\\(\\); $src.Dispose\\(\\); $crop.Save\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\tracklist_header.png\"\\); $crop.Dispose\\(\\); echo \"cropped\")"
+      "PowerShell(Add-Type -AssemblyName System.Drawing; $src = [System.Drawing.Image]::FromFile\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\screen1.png\"\\); $crop = New-Object System.Drawing.Bitmap\\(900, 300\\); $g = [System.Drawing.Graphics]::FromImage\\($crop\\); $g.DrawImage\\($src, [System.Drawing.Rectangle]::new\\(0,0,900,300\\), [System.Drawing.Rectangle]::new\\(130,230,900,300\\), [System.Drawing.GraphicsUnit]::Pixel\\); $g.Dispose\\(\\); $src.Dispose\\(\\); $crop.Save\\(\"C:\\\\Users\\\\raido\\\\AppData\\\\Local\\\\Temp\\\\tracklist_header.png\"\\); $crop.Dispose\\(\\); echo \"cropped\")",
+      "Bash(tail -5 /tmp/buildlog2.txt)",
+      "Read(//tmp/**)",
+      "Bash(DISPLAY=:0 /home/raudraido/Player/venv/bin/python main.py)",
+      "Bash(disown)",
+      "Bash(/home/raudraido/Player/venv/bin/python /tmp/qml_smoke.py)",
+      "Bash(/home/raudraido/Player/.venv/bin/python -c ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(awk -F: '$1>=3590 && $1<=4200')"
     ]
   }
 }

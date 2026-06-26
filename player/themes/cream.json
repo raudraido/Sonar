@@ -10,7 +10,7 @@
   "header_panel_bg": "232,232,232",
   "now_playing_card_bg": "#deddda",
   "skeleton_base": "#deddda",
-  "app_font": "Inter Variable Text Medium",
+  "app_font": "Inter Variable",
   "font_size_primary": 14,
   "font_size_secondary": 12,
   "font_color_primary": "#63452c",
