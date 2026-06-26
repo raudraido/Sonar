@@ -801,6 +801,20 @@ Rectangle {
                         // exactly (its user_picked flag was always false in
                         // practice, so that branch is folded in directly
                         // rather than plumbed through as a property).
+                        //
+                        // Columns are written into a single ImageData buffer
+                        // instead of one ctx.fillStyle (CSS string parse) +
+                        // ctx.fillRect call per column. With renderTarget:
+                        // Canvas.Image (required above for alpha support),
+                        // every fillRect goes through Qt's software QPainter
+                        // rasterizer, and on Linux that per-call overhead
+                        // (style parse + raster op, ~600-900x per mouse-move
+                        // frame) dominates; one putImageData at the end does
+                        // a single raw pixel-buffer blit instead.
+                        property var scratchImgData: null
+                        property int scratchImgW: -1
+                        property int scratchImgH: -1
+
                         function paintScratch(ctx) {
                             var total = root.samples.length
                             if (root.hasRealData && total >= 2) {
@@ -813,6 +827,16 @@ Rectangle {
                                 var hue = root.accentQColor.hsvHue
                                 var baseHue = hue >= 0 ? hue * 360.0 : 150.0
                                 var w = Math.ceil(width)
+                                var h = Math.ceil(height)
+
+                                if (!scratchImgData || scratchImgW !== w || scratchImgH !== h) {
+                                    scratchImgData = ctx.createImageData(w, h)
+                                    scratchImgW = w
+                                    scratchImgH = h
+                                } else {
+                                    scratchImgData.data.fill(0)
+                                }
+                                var data = scratchImgData.data
 
                                 for (var x = 0; x < w; x++) {
                                     var exactIndex = currentIndex + (x - centerX0) / pxPerSample
@@ -822,6 +846,7 @@ Rectangle {
                                     var isLeft = x < centerX0
                                     var alpha = isLeft ? (255.0 * fade) : (180.0 * fade)
                                     if (alpha < 1.0) continue
+                                    alpha = Math.round(Math.min(255, alpha))
 
                                     var idx1 = Math.floor(exactIndex)
                                     var frac = exactIndex - idx1
@@ -839,9 +864,17 @@ Rectangle {
                                         Math.max(0, Math.min(255, brightness)))
 
                                     var top = centerY0 - barH
-                                    ctx.fillStyle = "rgba(" + rgb.r + "," + rgb.g + "," + rgb.b + "," + (Math.min(255, alpha) / 255.0).toFixed(3) + ")"
-                                    ctx.fillRect(x, top, 1, barH * 2)
+                                    var y0 = Math.max(0, Math.round(top))
+                                    var y1 = Math.min(h, Math.round(top + barH * 2))
+                                    for (var y = y0; y < y1; y++) {
+                                        var idx = (y * w + x) * 4
+                                        data[idx] = rgb.r
+                                        data[idx + 1] = rgb.g
+                                        data[idx + 2] = rgb.b
+                                        data[idx + 3] = alpha
+                                    }
                                 }
+                                ctx.putImageData(scratchImgData, 0, 0)
                             } else if (root.durationMs > 1) {
                                 paintAnalyzing(ctx)
                             }
