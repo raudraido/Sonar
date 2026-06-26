@@ -1,175 +1,412 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
-from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
+"""
+FooterPanel — transport bar: playback controls, seek bar (3 waveform display
+modes), now-playing info, volume/cast/settings.
 
-from player.panels.footer.waveform_scrubber import WaveformScrubber
-from player.widgets import NowPlayingFooterWidget, ClickableSlider, StatusButton, PlayButton
+QML-hosted (see UI_MANIFEST.md: QMLGridWrapper + QQuickView for real-
+refresh-rate rendering, instead of the old QWidget/QPainter WaveformScrubber +
+NowPlayingFooterWidget + PlayButton/StatusButton/ClickableSlider). FooterPanel
+is the public API surface other code talks to — callers use
+`self._footer_panel.set_position_ms(...)` etc., never reach into QML widgets
+directly (mirrors player/panels/right/queue_panel.py's QueueBridge pattern).
+"""
+
+import numpy as np
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor
+from PyQt6.QtQuickWidgets import QQuickWidget
+
+from player import resource_path
+from player.widgets import QMLGridWrapper, AlbumIconProvider, AlbumDetailCoverProvider, _round_pixmap
+from player.panels.footer.footer_bridge import FooterBridge, FooterArtProvider, WaveformImageProvider
 
 
 class FooterPanel(QWidget):
     """Transport bar: playback controls, seek bar, now-playing info, volume/cast/settings."""
 
+    # ── Signals: forwarded from FooterBridge slots, window.py connects here ──
+    play_clicked          = pyqtSignal()
+    prev_clicked           = pyqtSignal()
+    next_clicked           = pyqtSignal()
+    stop_clicked           = pyqtSignal()
+    shuffle_toggled        = pyqtSignal(bool)
+    repeat_toggled          = pyqtSignal(bool)
+    volume_changed         = pyqtSignal(int)
+    mute_clicked            = pyqtSignal()
+    seek_requested          = pyqtSignal(int)
+    scratch_mode_changed   = pyqtSignal(bool)
+    velocity_changed        = pyqtSignal(float)
+    position_updated        = pyqtSignal(int)
+    mode_toggled             = pyqtSignal(int)
+    artist_clicked          = pyqtSignal(str)
+    album_clicked            = pyqtSignal()
+    title_clicked            = pyqtSignal()
+    track_right_clicked     = pyqtSignal(object)
+    bpm_adjusted             = pyqtSignal(float)
+    expand_art_clicked      = pyqtSignal()
+    cast_clicked             = pyqtSignal()
+    settings_clicked         = pyqtSignal()
+
     def __init__(self, window):
         super().__init__()
         self.setObjectName("FooterPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("QWidget#FooterPanel { background-color: rgba(14, 14, 14, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); }")
-
-        window.cast_btn = QPushButton("")
-        window.cast_btn.setFixedSize(40, 40)
-        window.cast_btn.setIconSize(QSize(22, 22))
-        window.cast_btn.setFlat(True)
-        window.cast_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        window.cast_btn.setStyleSheet("background: transparent; border: none;")
-        window.cast_btn.setToolTip("Cast to device")
-        window.cast_btn.clicked.connect(window._on_cast_clicked)
-
-        window.settings_btn = QPushButton("")
-        window.settings_btn.setFixedSize(40, 40)
-        window.settings_btn.setIconSize(QSize(20, 20))
-        window.settings_btn.clicked.connect(window.open_settings)
-        window.settings_btn.setToolTip("Settings")
-
-        window.btn_stop = QPushButton("")
-        window.btn_stop.setFixedSize(40, 40)
-        window.btn_stop.clicked.connect(window._media_stop)
-        window.btn_stop.setToolTip("Stop")
-
-        window.btn_shuffle = StatusButton("")
-        window.btn_shuffle.setCheckable(True)
-        window.btn_shuffle.setFixedSize(40, 40)
-        window.btn_shuffle.clicked.connect(window.toggle_shuffle)
-        window.btn_shuffle.setToolTip("Shuffle")
-
-        window.btn_prev = QPushButton("")
-        window.btn_prev.setFixedSize(50, 50)
-        window.btn_prev.clicked.connect(window.play_prev)
-        window.btn_prev.setToolTip("Previous Track")
-
-        window.btn_play = PlayButton()
-        window.btn_play.setFixedSize(58, 58)
-        window.btn_play.clicked.connect(window.toggle_playback)
-        window.btn_play.setToolTip("Play/Pause")
-
-        window.btn_next = QPushButton("")
-        window.btn_next.setFixedSize(50, 50)
-        window.btn_next.clicked.connect(window.play_next)
-        window.btn_next.setToolTip("Next Track")
-
-        window.btn_repeat = StatusButton("")
-        window.btn_repeat.setCheckable(True)
-        window.btn_repeat.setFixedSize(40, 40)
-        window.btn_repeat.clicked.connect(window.toggle_repeat)
-        window.btn_repeat.setToolTip("Repeat")
-
-        window.vol_slider = ClickableSlider(Qt.Orientation.Horizontal, window, is_volume=True)
-        window.vol_slider.setFixedWidth(100)
-        window.vol_slider.setRange(0, 100)
-        window.vol_slider.setValue(window.last_volume)
-        window.vol_slider.valueChanged.connect(window.update_volume)
-        window.vol_slider.sliderMoved.connect(window.vol_slider.update_tooltip_pos)
-
-        window.vol_icon_label = QPushButton()
-        window.vol_icon_label.setFixedSize(40, 40)
-        window.vol_icon_label.setIconSize(QSize(window._VOL_ICON_SIZE, window._VOL_ICON_SIZE))
-        window.vol_icon_label.setToolTip("Mute/Unmute")
-        window.vol_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        window.vol_icon_label.setFlat(True)
-        window.vol_icon_label.clicked.connect(window.toggle_mute)
-
-        window.current_time_label = QLabel("0:00")
-
-        # SWAP THE SLIDER FOR THE WAVEFORM
-        window.seek_bar = WaveformScrubber(master_color=window.theme.accent, parent=window)
-        window.seek_bar.seek_requested.connect(window.on_waveform_seek)
-        window.seek_bar.mode_toggled.connect(window.on_waveform_toggled)
-
-        # THE SCRATCH CONNECTION (Wire physics straight to C++)
-        window.seek_bar.scratch_mode_changed.connect(window.audio_engine.set_scratch_mode)
-        window.seek_bar.velocity_changed.connect(window.audio_engine.set_scratch_velocity)
-
-        # THE UI CONNECTION (Update the time text while scrubbing)
-        window.seek_bar.position_updated.connect(
-            lambda ms: window.current_time_label.setText(window.format_time(ms)) if hasattr(window, 'current_time_label') else None
+        self.setStyleSheet(
+            "QWidget#FooterPanel { background-color: rgba(14, 14, 14, 0.75); "
+            "border-top: 1px solid rgba(255, 255, 255, 0.1); }"
         )
+        self.setFixedHeight(132)
 
-        saved_mode = int(window.settings.value('waveform_mode', 2))
+        self._window = window
+
+        # ── Now-playing / track state ───────────────────────────────────────
+        self._current_track = None
+        self._current_bpm = None
+        self._file_type = None
+        self._cover_version = 0
+
+        # ── Waveform state (ported from WaveformScrubber) ───────────────────
+        self._samples = [0.0] * 5000
+        self._samples_np = np.zeros(5000, dtype=np.float64)
+        self._total_samples = 5000
+        self._has_real_data = False
+        self._fade_lookup_np = np.array([], dtype=np.float64)
+        self._fade_lookup_width = None
+        self._waveform_buf = None
+        self._wave_version = 0
+        self._user_picked = False
+        self._master_color = QColor(getattr(window.theme, 'accent', '#cccccc'))
+        self._display_mode = 2
+        try:
+            saved_mode = int(window.settings.value('waveform_mode', 2))
+        except (TypeError, ValueError):
+            saved_mode = 2
         if saved_mode in (1, 2):
-            window.seek_bar.display_mode = saved_mode
-            window.seek_bar.render_timer.stop()
+            # Mirrors the old WaveformScrubber restore behavior: minimal/bars
+            # modes are restored, scratch mode is not (never resume straight
+            # into the DJ-scratch view on launch).
+            self._display_mode = saved_mode
+        self._position_ms = 0
+        self._duration_ms = 1
+        self._is_playing = False
+        self._is_scratching = False
 
-        saved_vis = int(window.settings.value('vis_mode', 0))
-        if saved_vis and getattr(window, 'visualizer', None):
-            window.visualizer.vis_mode = saved_vis
+        # ── Volume/mute state ────────────────────────────────────────────────
+        self._volume = int(getattr(window, 'last_volume', 100))
+        self._muted = False
 
-        window.total_time_label = QLabel("0:00")
+        # ── Bridge + image providers ─────────────────────────────────────────
+        self._bridge = FooterBridge(self)
+        # Strong Python refs — addImageProvider doesn't keep one, and a GC'd
+        # provider makes the engine fall back to a no-op requestImage()
+        # (UI_MANIFEST.md "Image Provider Strong Reference" gotcha).
+        self._icon_provider = AlbumIconProvider()
+        self._art_provider = FooterArtProvider()
+        self._wave_provider = WaveformImageProvider()
+        # Reuses album_detail.qml's blurred-shadow play-button glow ("btn/<hex>")
+        # so the footer's play button matches that page's halo exactly.
+        self._btn_glow_provider = AlbumDetailCoverProvider()
 
-        window.controls_layout = QHBoxLayout()
-        window.controls_layout.setSpacing(20)
-        window.controls_layout.addStretch()
-        window.controls_layout.addWidget(window.btn_stop)
-        window.controls_layout.addWidget(window.btn_shuffle)
-        window.controls_layout.addWidget(window.btn_prev)
-        window.controls_layout.addWidget(window.btn_play)
-        window.controls_layout.addWidget(window.btn_next)
-        window.controls_layout.addWidget(window.btn_repeat)
-        window.controls_layout.addStretch()
+        # Computed up front and handed to QML as context properties (read by
+        # the root item's property *initializers*, not pushed via signal)
+        # so the very first frame already shows real theme colors — relying
+        # on apply_theme()'s signals alone left a window where QML's
+        # hardcoded property defaults (dark grey) could paint first,
+        # flashing a near-black box before the real theme color arrives.
+        initial = self._compute_theme_values(window.theme)
 
-        window.slider_layout = QHBoxLayout()
-        window.slider_layout.setContentsMargins(0, 0, 0, 0)
-        window.slider_layout.setSpacing(15)
-        window.slider_layout.addWidget(window.current_time_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        window.slider_layout.addWidget(window.seek_bar, 1)
-        window.slider_layout.addWidget(window.total_time_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        self._qml = QMLGridWrapper()
+        try:
+            r, g, b = (int(x) for x in initial['bg'].split(','))
+            self._qml.setClearColor(QColor(r, g, b))
+        except Exception:
+            self._qml.setClearColor(QColor(14, 14, 14))
+        self._qml.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self._qml.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        main_footer_layout = QHBoxLayout(self)
-        main_footer_layout.setContentsMargins(8, 0, 20, 0)
-        main_footer_layout.setSpacing(0)
+        engine = self._qml.engine()
+        engine.addImageProvider("footericons", self._icon_provider)
+        engine.addImageProvider("footerart", self._art_provider)
+        engine.addImageProvider("waveformbuf", self._wave_provider)
+        engine.addImageProvider("footerbtnglow", self._btn_glow_provider)
 
-        footer_left = QWidget()
-        left_layout = QHBoxLayout(footer_left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        ctx = self._qml.rootContext()
+        ctx.setContextProperty("footerBridge", self._bridge)
+        ctx.setContextProperty("initialAccentColor", initial['accent'])
+        ctx.setContextProperty("initialPanelBg", initial['bg'])
+        ctx.setContextProperty("initialHoverColor", initial['hov'])
+        ctx.setContextProperty("initialBorderColor", initial['bc'])
+        ctx.setContextProperty("initialBorderWidth", initial['bw'])
+        ctx.setContextProperty("initialFontColorPrimary", initial['fc1'])
+        ctx.setContextProperty("initialFontColorSecondary", initial['fc2'])
+        ctx.setContextProperty("initialFontSizePrimary", initial['fs1'])
+        ctx.setContextProperty("initialFontSizeSecondary", initial['fs2'])
+        ctx.setContextProperty("initialFontFamily", initial['font_family'])
+        self._qml.setSource(QUrl.fromLocalFile(resource_path("player/panels/footer/footer_bar.qml")))
 
-        window.now_playing_widget = NowPlayingFooterWidget()
-        window.now_playing_widget.artist_clicked.connect(window.on_footer_artist_click)
-        window.now_playing_widget.album_clicked.connect(window.on_footer_album_click)
-        window.now_playing_widget.title_clicked.connect(window.on_footer_title_click)
-        window.now_playing_widget.track_right_clicked.connect(window._show_footer_track_context_menu)
-        # art left-click intentionally unbound
-        window.now_playing_widget.bpm_adjusted.connect(window._on_footer_bpm_adjusted)
-        window.now_playing_widget.expand_art_clicked.connect(window._toggle_sidebar_art)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._qml)
 
-        # Footer art slide animation (width) — needs now_playing_widget to exist
-        window._footer_art_anim = QPropertyAnimation(
-            window.now_playing_widget.art_label, b"maximumWidth"
+        # Invisible anchor positioned roughly under the QML cast icon (right
+        # edge of the bar), so cast_manager.py's device-picker popup
+        # (CastDevicePopup.show_near(button)) still has a QWidget to anchor
+        # to now that the cast button itself is QML, not a QPushButton.
+        self.cast_anchor = QWidget(self)
+        self.cast_anchor.setFixedSize(1, 1)
+
+        # Push initial state once QML has loaded.
+        self._bridge.volumeChanged.emit(self._volume)
+        self._bridge.displayModeChanged.emit(self._display_mode)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.cast_anchor.move(self.width() - 40, self.height() // 2)
+
+    # ── Playback state ──────────────────────────────────────────────────────
+    def set_playing(self, playing: bool):
+        self._is_playing = bool(playing)
+        self._bridge.isPlayingChanged.emit(self._is_playing)
+
+    @property
+    def is_playing(self):
+        return self._is_playing
+
+    def set_position_ms(self, ms):
+        if self._is_scratching:
+            return
+        self._position_ms = int(ms)
+        self._bridge.positionMsChanged.emit(self._position_ms)
+
+    @property
+    def position_ms(self):
+        return self._position_ms
+
+    def set_duration_ms(self, ms):
+        self._duration_ms = int(ms) if ms and ms > 0 else 1
+        self._bridge.durationMsChanged.emit(self._duration_ms)
+
+    @property
+    def duration_ms(self):
+        return self._duration_ms
+
+    @property
+    def is_dragging(self):
+        return self._is_scratching
+
+    is_spinning_freely = is_dragging  # callers only ever check "is the user actively scrubbing"
+
+    def set_shuffle(self, on: bool):
+        self._bridge.shuffleChanged.emit(bool(on))
+
+    def set_repeat(self, on: bool):
+        self._bridge.repeatChanged.emit(bool(on))
+
+    def set_cast_connected(self, connected: bool):
+        self._bridge.castConnectedChanged.emit(bool(connected))
+
+    def set_sidebar_art_expanded(self, expanded: bool):
+        self._bridge.sidebarArtExpandedChanged.emit(bool(expanded))
+
+    # ── Volume / mute ────────────────────────────────────────────────────────
+    @property
+    def volume(self):
+        return self._volume
+
+    @volume.setter
+    def volume(self, value):
+        self._volume = max(0, min(100, int(value)))
+        self._bridge.volumeChanged.emit(self._volume)
+
+    def set_muted(self, muted: bool):
+        self._muted = bool(muted)
+        self._bridge.mutedChanged.emit(self._muted)
+
+    # ── Waveform ─────────────────────────────────────────────────────────────
+    @property
+    def display_mode(self):
+        return self._display_mode
+
+    @display_mode.setter
+    def display_mode(self, mode):
+        self._display_mode = int(mode)
+        self._bridge.displayModeChanged.emit(self._display_mode)
+
+    @property
+    def has_real_data(self):
+        return self._has_real_data
+
+    def reset_waveform(self):
+        self._has_real_data = False
+        self._samples = [0.0] * 5000
+        self._total_samples = 5000
+        self._samples_np = np.zeros(5000, dtype=np.float64)
+        self._bridge.hasRealDataChanged.emit(False)
+        self._bridge.samplesChanged.emit()
+
+    def set_real_samples(self, new_samples):
+        if not new_samples:
+            return
+        self._has_real_data = True
+        self._samples = new_samples
+        self._total_samples = len(new_samples)
+        self._samples_np = np.asarray(new_samples, dtype=np.float64)
+        self._bridge.hasRealDataChanged.emit(True)
+        self._bridge.samplesChanged.emit()
+
+    def _on_mode_toggled(self, mode):
+        self._display_mode = int(mode)
+        self._bridge.displayModeChanged.emit(self._display_mode)
+        self.mode_toggled.emit(self._display_mode)
+
+    def _compute_scratch_frame(self, current_index, pixels_per_sample, width, height):
+        width, height = int(width), int(height)
+        if width <= 0 or height <= 0:
+            return
+        if self._fade_lookup_width != width:
+            cx = width / 2.0
+            x = np.arange(width, dtype=np.float64)
+            self._fade_lookup_np = np.maximum(0.0, 1.0 - (np.abs(x - cx) / cx) ** 1.6) if cx > 0 else np.array([])
+            self._fade_lookup_width = width
+
+        buf = self._waveform_buf
+        if buf is None or buf.shape[0] != height or buf.shape[1] != width:
+            buf = np.zeros((height, width, 4), dtype=np.uint8)
+            self._waveform_buf = buf
+
+        max_bar_height = (height / 2.0) * 0.90
+        base_hue = self._master_color.hue() if self._master_color.hue() >= 0 else (0 if self._user_picked else 150)
+
+        from player.panels.footer.waveform_renderer import render_scratch_waveform
+        render_scratch_waveform(
+            buf, width, height,
+            self._samples_np, self._total_samples,
+            current_index, pixels_per_sample, self._fade_lookup_np,
+            base_hue, max_bar_height, self._user_picked, self._master_color,
         )
-        window._footer_art_anim.setDuration(250)
-        window._footer_art_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        window._footer_art_anim.valueChanged.connect(
-            lambda v: window.now_playing_widget.art_label.setMinimumWidth(int(v))
+        self._wave_provider.set_buffer(buf, width, height)
+        self._wave_version += 1
+        self._bridge.waveformBufVersionChanged.emit(self._wave_version)
+
+    # ── Now-playing info ─────────────────────────────────────────────────────
+    def set_track(self, track):
+        self._current_track = track
+
+    def set_track_info(self, title, artist, album):
+        self._bridge.trackInfoChanged.emit(title or "", artist or "", album or "")
+
+    def set_cover(self, pixmap):
+        if pixmap and not pixmap.isNull():
+            self._art_provider.set_pixmap(_round_pixmap(pixmap, radius=6))
+        else:
+            self._art_provider.set_pixmap(None)
+        self._cover_version += 1
+        self._bridge.coverVersionChanged.emit(self._cover_version)
+
+    def set_file_type(self, file_type):
+        self._file_type = file_type
+
+    def set_bpm(self, bpm):
+        self._current_bpm = bpm
+        ft = f" ᛫ {self._file_type}" if self._file_type else ""
+        text = f"***.* BPM{ft}" if bpm is None else f"{bpm:.1f} BPM{ft}"
+        self._bridge.bpmTextChanged.emit(text)
+
+    def _show_track_context_menu(self):
+        if self._current_track:
+            self.track_right_clicked.emit(self._current_track)
+
+    def _show_bpm_menu(self):
+        if not self._current_bpm or self._current_bpm <= 0:
+            return
+        from PyQt6.QtGui import QCursor
+        from player.widgets import ShadowContextMenu
+        from player.mixins.visuals import resolve_menu_hover
+
+        def _fmt(v):
+            s = f"{v:.2f}".rstrip('0').rstrip('.')
+            return f"{s} BPM"
+
+        theme = getattr(self._window, 'theme', None)
+        bg   = getattr(theme, 'main_panel_bg',      '14,14,14')
+        bc   = getattr(theme, 'border_color',        '#444444')
+        fg   = getattr(theme, 'font_color_primary',  '#dddddd')
+        fg2  = getattr(theme, 'font_color_secondary', '#555555')
+        hov  = resolve_menu_hover(theme)
+        px   = getattr(theme, 'font_size_secondary', 12)
+        acc  = getattr(theme, 'accent',              '#cccccc')
+
+        menu = ShadowContextMenu()
+        menu.configure(bg, bc, fg, fg2, hov, px, accent=acc)
+        for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
+                             ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
+            new_val = self._current_bpm * mult
+            menu.add_action(f"{label}  |  {_fmt(new_val)}",
+                            callback=lambda v=new_val: self.bpm_adjusted.emit(v))
+        menu.exec_at(QCursor.pos(), window=self._window)
+
+    # ── Theming ──────────────────────────────────────────────────────────────
+    def set_accent_color(self, color):
+        self._master_color = QColor(color)
+        self._bridge.accentColorChanged.emit(color)
+
+    @staticmethod
+    def _compute_theme_values(theme):
+        """Shared by __init__ (initial QML context properties — avoids a
+        startup flash of QML's hardcoded property defaults) and apply_theme
+        (live signal-driven updates), so both stay in sync."""
+        mc = theme.accent
+        if mc.startswith('#') and len(mc) > 7:
+            mc = mc[:7]
+
+        from player.mixins.visuals import resolve_menu_hover
+        fc1 = getattr(theme, 'font_color_primary',   '#dddddd')
+        fc2 = getattr(theme, 'font_color_secondary',  '#777777')
+        fs1 = getattr(theme, 'font_size_primary',     15)
+        fs2 = getattr(theme, 'font_size_secondary',   12)
+        hov = resolve_menu_hover(theme)
+        bw  = getattr(theme, 'border_width', 1)
+        bg  = getattr(theme, 'footer_panel_bg', '14,14,14')
+
+        # theme.border_color can be a CSS "rgba(r,g,b,a)" string (when "Auto
+        # border from accent" is off) — that syntax is only valid inside Qt
+        # stylesheets (QSS); QColor(...) and QML's `color` type both reject
+        # it and silently fall back to black. Recompute directly from the
+        # underlying accent/manual-color fields instead, into a format
+        # (#AARRGGBB) both QSS and QML actually parse.
+        if getattr(theme, 'auto_border_from_accent', True):
+            bc_color = QColor(mc).darker(250)
+        else:
+            bc_color = QColor(getattr(theme, 'manual_border_color', '#2a2a2a'))
+        bc = bc_color.name(QColor.NameFormat.HexArgb)
+
+        return {
+            'accent': mc, 'fc1': fc1, 'fc2': fc2, 'fs1': fs1, 'fs2': fs2,
+            'hov': hov, 'bw': bw, 'bg': bg, 'bc': bc,
+            'font_family': getattr(theme, 'app_font', ''),
+        }
+
+    def apply_theme(self, theme):
+        v = self._compute_theme_values(theme)
+        self._master_color = QColor(v['accent'])
+
+        self.setStyleSheet(
+            f"QWidget#FooterPanel {{ background-color: rgb({v['bg']}); border-top: {v['bw']}px solid {v['bc']}; }}"
         )
+        try:
+            r, g, b = (int(x) for x in v['bg'].split(','))
+            self._qml.setClearColor(QColor(r, g, b))
+        except Exception:
+            pass
 
-        left_layout.addWidget(window.now_playing_widget)
-
-        footer_center = QWidget()
-        center_layout = QVBoxLayout(footer_center)
-        center_layout.setContentsMargins(10, 10, 10, 0)
-        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.addLayout(window.controls_layout)
-        center_layout.addLayout(window.slider_layout)
-
-        footer_right = QWidget()
-        right_layout = QHBoxLayout(footer_right)
-        right_layout.setContentsMargins(8, 0, 8, 0)
-        right_layout.setSpacing(8)
-
-        right_layout.addStretch()
-        right_layout.addWidget(window.settings_btn)
-        right_layout.addWidget(window.vol_icon_label)
-        right_layout.addSpacing(4)
-        right_layout.addWidget(window.vol_slider)
-        right_layout.addWidget(window.cast_btn)
-
-        main_footer_layout.addWidget(footer_left, 2)
-        main_footer_layout.addWidget(footer_center, 3)
-        main_footer_layout.addWidget(footer_right, 2)
+        self._bridge.accentColorChanged.emit(v['accent'])
+        self._bridge.panelBgChanged.emit(v['bg'])
+        self._bridge.hoverColorChanged.emit(v['hov'])
+        self._bridge.borderColorChanged.emit(v['bc'])
+        self._bridge.borderWidthChanged.emit(v['bw'])
+        self._bridge.fontColorPrimaryChanged.emit(v['fc1'])
+        self._bridge.fontColorSecondaryChanged.emit(v['fc2'])
+        self._bridge.fontSizePrimaryChanged.emit(v['fs1'])
+        self._bridge.fontSizeSecondaryChanged.emit(v['fs2'])
+        self._bridge.fontFamilyChanged.emit(v['font_family'])

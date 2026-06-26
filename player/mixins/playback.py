@@ -315,12 +315,11 @@ class PlaybackMixin:
             print(f"[TIMING] +{time.time() - t0:.3f}s | UI Text Updated")
 
             # Reset Seek Bar
-            self.seek_bar.update_position(0)
-            self.current_time_label.setText("0:00")
+            self._footer_panel.set_position_ms(0)
 
             # Reset waveform to loading state so "ANALYZING WAVEFORM..." is shown
             # while the C++ engine generates data for the new track.
-            self.seek_bar.reset_waveform()
+            self._footer_panel.reset_waveform()
 
             # Stop Preloads
             self.preload_timer.stop() 
@@ -411,8 +410,7 @@ class PlaybackMixin:
         if self.audio_engine.is_playing:
             self.audio_engine.pause()
             self.smooth_timer.stop()
-            if hasattr(self, 'seek_bar'):
-                self.seek_bar.is_playing = False
+            self._footer_panel.set_playing(False)
             self._cast_relay_pause()
         else:
             # If nothing is selected, default to the top track
@@ -427,8 +425,7 @@ class PlaybackMixin:
                 self.audio_engine.play()
                 self.last_engine_update_time = time.time()
                 self.smooth_timer.start()
-                if hasattr(self, 'seek_bar'):
-                    self.seek_bar.is_playing = True
+                self._footer_panel.set_playing(True)
                 self._cast_relay_play()
 
         self.refresh_ui_styles()
@@ -456,13 +453,11 @@ class PlaybackMixin:
             self.play_whole_album(shuffled)    
     
     def on_play_started(self, track_data=None):
-        if hasattr(self, 'seek_bar'):
-            self.seek_bar.is_playing = True
+        self._footer_panel.set_playing(True)
 
-                
         # Ask C++ to analyze if we are in Mode 0 or Mode 2
         target_path = track_data.get('stream_url') or track_data.get('path')
-        if target_path and getattr(self.seek_bar, 'display_mode', 0) in (0, 2):
+        if target_path and self._footer_panel.display_mode in (0, 2):
             self.audio_engine.request_waveform(target_path, num_points=10000)
             
         self.sync_playlist_duration()
@@ -509,8 +504,7 @@ class PlaybackMixin:
             self._scrobble_complete(self.playlist_data[self.current_index].get('id'))
 
         # Keep motor running on gapless changes
-        if hasattr(self, 'seek_bar'):
-            self.seek_bar.is_playing = True
+        self._footer_panel.set_playing(True)
 
         self.last_gapless_time = time.time()
 
@@ -536,8 +530,8 @@ class PlaybackMixin:
             track = self.playlist_data[self.current_index]
             target_path = track.get('stream_url') or track.get('path')
 
-            if target_path and getattr(self.seek_bar, 'display_mode', 0) in (0, 2):
-                self.seek_bar.reset_waveform()
+            if target_path and self._footer_panel.display_mode in (0, 2):
+                self._footer_panel.reset_waveform()
                 self.audio_engine.request_waveform(target_path, num_points=10000)
 
             self.visual_update_timer.start(350)
@@ -593,11 +587,8 @@ class PlaybackMixin:
     def _media_stop(self):
         self.audio_engine.stop()
 
-        if hasattr(self, 'seek_bar'):
-            self.seek_bar.is_playing = False
-            self.seek_bar.position_ms = 0
-            self.seek_bar.current_index = 0.0
-            self.seek_bar.update()
+        self._footer_panel.set_playing(False)
+        self._footer_panel.set_position_ms(0)
 
         if getattr(self, 'visualizer', None):
             self.visualizer.reset()
@@ -632,9 +623,9 @@ class PlaybackMixin:
     def get_visible_indices(self): 
         return [i for i in range(self.tree.topLevelItemCount()) if not self.tree.topLevelItem(i).isHidden()]
     
-    def toggle_shuffle(self):
-        self.is_shuffle = self.btn_shuffle.isChecked()
-        self.btn_shuffle.setToolTip(f"Shuffle {'on' if self.is_shuffle else 'off'}")
+    def toggle_shuffle(self, on=None):
+        self.is_shuffle = (not self.is_shuffle) if on is None else bool(on)
+        self._footer_panel.set_shuffle(self.is_shuffle)
         if self.is_shuffle:
             self._rebuild_shuffle_queue()
         else:
@@ -642,58 +633,49 @@ class PlaybackMixin:
         self.refresh_ui_styles()
         self.preload_next()
 
-    def toggle_repeat(self):
-        self.is_repeat = self.btn_repeat.isChecked()
-        self.btn_repeat.setToolTip(f"Repeat {'on' if self.is_repeat else 'off'}")
+    def toggle_repeat(self, on=None):
+        self.is_repeat = (not self.is_repeat) if on is None else bool(on)
+        self._footer_panel.set_repeat(self.is_repeat)
         self.refresh_ui_styles()
         self.preload_next()
 
     def handle_duration_change(self, duration):
-        if duration > 0: 
-            self.seek_bar.update_duration(duration)
-            self.total_time_label.setText(self.format_time(duration))
-    
+        if duration > 0:
+            self._footer_panel.set_duration_ms(duration)
+
     def update_ui_state(self, position):
         # 1. SHIELD MUST BE FIRST
         if time.time() < getattr(self, 'ignore_updates_until', 0):
             return
-            
+
         # 2. DO NOT INTERFERE IF SCRATCHING
-        is_djing = getattr(self.seek_bar, 'is_dragging', False) or getattr(self.seek_bar, 'is_spinning_freely', False)
+        is_djing = self._footer_panel.is_dragging or self._footer_panel.is_spinning_freely
         if is_djing:
             return
 
         # 3. SAFE TO UPDATE
         self.last_engine_pos = position
         self.last_engine_update_time = time.time()
-        
-        if hasattr(self.seek_bar, 'update_position'):
-            self.seek_bar.update_position(position)
 
-        if hasattr(self, 'current_time_label'):
-            self.current_time_label.setText(self.format_time(position))
+        self._footer_panel.set_position_ms(position)
 
         if hasattr(self, '_queue_panel'):
             self._queue_panel.update_lyrics_position(int(position))
 
     def run_smooth_interpolator(self):
-        is_djing = getattr(self.seek_bar, 'is_dragging', False) or getattr(self.seek_bar, 'is_spinning_freely', False)
-        
+        is_djing = self._footer_panel.is_dragging or self._footer_panel.is_spinning_freely
+
         if self.audio_engine.is_playing and not is_djing:
             # Safe elapsed time calculation
             elapsed_ms = (time.time() - getattr(self, 'last_engine_update_time', time.time())) * 1000
             predicted_pos = int(getattr(self, 'last_engine_pos', 0) + elapsed_ms)
-            
+
             # Cap it to duration
-            duration = getattr(self.seek_bar, 'duration_ms', 0)
+            duration = self._footer_panel.duration_ms
             if duration > 0:
                 predicted_pos = min(predicted_pos, duration)
-            
-            if hasattr(self.seek_bar, 'update_position'):
-                self.seek_bar.update_position(predicted_pos)
-            
-            if hasattr(self, 'current_time_label'):
-                self.current_time_label.setText(self.format_time(predicted_pos))
+
+            self._footer_panel.set_position_ms(predicted_pos)
     
     def sync_playlist_duration(self):
         if 0 <= self.current_index < self.tree.topLevelItemCount():
@@ -737,24 +719,17 @@ class PlaybackMixin:
         self.last_engine_update_time = time.time()
         self._cast_relay_seek(target_ms)
 
-    def on_live_scratch(self, target_ms):
-        """Fires 60 times a second while the user is dragging the waveform."""
-        
-
-        if hasattr(self, 'current_time_label'):
-            self.current_time_label.setText(self.format_time(target_ms))
-    
     def on_waveform_toggled(self, mode_int):
         """If user turns waveform back on mid-song, fetch the data on-demand."""
         # Modes 0 and 2 BOTH require audio waveform data!
         needs_waveform = (mode_int in (0, 2))
-        
-        if needs_waveform and not getattr(self.seek_bar, 'has_real_data', False):
+
+        if needs_waveform and not self._footer_panel.has_real_data:
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 target_path = track.get('stream_url') or track.get('path')
                 if target_path:
-                    self.seek_bar.reset_waveform()
+                    self._footer_panel.reset_waveform()
                     self.audio_engine.request_waveform(target_path, num_points=10000)
     
     def load_bpm_cache(self):
@@ -827,7 +802,7 @@ class PlaybackMixin:
             current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
             if track_id == current_track_id:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
-                self.now_playing_widget.set_bpm(bpm)
+                self._footer_panel.set_bpm(bpm)
         else:
             self.file_type_label.setText(self.current_file_type_text)
     

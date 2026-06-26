@@ -1341,7 +1341,7 @@ class CastManager:
         idx      = getattr(self._win, 'current_index', -1)
         pl       = getattr(self._win, 'playlist_data', [])
         track    = pl[idx] if 0 <= idx < len(pl) else None
-        vol      = getattr(getattr(self._win, 'vol_slider', None), 'value', lambda: 50)()
+        vol      = getattr(getattr(self._win, '_footer_panel', None), 'volume', 50)
         cover_px = getattr(self._win, 'current_cover_pixmap', None)
 
         self._popup.refresh(
@@ -1353,7 +1353,7 @@ class CastManager:
             still_scanning=(self._pending_scans > 0 or stale),
             accent_color=getattr(getattr(self._win, 'theme', None), 'accent', '#ffffff'),
         )
-        self._popup.show_near(self._win.cast_btn)
+        self._popup.show_near(self._win._footer_panel.cast_anchor)
 
         if self._active_devices:
             threading.Thread(target=self._sync_volumes, daemon=True).start()
@@ -1597,21 +1597,8 @@ class CastManager:
     def _on_volume_changed(self, dev_or_none, value: int):
         """Called on main thread when a volume slider moves."""
         if dev_or_none is None:
-            # Local device — set audio engine directly, bypassing _cast_relay_volume
-            sl = getattr(self._win, 'vol_slider', None)
-            if sl:
-                sl.blockSignals(True)
-                sl.setValue(value)
-                sl.blockSignals(False)
-            ae = getattr(self._win, 'audio_engine', None)
-            if ae:
-                ae.set_volume(value)
-            muted = (value == 0)
-            if muted != getattr(self._win, 'is_muted', False):
-                self._win.is_muted = muted
-                self._win.update_volume_icon()
-            if not muted:
-                self._win.last_volume = value
+            # Local device — set audio engine + footer UI directly, bypassing _cast_relay_volume
+            self._win.update_volume(value)
         else:
             dev_obj = self._active_devices.get(dev_or_none.id)
             if dev_obj:
@@ -1672,26 +1659,20 @@ class CastManager:
             ae.pause()
             if hasattr(self._win, 'smooth_timer'):
                 self._win.smooth_timer.stop()
-            if hasattr(self._win, 'seek_bar'):
-                self._win.seek_bar.is_playing = False
+            self._win._footer_panel.set_playing(False)
             self._win.refresh_ui_styles()
         elif state == 'playing' and not ae.is_playing:
             ae.play()
             if hasattr(self._win, 'smooth_timer'):
                 self._win.smooth_timer.start()
-            if hasattr(self._win, 'seek_bar'):
-                self._win.seek_bar.is_playing = True
+            self._win._footer_panel.set_playing(True)
             self._win.refresh_ui_styles()
 
     def _on_dlna_position_main(self, pos_ms: int, dur_ms: int):
         """Runs on main thread; drives seekbar from AirPlay device position."""
         w = self._win
-        if dur_ms > 0 and hasattr(w, 'seek_bar'):
-            w.seek_bar.update_duration(dur_ms)
-            if hasattr(w, 'total_time_label'):
-                fmt = getattr(w, 'format_time', None)
-                if fmt:
-                    w.total_time_label.setText(fmt(dur_ms))
+        if dur_ms > 0:
+            w._footer_panel.set_duration_ms(dur_ms)
         if pos_ms >= 0 and hasattr(w, 'update_ui_state'):
             w.update_ui_state(pos_ms)
 
@@ -1701,12 +1682,9 @@ class CastManager:
         self._ap_wall_start  = _t.monotonic()
         self._ap_duration_ms = duration_ms
         w = self._win
-        if duration_ms > 0 and hasattr(w, 'seek_bar'):
-            w.seek_bar.update_duration(duration_ms)
-            if hasattr(w, 'total_time_label') and hasattr(w, 'format_time'):
-                w.total_time_label.setText(w.format_time(duration_ms))
-        if hasattr(w, 'seek_bar'):
-            w.seek_bar.is_playing = True
+        if duration_ms > 0:
+            w._footer_panel.set_duration_ms(duration_ms)
+        w._footer_panel.set_playing(True)
         if hasattr(w, 'smooth_timer'):
             w.smooth_timer.start()
         self._ap_timer.start()
@@ -1723,11 +1701,8 @@ class CastManager:
             pos_ms = min(pos_ms, self._ap_duration_ms)
         w.last_engine_pos = pos_ms
         w.last_engine_update_time = _t.time()
-        if not getattr(getattr(w, 'seek_bar', None), 'is_dragging', False):
-            if hasattr(w, 'seek_bar'):
-                w.seek_bar.update_position(pos_ms)
-            if hasattr(w, 'current_time_label') and hasattr(w, 'format_time'):
-                w.current_time_label.setText(w.format_time(pos_ms))
+        if not w._footer_panel.is_dragging:
+            w._footer_panel.set_position_ms(pos_ms)
 
     # ── Connection / disconnection (background threads) ───────────────────
 

@@ -479,10 +479,10 @@ class VisualsMixin:
             dominant_color = dominant_color[:7]
         self.theme.accent = dominant_color
         self._auto_tint_bg_colors()
-        if hasattr(self, 'seek_bar'): self.seek_bar._user_picked = False
+        self._footer_panel._user_picked = False
         if getattr(self, 'visualizer', None): self.visualizer.bar_color = QColor(self.theme.accent)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(self.theme.accent)
-        self.now_playing_widget.set_accent_color(self.theme.accent)
+        self._footer_panel.set_accent_color(self.theme.accent)
         if 0 <= self.current_index < len(self.playlist_data):
             track = self.playlist_data[self.current_index]
             raw_artist = track.get('artist', 'Unknown')
@@ -517,9 +517,9 @@ class VisualsMixin:
             self._apply_dominant_color(dominant_color)
 
         if not self.current_cover_pixmap.isNull():
-            self.now_playing_widget.set_cover(self.current_cover_pixmap)
+            self._footer_panel.set_cover(self.current_cover_pixmap)
         else:
-            self.now_playing_widget.set_cover(None)
+            self._footer_panel.set_cover(None)
 
         if hasattr(self, '_left_panel'):
             self._left_panel.set_old_art(self.old_cover_pixmap)
@@ -675,10 +675,7 @@ class VisualsMixin:
             self._last_indicator_key = indicator_key
             self.update_indicator(scroll_to_current=scroll_to_current)
 
-        self.btn_play.setIcon(get_cached_icon("img/pause.png" if self.audio_engine.is_playing else "img/play.png", mc))
-
-        cast_color = mc if getattr(self, '_cast_connected', False) else '#555555'
-        self.cast_btn.setIcon(get_cached_icon("img/cast.png", cast_color))
+        self._footer_panel.set_cast_connected(getattr(self, '_cast_connected', False))
 
         try:
             _r, _g, _b = (int(x) for x in getattr(self.theme, 'main_panel_bg', '14,14,14').split(','))
@@ -701,26 +698,13 @@ class VisualsMixin:
         self._last_theme_key = theme_key
 
         if getattr(self, 'visualizer', None): self.visualizer.bar_color = QColor(mc)
-        if hasattr(self, 'seek_bar'): self.seek_bar.set_master_color(mc)
         if hasattr(self, '_queue_panel'): self._queue_panel.set_accent_color(mc)
 
-        self.now_playing_widget.set_accent_color(mc)
-        self.now_playing_widget.set_expand_btn_style(mc)
-        self.now_playing_widget.apply_theme(self.theme)
         if hasattr(self, '_queue_panel'): self._queue_panel.apply_theme(self.theme)
 
         if hasattr(self, '_left_panel'): self._left_panel.set_master_color(mc)
         if hasattr(self, '_left_handle'):  self._left_handle.update_color(mc)
         if hasattr(self, '_queue_handle'): self._queue_handle.update_color(mc)
-
-        self.btn_shuffle.master_color = mc; self.btn_repeat.master_color = mc
-        self.btn_shuffle.setIcon(get_cached_icon("img/shuffle.png", mc)); self.btn_repeat.setIcon(get_cached_icon("img/repeat.png", mc))
-
-        vol_img = "img/volume_mute.png" if self.is_muted else "img/volume.png"
-        self.vol_icon_label.setIcon(get_cached_icon(vol_img, "#888888" if self.is_muted else mc))
-
-        for btn, icon_name in [(self.settings_btn, "img/settings.png"), (self.btn_prev, "img/prev.png"), (self.btn_next, "img/next.png"), (self.btn_stop, "img/stop.png")]:
-            btn.setIcon(get_cached_icon(icon_name, mc))
 
         active_tab = self.tabs.currentWidget()
         if hasattr(active_tab, 'set_accent_color'):
@@ -763,12 +747,6 @@ class VisualsMixin:
             QTabBar::tab:selected {{ color: {mc}; background: transparent; border: none; }}
             QTabBar::tab:hover {{ color: {_fc1}; background: {_hov}; border-radius: 5px; }}
         """
-        toggle_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
-        self.btn_shuffle.setStyleSheet(toggle_style); self.btn_repeat.setStyleSheet(toggle_style)
-
-        side_btn_style = f"QPushButton {{ background: transparent; border: none; border-radius: 20px; }} QPushButton:hover {{ background: {_hov}; }}"
-        for btn in [self.settings_btn, self.btn_prev, self.btn_next, self.btn_stop, self.cast_btn, self.vol_icon_label]: btn.setStyleSheet(side_btn_style)
-
         # 2. Define the Buttons CSS
         modern_dark_style = f"""
             QPushButton {{ 
@@ -883,9 +861,11 @@ class VisualsMixin:
             self.theme.border_color = f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
         bc = self.theme.border_color
 
-        self._footer_panel.setStyleSheet(
-            f"QWidget#FooterPanel {{ background-color: rgb({self.theme.footer_panel_bg}); border-top: {bw}px solid {bc}; }}"
-        )
+        # Needs border_color computed above (apply_theme reads it for the
+        # footer's top divider line — moving this earlier would read the
+        # previous frame's stale value).
+        self._footer_panel.apply_theme(self.theme)
+
         if hasattr(self, '_queue_panel'):
             self._queue_panel.setStyleSheet(
                 f'#QueuePanel {{'
@@ -945,22 +925,6 @@ class VisualsMixin:
 
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, apply_deferred_styles)
-
-        # (The rest of the fast footer styles stay exactly the same)
-        self.btn_play.apply_accent(mc, self.theme)
-        self.btn_play.ensure_glow()
-        
-        slider_style = (
-            f"QSlider::groove:horizontal {{ background: transparent; height: 5px; border-radius: 2px; }}"
-            f"QSlider::sub-page:horizontal {{ background: {mc}; height: 5px; border-radius: 2px; }}"
-            f"QSlider::add-page:horizontal {{ background: #333; height: 5px; border-radius: 2px; }}"
-            f"QSlider::handle:horizontal {{ background: {mc}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}"
-        )
-        self.vol_slider.setStyleSheet(slider_style)
-        self.seek_bar.set_master_color(mc)
-
-        timer_style = f"color: {mc}; font-family: 'sans-serif', sans-serif; font-size: 14px; font-weight: bold; background: transparent;"
-        self.current_time_label.setStyleSheet(timer_style); self.total_time_label.setStyleSheet(timer_style)
 
         if hasattr(self, '_queue_tree_panel'):
             self._queue_tree_panel.set_accent_color(mc)
@@ -1076,6 +1040,7 @@ class VisualsMixin:
     def update_volume(self, value):
         """Optimized: Only updates audio engine and icon, skips full UI refresh."""
         self.audio_engine.set_volume(value)
+        self._footer_panel.volume = value
 
         should_be_muted = (value == 0)
 
@@ -1088,26 +1053,19 @@ class VisualsMixin:
 
     def update_volume_icon(self):
         """Lightweight update just for the speaker icon."""
-        vol_img = "img/volume_mute.png" if self.is_muted else "img/volume.png"
-
-        v_color = "#888888" if self.is_muted else self.theme.accent
-        
-        icon_path = resource_path(vol_img)
-        if os.path.exists(icon_path):
-
-            from player.widgets import tint_icon as _ti
-            self.vol_icon_label.setIcon(_ti(vol_img, v_color))
+        self._footer_panel.set_muted(self.is_muted)
 
     def toggle_mute(self):
-        if not self.is_muted: self.last_volume = self.vol_slider.value(); self.vol_slider.setValue(0)
-        else: self.vol_slider.setValue(self.last_volume)
-    
+        if not self.is_muted:
+            self.last_volume = self._footer_panel.volume
+            self.update_volume(0)
+        else:
+            self.update_volume(self.last_volume)
+
     def adjust_volume_by(self, delta):
-        """Changes volume via keyboard and instantly shows the tooltip."""
-        new_vol = max(0, min(100, self.vol_slider.value() + delta))
-        self.vol_slider.setValue(new_vol)
+        """Changes volume via keyboard."""
+        new_vol = max(0, min(100, self._footer_panel.volume + delta))
         self.update_volume(new_vol)
-        self.vol_slider.update_tooltip_pos() # Show the user the new %
 
     def get_colored_pixmap(self, path, color, size):
         """Helper to tint an image without reloading the whole interface."""
@@ -1189,14 +1147,10 @@ class VisualsMixin:
                 self.current_file_type_text = os.path.splitext(target_path)[1].upper().replace('.', '') if target_path else 'UNKNOWN'
 
             # 3. Update the Bottom "Now Playing" Widget
-            if hasattr(self, 'now_playing_widget'):
-                self.now_playing_widget.set_file_type(self.current_file_type_text)
-                self.now_playing_widget.update_info(
-                    title=title,
-                    artist=artist,
-                    album=track.get('album', '')
-                )
-                self.now_playing_widget.set_track(track)
+            if hasattr(self, '_footer_panel'):
+                self._footer_panel.set_file_type(self.current_file_type_text)
+                self._footer_panel.set_track_info(title, artist, track.get('album', ''))
+                self._footer_panel.set_track(track)
                 # Eagerly show cached cover art in the footer without waiting for BlurWorker
                 _cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
                 if _cid:
@@ -1207,7 +1161,7 @@ class VisualsMixin:
                             _pix = QPixmap()
                             _pix.loadFromData(_data)
                             if not _pix.isNull():
-                                self.now_playing_widget.set_cover(_pix)
+                                self._footer_panel.set_cover(_pix)
                     except Exception:
                         pass
 
@@ -1220,10 +1174,10 @@ class VisualsMixin:
             if hasattr(self, 'bpm_cache') and track_id in self.bpm_cache:
                 bpm = self.bpm_cache[track_id]
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
-                self.now_playing_widget.set_bpm(bpm)
+                self._footer_panel.set_bpm(bpm)
             else:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
-                self.now_playing_widget.set_bpm(None)
+                self._footer_panel.set_bpm(None)
 
             # Lyrics — load for the new track
             if hasattr(self, '_queue_panel'):

@@ -28,9 +28,9 @@ class PersistenceMixin:
             safe = [self._serializable_track(t) for t in self.playlist_data]
             self.settings.setValue('current_playlist', json.dumps(safe))
             self.settings.setValue('saved_current_index', str(self.current_index))
-            self.settings.setValue('saved_position', str(self.seek_bar.position_ms))
+            self.settings.setValue('saved_position', str(self._footer_panel.position_ms))
             self.settings.setValue('theme', self.theme.to_json())
-            self.settings.setValue('waveform_mode', self.seek_bar.display_mode)
+            self.settings.setValue('waveform_mode', self._footer_panel.display_mode)
             if getattr(self, 'visualizer', None):
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
@@ -118,8 +118,8 @@ class PersistenceMixin:
         self.update_window_title()
         
         # 4. Set waveform to an empty loading state
-        if getattr(self.seek_bar, 'display_mode', 0) in (0, 2):
-            self.seek_bar.reset_waveform()
+        if self._footer_panel.display_mode in (0, 2):
+            self._footer_panel.reset_waveform()
                 
         # 5. Trigger the heavy visual update (Background blur, cover art, master color)
         self.visual_update_timer.start(50)
@@ -140,20 +140,16 @@ class PersistenceMixin:
                 # Restore the seek bar position
                 saved_pos = int(float(self.settings.value('saved_position', 0)))
                 if saved_pos > 0:
-                    self.seek_bar.blockSignals(True)
-                    self.seek_bar.setValue(saved_pos)
-                    self.seek_bar.blockSignals(False)
-                    self.current_time_label.setText(self.format_time(saved_pos))
-                    
+                    self._footer_panel.set_position_ms(saved_pos)
+
                     # Restore the Total Time label
                     track = self.playlist_data[saved_idx]
                     dur_str = track.get('duration', '0:00')
-                    self.total_time_label.setText(dur_str)
-                    
+
                     try:
                         parts = dur_str.split(':')
                         total_ms = (int(parts[0]) * 60 + int(parts[1])) * 1000
-                        self.seek_bar.setMaximum(total_ms)
+                        self._footer_panel.set_duration_ms(total_ms)
                     except: pass
         except Exception as e:
             print(f"Error restoring previous track state: {e}")

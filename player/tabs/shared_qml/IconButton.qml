@@ -19,16 +19,18 @@ Item {
     property string iconSource: ""
     property string hoverColor: "#333333"
     property int    iconSize:   18
+    property int    radius:     4
 
     signal triggered(real globalX, real globalY)
 
     Rectangle {
-        anchors.fill: parent; radius: 4
+        anchors.fill: parent; radius: btn.radius
         color: hoverArea.containsMouse ? btn.hoverColor : "transparent"
     }
     Image {
         anchors.centerIn: parent
         width: btn.iconSize; height: btn.iconSize
+        sourceSize: Qt.size(btn.iconSize, btn.iconSize)
         source: btn.iconSource
         cache: false; mipmap: true; smooth: true
     }

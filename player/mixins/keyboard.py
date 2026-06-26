@@ -380,7 +380,7 @@ class KeyboardMixin:
        
     def handle_arrow_shortcut(self, step_ms):
         if self.audio_engine.total_ms > 0:
-            current_ms = self.seek_bar.position_ms
+            current_ms = self._footer_panel.position_ms
             total_ms = self.audio_engine.total_ms
             new_ms = max(0, min(current_ms + step_ms, total_ms))
             
@@ -398,11 +398,9 @@ class KeyboardMixin:
                         self.audio_engine.load_track(track['path'])
             
             self.audio_engine.seek(new_ms)
-            self.seek_bar.update_position(new_ms)
-            
-            if hasattr(self, 'current_time_label'):
-                self.current_time_label.setText(self.format_time(new_ms))
-            
+            self._footer_panel.set_position_ms(new_ms)
+
+
             self.queued_next_index = -1 
             self.preload_next()
             self.ignore_updates_until = time.time() + 1.0

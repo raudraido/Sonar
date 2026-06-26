@@ -50,7 +50,6 @@ from player.workers import (
     CoverLoaderWorker, CrossPlatformMediaKeyListener,
 )
 from player.widgets import (
-    ElidedLabel, FooterClickableLabel,
     TriangleTooltip,
     SettingsWindow,
 )
@@ -785,12 +784,10 @@ class SonarPlayer(
                 elif getattr(self.audio_engine, 'is_playing', False):
                     self.smooth_timer.start()
 
-            if hasattr(self, 'seek_bar'):
-                sb = self.seek_bar
-                if minimized:
-                    sb.render_timer.stop()
-                elif getattr(sb, 'display_mode', 1) == 0:
-                    sb.render_timer.start()
+            # No explicit pause needed for the footer's waveform rendering —
+            # it's driven by a QML FrameAnimation tied to the QQuickWindow's
+            # render loop, which Qt already stops/resumes automatically when
+            # the window is minimized/restored.
 
             if hasattr(self, 'playing_movie'):
                 if minimized:
@@ -1182,11 +1179,32 @@ class SonarPlayer(
         self._footer_panel = FooterPanel(self)
         main_layout.addWidget(self._footer_panel)
 
+        self._footer_panel.play_clicked.connect(self.toggle_playback)
+        self._footer_panel.prev_clicked.connect(self.play_prev)
+        self._footer_panel.next_clicked.connect(self.play_next)
+        self._footer_panel.stop_clicked.connect(self._media_stop)
+        self._footer_panel.shuffle_toggled.connect(self.toggle_shuffle)
+        self._footer_panel.repeat_toggled.connect(self.toggle_repeat)
+        self._footer_panel.volume_changed.connect(self.update_volume)
+        self._footer_panel.mute_clicked.connect(self.toggle_mute)
+        self._footer_panel.seek_requested.connect(self.on_waveform_seek)
+        self._footer_panel.mode_toggled.connect(self.on_waveform_toggled)
+        self._footer_panel.scratch_mode_changed.connect(self.audio_engine.set_scratch_mode)
+        self._footer_panel.velocity_changed.connect(self.audio_engine.set_scratch_velocity)
+        self._footer_panel.artist_clicked.connect(self.on_footer_artist_click)
+        self._footer_panel.album_clicked.connect(self.on_footer_album_click)
+        self._footer_panel.title_clicked.connect(self.on_footer_title_click)
+        self._footer_panel.track_right_clicked.connect(self._show_footer_track_context_menu)
+        self._footer_panel.bpm_adjusted.connect(self._on_footer_bpm_adjusted)
+        self._footer_panel.expand_art_clicked.connect(self._toggle_sidebar_art)
+        self._footer_panel.cast_clicked.connect(self._on_cast_clicked)
+        self._footer_panel.settings_clicked.connect(self.open_settings)
+
         # Queue panel is now a permanent sidebar (see body layout above)
 
         # --- FINAL SETUPS ---
         # Context menu is handled by NowPlayingPanel._show_track_context_menu
-        for w in [self.settings_btn, self.cast_btn, self.btn_stop, self.btn_shuffle, self.btn_prev, self.btn_play, self.btn_next, self.btn_repeat, self.vol_slider, self.seek_bar, self.vol_icon_label, self.btn_back, self.btn_fwd]:
+        for w in [self.btn_back, self.btn_fwd]:
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             w.setCursor(Qt.CursorShape.PointingHandCursor)
             w.installEventFilter(self)
@@ -1229,8 +1247,8 @@ class SonarPlayer(
         self.sc_search        = self.hotkey_manager.register("spotlight",        self, self.focus_spotlight)
         self.sc_back          = self.hotkey_manager.register("nav_back",         self, self.go_back)
         self.sc_fwd           = self.hotkey_manager.register("nav_fwd",          self, self.go_forward)
-        self.sc_shuffle       = self.hotkey_manager.register("shuffle",          self, lambda: self.btn_shuffle.setChecked(not self.btn_shuffle.isChecked()) or self.toggle_shuffle())
-        self.sc_repeat        = self.hotkey_manager.register("repeat",           self, lambda: self.btn_repeat.setChecked(not self.btn_repeat.isChecked()) or self.toggle_repeat())
+        self.sc_shuffle       = self.hotkey_manager.register("shuffle",          self, lambda: self.toggle_shuffle(not self.is_shuffle))
+        self.sc_repeat        = self.hotkey_manager.register("repeat",           self, lambda: self.toggle_repeat(not self.is_repeat))
         self.sc_next_track    = self.hotkey_manager.register("next_track",       self, self.play_next)
         self.sc_prev_track    = self.hotkey_manager.register("prev_track",       self, self.play_prev)
         self.sc_local_search  = self.hotkey_manager.register("local_search",     self, self.focus_local_search)
@@ -1244,7 +1262,7 @@ class SonarPlayer(
         self.tracks_browser.start_radio.connect(self.start_radio)
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
-        self.audio_engine.waveform_generated.connect(self.seek_bar.set_real_samples)
+        self.audio_engine.waveform_generated.connect(self._footer_panel.set_real_samples)
 
         # Overlay drag handles — transparent, sit at panel borders
         self._left_handle = _ResizeHandle(
@@ -1291,22 +1309,14 @@ class SonarPlayer(
         if tetris_active and not self._sidebar_art_visible:
             return  # refuse to expand while playing
         self._sidebar_art_visible = not self._sidebar_art_visible
-        art_lbl = self.now_playing_widget.art_label
-        self._footer_art_anim.stop()
 
         if self._sidebar_art_visible:
             self._left_panel.set_art_target_size(max(0, self._left_panel.width() - 16))
             self._left_panel.set_art_visible(True)
-            self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
-            self._footer_art_anim.setEndValue(0)
-            self.now_playing_widget.set_expand_btn_direction(False)
         else:
             self._left_panel.set_art_visible(False)
-            self._footer_art_anim.setStartValue(art_lbl.maximumWidth())
-            self._footer_art_anim.setEndValue(84)
-            self.now_playing_widget.set_expand_btn_direction(True)
 
-        self._footer_art_anim.start()
+        self._footer_panel.set_sidebar_art_expanded(self._sidebar_art_visible)
 
     def _queue_play_at(self, idx: int):
         if 0 <= idx < len(self.playlist_data):
@@ -1349,7 +1359,7 @@ class SonarPlayer(
         if track_id and hasattr(self, 'bpm_cache'):
             self.bpm_cache[track_id] = rounded
             self.save_bpm_cache()
-        self.now_playing_widget.set_bpm(rounded)
+        self._footer_panel.set_bpm(rounded)
         self.file_type_label.setText(
             f"{getattr(self, 'current_file_type_text', '')}   •   {rounded:.1f} BPM"
         )

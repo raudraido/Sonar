@@ -1,4 +1,4 @@
-"""
+﻿"""
 player/widgets.py — Reusable custom Qt widgets.
 
 These are self-contained UI components with no dependency on
@@ -150,421 +150,6 @@ def _round_pixmap(pix: QPixmap, radius: int = 12) -> QPixmap:
     p.end()
     return out
 
-class ElidedLabel(QLabel):
-    clicked = pyqtSignal()
-
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self._full_text = text
-        self._base_color = "white"
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.setMouseTracking(True)
-
-    def setText(self, text):
-        self._full_text = text
-        self.update_text()
-
-    def resizeEvent(self, event):
-        self.update_text()
-        super().resizeEvent(event)
-
-    def update_text(self):
-        width = self.width()
-        if width <= 0: return
-        
-        metrics = QFontMetrics(self.font())
-        elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, width)
-        super().setText(elided)
-
-    def _text_w(self):
-        return QFontMetrics(self.font()).horizontalAdvance(super().text())
-
-    def enterEvent(self, event):
-        from PyQt6.QtGui import QCursor
-        if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
-            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: underline;")
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: none;")
-        self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().leaveEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if event.pos().x() <= self._text_w():
-            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: underline;")
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
-            self.setStyleSheet(f"color: {self._base_color}; background: transparent; text-decoration: none;")
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().mouseMoveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and event.pos().x() <= self._text_w():
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-class _ArtLabel(QLabel):
-    clicked = pyqtSignal()
-    right_clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._accent = QColor(255, 255, 255)
-
-    def set_accent_color(self, color_str):
-        self._accent = QColor(color_str)
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        clip = QPainterPath()
-        clip.addRoundedRect(QRectF(self.rect()), 6, 6)
-        p.setClipPath(clip)
-
-        pix = self.pixmap()
-        if pix and not pix.isNull():
-            scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            x = (self.width() - scaled.width()) // 2
-            y = (self.height() - scaled.height()) // 2
-            p.drawPixmap(x, y, scaled)
-        else:
-            p.fillRect(self.rect(), QColor("#222"))
-
-        p.end()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.RightButton:
-            self.right_clicked.emit()
-        super().mousePressEvent(event)
-
-class NowPlayingFooterWidget(QWidget):
-    artist_clicked = pyqtSignal(str)
-    album_clicked = pyqtSignal()
-    title_clicked = pyqtSignal()
-    art_clicked = pyqtSignal()
-    track_right_clicked = pyqtSignal(object)  # emits the current track dict
-    expand_art_clicked = pyqtSignal()         # upward arrow on footer art clicked
-    bpm_adjusted = pyqtSignal(float)           # emits the new BPM value
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._current_track = None
-        self._primary_px = 15
-        self._secondary_px = 12
-        self._secondary_color = "#777777"
-
-        self.setMinimumWidth(200)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setFixedHeight(84)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        # 1. Tiny Cover Art
-        self.art_label = _ArtLabel()
-        self.art_label.setFixedHeight(84)
-        self.art_label.setMinimumWidth(84)
-        self.art_label.setMaximumWidth(84)
-        self.art_label.setStyleSheet("background: transparent; border: none;")
-        self.art_label.setScaledContents(True)
-        self.art_label.setCursor(Qt.CursorShape.ArrowCursor)
-        self.art_label.hide()
-        self.art_label.clicked.connect(self.art_clicked)
-        self.art_label.right_clicked.connect(
-            lambda: self.track_right_clicked.emit(self._current_track) if self._current_track else None
-        )
-
-        # Expand-to-sidebar button — floats over the art, fades in on hover
-        self._expand_btn = QPushButton(self.art_label)
-        self._expand_btn.setFixedSize(24, 24)
-        self._expand_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._expand_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._expand_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; }"
-        )
-        self._expand_btn.setIconSize(QSize(16, 16))
-        self._expand_btn.move(84 - 24 - 2, 2)
-        self._expand_btn.clicked.connect(self.expand_art_clicked)
-
-        from player import resource_path as _rp
-        _raw = QPixmap(_rp("img/expand.png"))
-        if not _raw.isNull():
-            def _tint_pix(pix, color):
-                out = QPixmap(pix.size()); out.fill(Qt.GlobalColor.transparent)
-                p = QPainter(out); p.drawPixmap(0, 0, pix)
-                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                p.fillRect(out.rect(), QColor(color)); p.end()
-                return QIcon(out)
-            self._expand_icon_dim    = _tint_pix(_raw, "#515151")
-            self._expand_icon_bright = _tint_pix(_raw, "#ffffff")
-            self._expand_btn.setIcon(self._expand_icon_dim)
-        self._expand_btn.installEventFilter(self)
-
-        self._expand_btn_opacity = QGraphicsOpacityEffect(self._expand_btn)
-        self._expand_btn_opacity.setOpacity(0.0)
-        self._expand_btn.setGraphicsEffect(self._expand_btn_opacity)
-        self._expand_btn_anim = QPropertyAnimation(self._expand_btn_opacity, b"opacity")
-        self._expand_btn_anim.setDuration(180)
-        self.art_label.installEventFilter(self)
-        
-        # 2. Text Info Container
-        text_container = QWidget()
-        text_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        text_layout = QVBoxLayout(text_container)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(3)
-        text_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        
-        # --- TITLE CHANGE ---
-        self.title_lbl = ElidedLabel("")
-        self.title_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.title_lbl.clicked.connect(self.title_clicked.emit)
-        self.title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.title_lbl.customContextMenuRequested.connect(
-            lambda _: self.track_right_clicked.emit(self._current_track) if self._current_track else None
-        )
-        f = self.title_lbl.font()
-        f.setPixelSize(self._primary_px)
-        f.setBold(True)
-        self.title_lbl.setFont(f)
-        self.title_lbl.setStyleSheet("color: white; background: transparent;")
-  
-        
-        # Artist Container
-        self.artist_widget = QWidget()
-        self.artist_layout = QHBoxLayout(self.artist_widget)
-        self.artist_layout.setContentsMargins(0, 0, 0, 0)
-        self.artist_layout.setSpacing(0)
-        self.artist_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        
-        # Album
-        self.album_lbl = FooterClickableLabel("")
-        self.album_lbl.clicked.connect(lambda _: self.album_clicked.emit())
-
-        # BPM
-        self._current_bpm = None
-        self.bpm_lbl = QLabel("")
-        self.bpm_lbl.setStyleSheet(
-            f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
-        self.bpm_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.bpm_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.bpm_lbl.customContextMenuRequested.connect(self._show_bpm_menu)
-        self.bpm_lbl.hide()
-
-        text_layout.addWidget(self.title_lbl)
-        text_layout.addWidget(self.artist_widget)
-        text_layout.addWidget(self.album_lbl)
-        text_layout.addWidget(self.bpm_lbl)
-        
-        layout.addWidget(self.art_label)
-        layout.addWidget(text_container, 1)
-                
-    def update_info(self, title, artist, album):
-        self.title_lbl.setText(title)
-        
-        # Update Artists
-        while self.artist_layout.count():
-            child = self.artist_layout.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
-
-        parts = re.split(r'( /// | • | / |, | feat\. | Feat\. | vs\. )', artist)
-
-        for part in parts:
-            if not part: continue
-            if re.match(r'( /// | • | / |, | feat\. | Feat\. | vs\. )', part):
-                sep_lbl = QLabel(part)
-                sep_lbl.setStyleSheet(
-                    f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
-                self.artist_layout.addWidget(sep_lbl)
-            else:
-                lbl = FooterClickableLabel(part)
-                lbl.set_secondary_style(self._secondary_px, self._secondary_color)
-                lbl.clicked.connect(self.artist_clicked.emit)
-                self.artist_layout.addWidget(lbl)
-        
-        self.artist_layout.addStretch()
-
-        if album:
-            self.album_lbl.setText(album)
-            self.album_lbl.show()
-        else:
-            self.album_lbl.hide()
-            
-    def set_accent_color(self, color: str):
-        self.art_label.set_accent_color(color)
-        self.title_lbl._base_color = color
-        self.title_lbl.setStyleSheet(
-            f"color: {color}; background: transparent;"
-        )
-
-    def set_track(self, track):
-        self._current_track = track
-
-    def set_cover(self, pixmap):
-        if pixmap and not pixmap.isNull():
-            self.art_label.setPixmap(pixmap)
-            self.art_label.show()
-        else:
-            self.art_label.clear()
-            self.art_label.hide()
-
-    def eventFilter(self, obj, event):
-        if obj is self.art_label:
-            if event.type() == QEvent.Type.Enter:
-                self._expand_btn_anim.stop()
-                self._expand_btn_anim.setEndValue(1.0)
-                self._expand_btn_anim.start()
-            elif event.type() == QEvent.Type.Leave:
-                self._expand_btn_anim.stop()
-                self._expand_btn_anim.setEndValue(0.0)
-                self._expand_btn_anim.start()
-        elif obj is self._expand_btn:
-            if event.type() == QEvent.Type.Enter:
-                if hasattr(self, '_expand_icon_bright'):
-                    self._expand_btn.setIcon(self._expand_icon_bright)
-            elif event.type() == QEvent.Type.Leave:
-                if hasattr(self, '_expand_icon_dim'):
-                    self._expand_btn.setIcon(self._expand_icon_dim)
-        return super().eventFilter(obj, event)
-
-    def set_expand_btn_direction(self, _up: bool):
-        pass  # direction now conveyed by context; icon is expand.png regardless
-
-    def set_expand_btn_style(self, accent: str):
-        c = QColor(accent)
-        r, g, b = c.red(), c.green(), c.blue()
-        dr, dg, db = int(r * .3), int(g * .3), int(b * .3)
-        self._expand_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: rgba({r},{g},{b},0.1);
-                border: 2px solid rgb({dr},{dg},{db});
-                border-radius: 12px; outline: none;
-            }}
-            QPushButton:hover {{
-                background-color: rgba({r},{g},{b},0.4);
-                border: 2px solid rgb({r},{g},{b});
-            }}
-            QPushButton:pressed {{ background-color: rgba({r},{g},{b},0.2); }}
-            QPushButton::menu-indicator {{ width: 0; image: none; }}
-        """)
-
-    def apply_theme(self, theme):
-        self._primary_px      = getattr(theme, 'font_size_primary',   15)
-        self._secondary_px    = getattr(theme, 'font_size_secondary', 12)
-        self._secondary_color = getattr(theme, 'font_color_secondary', '#777777')
-        # Title font size
-        f = self.title_lbl.font()
-        f.setPixelSize(self._primary_px)
-        self.title_lbl.setFont(f)
-        # Album
-        self.album_lbl.set_secondary_style(self._secondary_px, self._secondary_color)
-        # BPM row
-        self.bpm_lbl.setStyleSheet(
-            f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
-        # Artist row — restyle existing children in place
-        for child in self.artist_widget.findChildren(QLabel):
-            if isinstance(child, FooterClickableLabel):
-                child.set_secondary_style(self._secondary_px, self._secondary_color)
-            else:
-                child.setStyleSheet(
-                    f"font-size: {self._secondary_px}px; color: {self._secondary_color}; background: transparent;")
-
-    def set_file_type(self, file_type):
-        self._file_type = file_type
-
-    def set_bpm(self, bpm):
-        self._current_bpm = bpm
-        ft = f" ᛫ {self._file_type}" if getattr(self, '_file_type', None) else ""
-        if bpm is None:
-            self.bpm_lbl.setText(f"***.* BPM{ft}")
-        else:
-            self.bpm_lbl.setText(f"{bpm:.1f} BPM{ft}")
-        self.bpm_lbl.show()
-
-    def _show_bpm_menu(self):
-        if not self._current_bpm or self._current_bpm <= 0:
-            return
-        from PyQt6.QtGui import QCursor
-
-        def _fmt(v):
-            s = f"{v:.2f}".rstrip('0').rstrip('.')
-            return f"{s} BPM"
-
-        win    = self.window()
-        _theme = getattr(win, 'theme', None)
-        from player.mixins.visuals import resolve_menu_hover
-        _bg  = getattr(_theme, 'main_panel_bg',      '14,14,14')
-        _bc  = getattr(_theme, 'border_color',        '#444444')
-        _fg  = getattr(_theme, 'font_color_primary',  '#dddddd')
-        _fg2 = getattr(_theme, 'font_color_secondary','#555555')
-        _hov = resolve_menu_hover(_theme)
-        _px  = getattr(_theme, 'font_size_secondary', 12)
-        _acc = getattr(_theme, 'accent',              '#cccccc')
-
-        menu = ShadowContextMenu()
-        menu.configure(_bg, _bc, _fg, _fg2, _hov, _px, accent=_acc)
-        for label, mult in [("Half", 0.5), ("2/3", 2/3), ("3/4", 3/4),
-                             ("4/3", 4/3), ("3/2", 3/2), ("Double", 2.0)]:
-            new_val = self._current_bpm * mult
-            menu.add_action(f"{label}  |  {_fmt(new_val)}",
-                            callback=lambda v=new_val: self.bpm_adjusted.emit(v))
-        menu.exec_at(QCursor.pos(), window=win)
-
-class FooterClickableLabel(QLabel):
-    clicked = pyqtSignal(str)
-
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.full_text = text
-        self.setMouseTracking(True)
-        self._sec_px = 13
-        self._sec_color = "#bbbbbb"
-        self._apply_normal()
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-
-    def set_secondary_style(self, px: int, color: str):
-        self._sec_px = px
-        self._sec_color = color
-        self._apply_normal()
-
-    def _apply_normal(self):
-        self.setStyleSheet(
-            f"font-size: {self._sec_px}px; color: {self._sec_color}; background: transparent; text-decoration: none;")
-
-    def _apply_hover(self):
-        self.setStyleSheet(
-            f"font-size: {self._sec_px}px; color: {self._sec_color}; background: transparent; text-decoration: underline;")
-
-    def _text_w(self):
-        return QFontMetrics(self.font()).horizontalAdvance(self.text())
-
-    def enterEvent(self, event):
-        from PyQt6.QtGui import QCursor
-        if self.mapFromGlobal(QCursor.pos()).x() <= self._text_w():
-            self._apply_hover()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._apply_normal()
-        self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().leaveEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if event.pos().x() <= self._text_w():
-            self._apply_hover()
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
-            self._apply_normal()
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().mouseMoveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and event.pos().x() <= self._text_w():
-            self.clicked.emit(self.text())
-
 class TriangleTooltip(QWidget):
     """Tooltip — transparent outer window + styled inner label + drop shadow."""
 
@@ -636,70 +221,6 @@ class TriangleTooltip(QWidget):
         self.move(pos)
         super().show()
         self.raise_()
-
-class ClickableSlider(QSlider):
-    def __init__(self, orientation, parent=None, is_volume=False):
-        super().__init__(orientation, parent)
-        self.setMouseTracking(True)
-        self.is_volume = is_volume
-        self.custom_tip = TriangleTooltip(self.window() if self.window() else parent)
-        self.custom_tip.hide()
-
-    def get_value_from_mouse_event(self, event):
-        val_range = self.maximum() - self.minimum()
-        if val_range <= 0: return self.minimum()
-        handle_width = 14
-        padding = handle_width // 2  
-        groove_width = self.width() - handle_width
-        if groove_width <= 0: return self.minimum()
-        mouse_x = event.position().x()
-        x = mouse_x - padding
-        x = max(0, min(x, groove_width))
-        ratio = x / groove_width
-        new_val = self.minimum() + (val_range * ratio)
-        return int(new_val)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            new_val = self.get_value_from_mouse_event(event)
-            self.setValue(new_val)
-            self.update_tooltip_pos()
-            event.accept()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            new_val = self.get_value_from_mouse_event(event)
-            self.setValue(new_val)
-            self.update_tooltip_pos()
-        super().mouseMoveEvent(event)
-
-    def update_tooltip_pos(self):
-        if self.maximum() <= 0: return
-        val_range = self.maximum() - self.minimum()
-        if val_range == 0: ratio = 0
-        else: ratio = (self.value() - self.minimum()) / val_range
-        handle_width = 14
-        padding = handle_width // 2
-        groove_width = self.width() - handle_width
-        handle_center_x = padding + int(ratio * groove_width)
-        time_str = f"{self.value()}%" if self.is_volume else (self.window().format_time(self.value()) if hasattr(self.window(), 'format_time') else "0:00")
-        self.custom_tip.setText(time_str)
-        self.custom_tip.adjustSize() 
-        global_pos = self.mapToGlobal(QPoint(handle_center_x, 0))
-        centered_x = global_pos.x() - (self.custom_tip.width() // 2)
-        self.custom_tip.move(centered_x, global_pos.y() - 45)
-        if self.underMouse() or (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
-            if not self.custom_tip.isVisible(): self.custom_tip.show()
-        else: self.custom_tip.hide()
-
-    def enterEvent(self, event): 
-        self.update_tooltip_pos()
-        super().enterEvent(event)
-    
-    def leaveEvent(self, event): 
-        self.custom_tip.hide()
-        super().leaveEvent(event)
 
 class ClickableLabel(QLabel):
     def __init__(self, parent=None, main_window=None):
@@ -1214,7 +735,7 @@ class SettingsWindow(QDialog):
         if hasattr(self.parent, '_queue_panel'):
             self.parent._queue_panel.set_accent_color(t.accent)
             self.parent._queue_panel.apply_theme(t)
-        self.parent.now_playing_widget.apply_theme(t)
+        self.parent._footer_panel.apply_theme(t)
         self.refresh_theme()
         self._refresh_preset_buttons(name)
 
@@ -1321,21 +842,6 @@ class SettingsWindow(QDialog):
 
             QProcess.startDetached(sys.executable, sys.argv)
             QApplication.quit()
-
-class StatusButton(QPushButton):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.master_color = "#ffffff" 
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.isChecked():
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor(self.master_color))
-            painter.setPen(Qt.PenStyle.NoPen)
-            dot_size = 5; x = (self.width() - dot_size) // 2; y = 2 
-            painter.drawEllipse(x, y, dot_size, dot_size); painter.end()
 
 class ShadowContextMenu(QFrame):
     """Universal shadow context menu — psysonic style: 0 12px 32px rgba(0,0,0,0.6)."""
@@ -1684,7 +1190,17 @@ class AlbumIconProvider(QQuickImageProvider):
         parts     = icon_id.rsplit('_', 1)
         name      = parts[0]
         color_hex = ('#' + parts[1]) if len(parts) > 1 else '#ffffff'
-        cache_key = f"{name}_{color_hex}"
+
+        # When the QML Image sets `sourceSize`, requestedSize carries the
+        # actual on-screen pixel size — pre-scale to it with high-quality
+        # SmoothTransformation before tinting. Source PNGs are often 512x512
+        # (icon export defaults) rendered at 16-22px in small UI chrome
+        # (footer/IconButton); without this, the GPU's runtime minification
+        # of a ~25x downscale looks bold/aliased compared to Qt's own
+        # QIcon.pixmap(size)-based rendering used by the old QWidget UI.
+        target_w = requestedSize.width() if requestedSize.isValid() else 0
+        target_h = requestedSize.height() if requestedSize.isValid() else 0
+        cache_key = f"{name}_{color_hex}_{target_w}x{target_h}"
         if cache_key in self._cache:
             img = self._cache[cache_key]
             return img, img.size()
@@ -1694,6 +1210,9 @@ class AlbumIconProvider(QQuickImageProvider):
             empty = QImage(1, 1, QImage.Format.Format_ARGB32)
             empty.fill(Qt.GlobalColor.transparent)
             return empty, empty.size()
+        if target_w > 0 and target_h > 0 and (target_w, target_h) != (base.width(), base.height()):
+            base = base.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
         result = QImage(base.size(), QImage.Format.Format_ARGB32_Premultiplied)
         result.fill(Qt.GlobalColor.transparent)
         p = QPainter(result)

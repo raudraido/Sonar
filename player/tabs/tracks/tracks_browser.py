@@ -2865,8 +2865,8 @@ class TracksBrowser(QWidget):
                 idx = win.current_index
                 if 0 <= idx < len(win.playlist_data):
                     if str(win.playlist_data[idx].get('id', '')) == song_id:
-                        if hasattr(win, 'now_playing_widget'):
-                            win.now_playing_widget.set_bpm(rounded)
+                        if hasattr(win, '_footer_panel'):
+                            win._footer_panel.set_bpm(rounded)
                         if hasattr(win, 'file_type_label') and hasattr(win, 'current_file_type_text'):
                             win.file_type_label.setText(
                                 f"{win.current_file_type_text}   •   {rounded:.1f} BPM"
