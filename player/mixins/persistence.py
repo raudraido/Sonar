@@ -31,6 +31,7 @@ class PersistenceMixin:
             self.settings.setValue('saved_position', str(self._footer_panel.position_ms))
             self.settings.setValue('theme', self.theme.to_json())
             self.settings.setValue('waveform_mode', self._footer_panel.display_mode)
+            self.settings.setValue('show_remaining_time', int(self._footer_panel.show_remaining))
             if getattr(self, 'visualizer', None):
                 self.settings.setValue('vis_mode', self.visualizer.vis_mode)
             
@@ -140,7 +141,7 @@ class PersistenceMixin:
                 # Restore the seek bar position
                 saved_pos = int(float(self.settings.value('saved_position', 0)))
                 if saved_pos > 0:
-                    self._footer_panel.set_position_ms(saved_pos)
+                    self._footer_panel.set_position_ms(saved_pos, hard=True)
 
                     # Restore the Total Time label
                     track = self.playlist_data[saved_idx]

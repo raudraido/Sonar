@@ -70,7 +70,7 @@ class FooterBridge(QObject):
     borderWidthChanged         = pyqtSignal(int)
 
     isPlayingChanged           = pyqtSignal(bool)
-    positionMsChanged          = pyqtSignal(int)
+    positionMsChanged          = pyqtSignal(int, bool)   # ms, hard (snap vs. monotonic-forward)
     durationMsChanged          = pyqtSignal(int)
     shuffleChanged             = pyqtSignal(bool)
     repeatChanged               = pyqtSignal(bool)
@@ -80,6 +80,7 @@ class FooterBridge(QObject):
     volumeChanged              = pyqtSignal(int)
 
     displayModeChanged         = pyqtSignal(int)
+    showRemainingChanged       = pyqtSignal(bool)
     samplesChanged             = pyqtSignal()
     hasRealDataChanged         = pyqtSignal(bool)
     waveformBufVersionChanged  = pyqtSignal(int)
@@ -157,6 +158,10 @@ class FooterBridge(QObject):
     def modeToggled(self, mode):
         self._panel._on_mode_toggled(mode)
 
+    @pyqtSlot(bool)
+    def remainingToggled(self, on):
+        self._panel._on_remaining_toggled(on)
+
     @pyqtSlot(str)
     def artistClicked(self, name):
         if name:
@@ -189,3 +194,38 @@ class FooterBridge(QObject):
     @pyqtSlot()
     def settingsClicked(self):
         self._panel.settings_clicked.emit()
+
+    # ── QML-driven native tooltips — mirrors albums_browser.py/
+    #    playlists_browser.py/artists_browser.py's showTooltip/hideTooltip,
+    #    backed by the shared _TooltipFilter installed in window.py ──────────
+    @pyqtSlot(str, int, int, int)
+    def showTooltip(self, text: str, cx: int, above_y: int, below_y: int):
+        from PyQt6.QtWidgets import QApplication
+        t = getattr(self, '_tip_hide_timer', None)
+        if t and t.isActive():
+            t.stop()
+        for w in QApplication.topLevelWidgets():
+            tf = getattr(w, '_tooltip_filter', None)
+            if tf:
+                tf._qml_mode = True
+                tf._ensure_tip().show_at(cx, above_y, below_y, text)
+                break
+
+    @pyqtSlot()
+    def hideTooltip(self):
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QTimer
+
+        def _do_hide():
+            for w in QApplication.topLevelWidgets():
+                tf = getattr(w, '_tooltip_filter', None)
+                if tf:
+                    tf._qml_mode = False
+                    if tf._tip and tf._tip.isVisible():
+                        tf._tip.hide()
+                    break
+        t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(_do_hide)
+        t.start(120)
+        self._tip_hide_timer = t

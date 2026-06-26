@@ -398,12 +398,7 @@ class KeyboardMixin:
                         self.audio_engine.load_track(track['path'])
             
             self.audio_engine.seek(new_ms)
-            self._footer_panel.set_position_ms(new_ms)
 
-
-            self.queued_next_index = -1 
+            self.queued_next_index = -1
             self.preload_next()
-            self.ignore_updates_until = time.time() + 1.0
-            self.last_engine_pos = new_ms
-            self.last_engine_update_time = time.time()
     

@@ -22,6 +22,11 @@ Item {
     property int    radius:     4
 
     signal triggered(real globalX, real globalY)
+    // Optional — consumers that want a native tooltip (see footer_bar.qml)
+    // wire these to bridge.showTooltip(text, cx, aboveY, belowY)/hideTooltip();
+    // unconnected elsewhere, so this is a no-op for existing IconButton usages.
+    signal hoverEntered(real cx, real aboveY, real belowY)
+    signal hoverExited()
 
     Rectangle {
         anchors.fill: parent; radius: btn.radius
@@ -42,5 +47,11 @@ Item {
             var gp = mapToGlobal(mouse.x, mouse.y)
             btn.triggered(gp.x, gp.y)
         }
+        onEntered: {
+            var a = mapToGlobal(btn.width / 2, -4)
+            var b = mapToGlobal(btn.width / 2, btn.height + 4)
+            btn.hoverEntered(a.x, a.y, b.y)
+        }
+        onExited: btn.hoverExited()
     }
 }

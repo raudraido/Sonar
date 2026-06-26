@@ -537,18 +537,14 @@ class SonarPlayer(
         self.search_context = {}  
         self.last_tab_index = 0    
 
-        self.last_engine_pos = 0       
-        self.last_engine_update_time = 0 
-        self.ignore_updates_until = 0    
-        
-        self.smooth_timer = QTimer(self)
-        _screen = QApplication.primaryScreen()
-        _hz = _screen.refreshRate() if _screen else 60.0
-        self.smooth_timer.setInterval(max(1, round(1000 / _hz)))
-        self.smooth_timer.timeout.connect(self.run_smooth_interpolator)
-        
+        # Brief window after a hard seek/jump during which a stale pre-seek
+        # poll from the decoder should be swallowed rather than treated as a
+        # new continuous position (see update_ui_state/on_engine_position_jump).
+        self._seek_settle_until = 0.0
+
         self.audio_engine = AudioEngine()
         self.audio_engine.positionChanged.connect(self.update_ui_state)
+        self.audio_engine.positionJumped.connect(self.on_engine_position_jump)
         self.audio_engine.durationChanged.connect(self.handle_duration_change)
         self.audio_engine.endOfMedia.connect(self.on_track_finished)
         self.audio_engine.mediaSwitched.connect(self.on_gapless_transition)
@@ -778,16 +774,11 @@ class SonarPlayer(
             if getattr(self, 'visualizer', None):
                 self.visualizer.visualizer_enabled = vis_active
 
-            if hasattr(self, 'smooth_timer'):
-                if minimized:
-                    self.smooth_timer.stop()
-                elif getattr(self.audio_engine, 'is_playing', False):
-                    self.smooth_timer.start()
-
-            # No explicit pause needed for the footer's waveform rendering —
-            # it's driven by a QML FrameAnimation tied to the QQuickWindow's
-            # render loop, which Qt already stops/resumes automatically when
-            # the window is minimized/restored.
+            # No explicit pause needed for the footer's position/waveform
+            # rendering — it's driven entirely by a QML FrameAnimation tied
+            # to the QQuickWindow's render loop, which Qt already
+            # stops/resumes automatically when the window is
+            # minimized/restored.
 
             if hasattr(self, 'playing_movie'):
                 if minimized:
@@ -1158,6 +1149,13 @@ class SonarPlayer(
         _qc_layout.setContentsMargins(0, 0, 0, 0) #QUEUE margins (bottom)
         _qc_layout.setSpacing(0)
         self._queue_panel = QueuePanel(self._queue_panel_container, embedded=True)
+        # refresh_ui_styles() already ran once before this panel existed
+        # (its hasattr(self, '_queue_panel') check skipped it then) and cached
+        # that theme as "already applied" (_last_theme_key) — so later calls
+        # with the same theme short-circuit before ever reaching the
+        # queue-panel apply_theme call, leaving it permanently stuck on its
+        # hardcoded dark constructor fallback. Apply once explicitly here.
+        self._queue_panel.apply_theme(self.theme)
         self._queue_panel.play_index.connect(self._queue_play_at)
         self._queue_panel.play_next_index.connect(self._queue_play_next_at)
         self._queue_panel.remove_index.connect(self._queue_remove_at)

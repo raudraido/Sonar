@@ -1400,10 +1400,10 @@ class CastManager:
                 cast_url = url
             kw = {'subsonic': sc}
             
-            pos_ms = getattr(self._win, 'last_engine_pos', 0)
+            pos_ms = self._win._footer_panel.position_ms
             if pos_ms > 500:
                 kw['seek_s'] = pos_ms / 1000.0
-                
+
             if ntp_start > 0 and dev_info and dev_info.protocol == 'airplay2':
                 kw['ntp_start'] = ntp_start
             threading.Thread(
@@ -1657,14 +1657,10 @@ class CastManager:
             return
         if state == 'paused' and ae.is_playing:
             ae.pause()
-            if hasattr(self._win, 'smooth_timer'):
-                self._win.smooth_timer.stop()
             self._win._footer_panel.set_playing(False)
             self._win.refresh_ui_styles()
         elif state == 'playing' and not ae.is_playing:
             ae.play()
-            if hasattr(self._win, 'smooth_timer'):
-                self._win.smooth_timer.start()
             self._win._footer_panel.set_playing(True)
             self._win.refresh_ui_styles()
 
@@ -1685,8 +1681,6 @@ class CastManager:
         if duration_ms > 0:
             w._footer_panel.set_duration_ms(duration_ms)
         w._footer_panel.set_playing(True)
-        if hasattr(w, 'smooth_timer'):
-            w.smooth_timer.start()
         self._ap_timer.start()
 
     def _on_airplay_stopped_main(self):
@@ -1699,10 +1693,7 @@ class CastManager:
         pos_ms = self._ap_start_pos + elapsed_ms
         if self._ap_duration_ms > 0:
             pos_ms = min(pos_ms, self._ap_duration_ms)
-        w.last_engine_pos = pos_ms
-        w.last_engine_update_time = _t.time()
-        if not w._footer_panel.is_dragging:
-            w._footer_panel.set_position_ms(pos_ms)
+        w.update_ui_state(pos_ms)
 
     # ── Connection / disconnection (background threads) ───────────────────
 
@@ -1802,7 +1793,7 @@ class CastManager:
             pl     = getattr(self._win, 'playlist_data', [])
             track  = pl[idx] if 0 <= idx < len(pl) else None
             url    = (track.get('stream_url') or track.get('path', '')) if track else ''
-            pos_ms = getattr(self._win, 'last_engine_pos', 0)
+            pos_ms = self._win._footer_panel.position_ms
             ae     = getattr(self._win, 'audio_engine', None)
             paused = ae and not ae.is_playing
 

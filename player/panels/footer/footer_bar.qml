@@ -31,7 +31,19 @@ Rectangle {
 
     // ── Playback state ───────────────────────────────────────────────────────
     property bool isPlaying:      false
-    property int  positionMs:     0
+    // enginePositionMs/enginePositionAtMs are the last raw fact pushed from
+    // Python and when it arrived; displayPositionMs is the only thing any
+    // paint code/label should read. A single FrameAnimation (positionClock,
+    // below) derives displayPositionMs from the other two every frame and
+    // guarantees it never moves backward during playback (Math.max against
+    // its own last value) — the structural fix for the flicker that came
+    // from two independent Python timers fighting over a single positionMs
+    // value (one polling the real decoder, one extrapolating). A `hard`
+    // jump (seek/track-start/stop/loop) snaps displayPositionMs immediately
+    // instead of waiting for the clock to catch up.
+    property int  enginePositionMs:   0
+    property real enginePositionAtMs: 0
+    property real displayPositionMs:  0
     property int  durationMs:     1
     property bool isShuffle:      false
     property bool isRepeat:       false
@@ -41,6 +53,7 @@ Rectangle {
 
     // ── Waveform state ───────────────────────────────────────────────────────
     property int  displayMode:        2       // 0=scratch 1=minimal 2=bars
+    property bool showRemainingTime:  false   // totalTimeLbl: total vs. countdown-to-end
     property bool hasRealData:        false
     property int  waveformBufVersion: 0
     property var  samples:            []
@@ -93,6 +106,16 @@ Rectangle {
         return m + ":" + ss
     }
 
+    // Used by drag/scratch/decay handlers below for instant local feedback —
+    // rebases both displayPositionMs and the engine baseline to `ms` so a
+    // subsequent hard confirmation from Python (after seekRequested) lands
+    // exactly where the UI already is, instead of snapping.
+    function setLocalPosition(ms) {
+        root.displayPositionMs = ms
+        root.enginePositionMs = ms
+        root.enginePositionAtMs = Date.now()
+    }
+
     Connections {
         target: footerBridge
         function onAccentColorChanged(c)        { root.accentColor        = c }
@@ -106,8 +129,19 @@ Rectangle {
         function onFontSizeSecondaryChanged(s)  { root.fontSizeSecondary  = s }
         function onFontFamilyChanged(f)         { root.fontFamily         = f }
 
-        function onIsPlayingChanged(p)  { root.isPlaying  = p }
-        function onPositionMsChanged(v) { root.positionMs = v; if (root.displayMode !== 0) waveformCanvas.requestPaint() }
+        function onIsPlayingChanged(p) {
+            root.isPlaying = p
+            // Rebase the extrapolation clock to "now" on resume — otherwise
+            // the elapsed-since-last-update gap includes however long
+            // playback was paused, and positionClock's first tick would
+            // extrapolate displayPositionMs forward by that whole gap.
+            if (p) root.enginePositionAtMs = Date.now()
+        }
+        function onPositionMsChanged(v, hard) {
+            root.enginePositionMs = v
+            root.enginePositionAtMs = Date.now()
+            if (hard) root.displayPositionMs = v
+        }
         function onDurationMsChanged(v) { root.durationMs = v; waveformCanvas.requestPaint() }
         function onShuffleChanged(v)    { root.isShuffle = v }
         function onRepeatChanged(v)     { root.isRepeat  = v }
@@ -116,6 +150,7 @@ Rectangle {
         function onCastConnectedChanged(v) { root.castConnected = v }
 
         function onDisplayModeChanged(v) { root.displayMode = v; waveformCanvas.requestPaint() }
+        function onShowRemainingChanged(v) { root.showRemainingTime = v }
         function onHasRealDataChanged(v) { root.hasRealData = v; waveformCanvas.requestPaint() }
         function onWaveformBufVersionChanged(v) {
             root.waveformBufVersion = v
@@ -356,25 +391,29 @@ Rectangle {
                     width: 36; height: 58
                     IconButton {
                         anchors.centerIn: parent
-                        width: 36; height: 36; radius: 18
+                        width: 40; height: 40; radius: 22
                         iconSize: 16
                         hoverColor: root.hoverColor
                         iconSource: root.tintedIcon("stop", root.accentColor)
                         onTriggered: footerBridge.stopClicked()
+                        onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Stop", cx, ay, by)
+                        onHoverExited: footerBridge.hideTooltip()
                     }
                 }
 
                 // Shuffle
                 Item {
-                    width: 36; height: 58
+                    width: 45; height: 58
                     IconButton {
                         id: shuffleBtn
                         anchors.centerIn: parent
-                        width: 36; height: 36; radius: 18
-                        iconSize: 16
+                        width: 40; height: 40; radius: 22
+                        iconSize: 18
                         hoverColor: root.hoverColor
                         iconSource: root.tintedIcon("shuffle", root.accentColor)
                         onTriggered: footerBridge.shuffleToggled(!root.isShuffle)
+                        onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Shuffle", cx, ay, by)
+                        onHoverExited: footerBridge.hideTooltip()
                     }
                     Rectangle {
                         visible: root.isShuffle
@@ -390,11 +429,13 @@ Rectangle {
                     width: 45; height: 58
                     IconButton {
                         anchors.centerIn: parent
-                        width: 45; height: 45; radius: 22
-                        iconSize: 18
+                        width: 40; height: 40; radius: 22
+                        iconSize: 16
                         hoverColor: root.hoverColor
                         iconSource: root.tintedIcon("prev", root.accentColor)
                         onTriggered: footerBridge.prevClicked()
+                        onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Previous Track", cx, ay, by)
+                        onHoverExited: footerBridge.hideTooltip()
                     }
                 }
 
@@ -456,6 +497,8 @@ Rectangle {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: footerBridge.playClicked()
+                        onEntered: { var a = mapToGlobal(width / 2, -4); var b = mapToGlobal(width / 2, height + 4); footerBridge.showTooltip("Play/Pause", a.x, a.y, b.y) }
+                        onExited: footerBridge.hideTooltip()
                     }
                 }
 
@@ -464,11 +507,13 @@ Rectangle {
                     width: 45; height: 58
                     IconButton {
                         anchors.centerIn: parent
-                        width: 45; height: 45; radius: 22
-                        iconSize: 18
+                        width: 40; height: 40; radius: 22
+                        iconSize: 16
                         hoverColor: root.hoverColor
                         iconSource: root.tintedIcon("next", root.accentColor)
                         onTriggered: footerBridge.nextClicked()
+                        onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Next Track", cx, ay, by)
+                        onHoverExited: footerBridge.hideTooltip()
                     }
                 }
 
@@ -482,6 +527,8 @@ Rectangle {
                         hoverColor: root.hoverColor
                         iconSource: root.tintedIcon("repeat", root.accentColor)
                         onTriggered: footerBridge.repeatToggled(!root.isRepeat)
+                        onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Repeat", cx, ay, by)
+                        onHoverExited: footerBridge.hideTooltip()
                     }
                     Rectangle {
                         visible: root.isRepeat
@@ -497,10 +544,29 @@ Rectangle {
                 width: parent.width
                 spacing: 15
 
+                // Worst-case time string at this font, measured by an
+                // invisible Text (implicitWidth is still computed when
+                // visible: false) — gives currentTimeLbl/totalTimeLbl a fixed
+                // width below so waveformWrap's width (and therefore every
+                // bar's x-position) stays constant regardless of which
+                // digits are showing. Without this, each digit-count/glyph-
+                // width change (e.g. "0:59" → "1:00") shifted implicitWidth,
+                // which shifted waveformWrap's width, which visibly moved
+                // the whole waveform left/right every second.
+                Text {
+                    id: timeWidthRef
+                    visible: false
+                    font.family: root.fontFamily
+                    font.pixelSize: 14; font.bold: true
+                    text: "-00:00:00"
+                }
+
                 Text {
                     id: currentTimeLbl
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.formatTime(root.positionMs)
+                    width: timeWidthRef.implicitWidth
+                    horizontalAlignment: Text.AlignRight
+                    text: root.formatTime(root.displayPositionMs)
                     color: root.accentColor
                     font.family: root.fontFamily
                     font.pixelSize: 14; font.bold: true
@@ -512,17 +578,59 @@ Rectangle {
                     height: 60
                     anchors.verticalCenter: parent.verticalCenter
 
+                    // Tying canvas visibility to its own onPaint callback
+                    // (everPainted) didn't stop the startup black flash —
+                    // the callback can fire before the canvas's GPU texture
+                    // upload/composite has actually completed under
+                    // startup load, so anything gated on it gets revealed
+                    // too early. Use a deterministic delay instead: cover
+                    // the canvas with the real background for a fixed
+                    // window after load, then reveal once actual rendering
+                    // has had time to settle. The actual covering Rectangle
+                    // is declared last (after the Canvas) below, since a
+                    // sibling declared earlier paints *underneath* later
+                    // siblings — putting it before the Canvas (an earlier
+                    // attempt) meant the opaque-black canvas painted over it
+                    // and it never actually covered anything.
+                    property bool startupSettled: false
+                    Timer {
+                        interval: 1200; running: true; repeat: false
+                        onTriggered: waveformWrap.startupSettled = true
+                    }
+
                     Canvas {
                         id: waveformCanvas
                         anchors.fill: parent
                         renderStrategy: Canvas.Cooperative
+                        // Default renderTarget (Canvas.FramebufferObject, a GPU-backed
+                        // surface) doesn't reliably get an alpha channel on Windows/
+                        // ANGLE, so ctx.clearRect() clears to opaque black instead of
+                        // transparent — permanently, every paint, not just the first.
+                        // Canvas.Image forces the CPU-side QImage backing store
+                        // instead, which properly supports alpha, letting the
+                        // footer's real background show through wherever nothing is
+                        // drawn (no track loaded, empty mode-1 groove gaps, etc.).
+                        renderTarget: Canvas.Image
 
                         property string scratchImgSrc: ""
+                        // Most recently *fully loaded* scratch frame — distinct from
+                        // scratchImgSrc, which is reassigned every animation frame
+                        // (cache-busted via ?v=) and is therefore usually still
+                        // in-flight. Painting scratchImgSrc directly meant onPaint
+                        // almost always hit the not-yet-loaded case and fell back to
+                        // the "ANALYZING WAVEFORM..." text, flashing every frame
+                        // during scratch playback. Painting loadedImgSrc instead
+                        // keeps the previous frame on screen until the next one
+                        // actually finishes loading.
+                        property string loadedImgSrc: ""
                         property bool barPathDirty: true
                         property var barPath: []
 
                         onScratchImgSrcChanged: { if (scratchImgSrc) loadImage(scratchImgSrc) }
-                        onImageLoaded: { if (root.displayMode === 0) requestPaint() }
+                        onImageLoaded: {
+                            loadedImgSrc = scratchImgSrc
+                            if (root.displayMode === 0) requestPaint()
+                        }
                         onWidthChanged: { barPathDirty = true; requestPaint() }
                         onHeightChanged: { barPathDirty = true; requestPaint() }
                         // Canvas only repaints reactively (onXChanged: requestPaint()
@@ -573,7 +681,7 @@ Rectangle {
                                 if (!root.hasRealData && root.durationMs > 1) paintAnalyzing(ctx)
                                 return
                             }
-                            var progress = root.positionMs / Math.max(1, root.durationMs)
+                            var progress = root.displayPositionMs / Math.max(1, root.durationMs)
                             var playheadX = progress * width
 
                             ctx.lineCap = "round"
@@ -612,7 +720,7 @@ Rectangle {
                             var handleR = 6
                             var margin = handleR
                             var trackW = width - 2 * margin
-                            var progress = root.positionMs / Math.max(1, root.durationMs)
+                            var progress = root.displayPositionMs / Math.max(1, root.durationMs)
                             var playheadX = margin + progress * trackW
 
                             ctx.fillStyle = "rgba(60,60,60,0.6)"
@@ -656,8 +764,8 @@ Rectangle {
                         }
 
                         function paintScratch(ctx) {
-                            if (root.hasRealData && isImageLoaded(scratchImgSrc)) {
-                                ctx.drawImage(scratchImgSrc, 0, 0, width, height)
+                            if (root.hasRealData && loadedImgSrc && isImageLoaded(loadedImgSrc)) {
+                                ctx.drawImage(loadedImgSrc, 0, 0, width, height)
                             } else if (root.durationMs > 1) {
                                 paintAnalyzing(ctx)
                             }
@@ -708,7 +816,7 @@ Rectangle {
                             if (root.displayMode !== 0) {
                                 footerBridge.scratchModeChanged(true)
                                 var ms = Math.max(0, Math.min((mouse.x / width) * root.durationMs, root.durationMs))
-                                root.positionMs = ms
+                                root.setLocalPosition(ms)
                                 footerBridge.positionUpdated(Math.round(ms))
                                 waveformCanvas.requestPaint()
                                 return
@@ -727,7 +835,7 @@ Rectangle {
                             if (!isDraggingLocal) return
                             if (root.displayMode !== 0) {
                                 var ms = Math.max(0, Math.min((mouse.x / width) * root.durationMs, root.durationMs))
-                                root.positionMs = ms
+                                root.setLocalPosition(ms)
                                 footerBridge.positionUpdated(Math.round(ms))
                                 waveformCanvas.requestPaint()
                                 return
@@ -749,8 +857,8 @@ Rectangle {
                             scratchCurrentIndex = Math.max(0, Math.min(scratchCurrentIndex, totalSamples - 1))
 
                             var ratioIdx = scratchCurrentIndex / (totalSamples - 1)
-                            root.positionMs = Math.round(ratioIdx * root.durationMs)
-                            footerBridge.positionUpdated(root.positionMs)
+                            root.setLocalPosition(Math.round(ratioIdx * root.durationMs))
+                            footerBridge.positionUpdated(Math.round(root.displayPositionMs))
 
                             lastMouseX = mouse.x
                             lastMoveTime = now
@@ -762,7 +870,7 @@ Rectangle {
                             if (!isDraggingLocal) return
                             isDraggingLocal = false
                             if (root.displayMode !== 0) {
-                                var target = Math.max(0, Math.round(root.positionMs))
+                                var target = Math.max(0, Math.round(root.displayPositionMs))
                                 footerBridge.seekRequested(target)
                                 footerBridge.scratchModeChanged(false)
                                 return
@@ -771,7 +879,7 @@ Rectangle {
                             if (Math.abs(currentVelocity) < 0.5) {
                                 isSpinningFreely = false
                                 decayTimer.stop()
-                                var target2 = Math.max(0, Math.round(root.positionMs))
+                                var target2 = Math.max(0, Math.round(root.displayPositionMs))
                                 footerBridge.seekRequested(target2)
                                 footerBridge.scratchModeChanged(false)
                             } else {
@@ -799,14 +907,14 @@ Rectangle {
                                     var targetVel = root.isPlaying ? 1.0 : 0.0
                                     scratchArea.currentVelocity += (targetVel - scratchArea.currentVelocity) * 0.15
                                     var msShifted = scratchArea.currentVelocity * 20.0
-                                    root.positionMs = Math.max(0, Math.min(root.positionMs + msShifted, root.durationMs))
+                                    root.setLocalPosition(Math.max(0, Math.min(root.displayPositionMs + msShifted, root.durationMs)))
                                     var total = root.samples.length
                                     if (total > 1) {
-                                        var ratio = root.durationMs > 0 ? root.positionMs / root.durationMs : 0
+                                        var ratio = root.durationMs > 0 ? root.displayPositionMs / root.durationMs : 0
                                         scratchArea.scratchCurrentIndex = ratio * (total - 1)
                                     }
                                     footerBridge.velocityChanged(scratchArea.currentVelocity)
-                                    footerBridge.positionUpdated(Math.round(root.positionMs))
+                                    footerBridge.positionUpdated(Math.round(root.displayPositionMs))
                                     scratchArea.requestScratchFrame()
 
                                     if (Math.abs(scratchArea.currentVelocity - targetVel) < 0.05) {
@@ -814,7 +922,7 @@ Rectangle {
                                         footerBridge.velocityChanged(scratchArea.currentVelocity)
                                         scratchArea.isSpinningFreely = false
                                         decayTimer.stop()
-                                        var target = Math.max(0, Math.round(root.positionMs))
+                                        var target = Math.max(0, Math.round(root.displayPositionMs))
                                         footerBridge.seekRequested(target)
                                         footerBridge.scratchModeChanged(false)
                                     }
@@ -832,20 +940,30 @@ Rectangle {
                         }
                     }
 
-                    // Auto-scroll while playing in scratch mode (mirrors the old
-                    // render_timer-driven _auto_scroll — runs at the monitor's
-                    // refresh rate per UI_MANIFEST's FrameAnimation-not-Timer rule).
+                    // Single clock driving displayPositionMs — extrapolates between
+                    // Python's polled position updates (per UI_MANIFEST's
+                    // FrameAnimation-not-Timer rule: Timer is capped ~60Hz, this
+                    // tracks the real monitor refresh rate) and, in scratch mode,
+                    // also drives the waveform auto-scroll (mirrors the old
+                    // render_timer-driven _auto_scroll). Math.max against its own
+                    // previous value in the formula below is what makes
+                    // displayPositionMs structurally monotonic during playback —
+                    // see the property comment near the top of this file.
                     FrameAnimation {
-                        id: scratchAutoScroll
-                        running: root.displayMode === 0 && root.isPlaying &&
-                                 !scratchArea.isDraggingLocal && !scratchArea.isSpinningFreely
+                        id: positionClock
+                        running: root.isPlaying && !scratchArea.isDraggingLocal && !scratchArea.isSpinningFreely
                         onTriggered: {
-                            var total = root.samples.length
-                            if (total < 2 || root.durationMs <= 0) return
-                            root.positionMs = Math.min(root.positionMs + frameTime * 1000.0, root.durationMs)
-                            var ratio = root.positionMs / root.durationMs
-                            scratchArea.scratchCurrentIndex = ratio * (total - 1)
-                            scratchArea.requestScratchFrame()
+                            var candidate = root.enginePositionMs + (Date.now() - root.enginePositionAtMs)
+                            root.displayPositionMs = Math.min(root.durationMs, Math.max(root.displayPositionMs, candidate))
+
+                            if (root.displayMode === 0) {
+                                var total = root.samples.length
+                                if (total >= 2 && root.durationMs > 0) {
+                                    scratchArea.scratchCurrentIndex = (root.displayPositionMs / root.durationMs) * (total - 1)
+                                    scratchArea.requestScratchFrame()
+                                }
+                            }
+                            waveformCanvas.requestPaint()
                         }
                     }
 
@@ -886,15 +1004,43 @@ Rectangle {
                         acceptedButtons: Qt.NoButton
                         z: -1
                     }
+
+                    // Declared last so it paints on top of the Canvas above —
+                    // see startupSettled comment near the top of this Item.
+                    // Auto-hides itself forever after the timer fires, so
+                    // unlike a permanent background it can't clip the play
+                    // button's hover halo bleeding in from the row above —
+                    // by the time a user could realistically hover that
+                    // button, startup has long since finished.
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: !waveformWrap.startupSettled
+                        color: root.footerBgColor()
+                    }
                 }
 
                 Text {
                     id: totalTimeLbl
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.formatTime(root.durationMs)
+                    width: timeWidthRef.implicitWidth
+                    // Click to toggle between total duration and time
+                    // remaining (counts down to 0 as displayPositionMs
+                    // advances) — common transport-bar convention. Persisted
+                    // Python-side (FooterPanel.show_remaining, settings key
+                    // "show_remaining_time") so it survives a restart, same
+                    // pattern as displayMode/modeToggled above.
+                    text: root.showRemainingTime
+                          ? "-" + root.formatTime(Math.max(0, root.durationMs - root.displayPositionMs))
+                          : root.formatTime(root.durationMs)
                     color: root.accentColor
                     font.family: root.fontFamily
                     font.pixelSize: 14; font.bold: true
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: footerBridge.remainingToggled(!root.showRemainingTime)
+                    }
                 }
             }
         }
@@ -922,14 +1068,18 @@ Rectangle {
                 hoverColor: root.hoverColor
                 iconSource: root.tintedIcon("settings", root.accentColor)
                 onTriggered: footerBridge.settingsClicked()
+                onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Settings", cx, ay, by)
+                onHoverExited: footerBridge.hideTooltip()
             }
 
             IconButton {
                 width: 40; height: 40; radius: 20
-                iconSize: 22
+                iconSize: 29
                 hoverColor: root.hoverColor
                 iconSource: root.tintedIcon(root.isMuted ? "volume_mute" : "volume", root.isMuted ? "#888888" : root.accentColor)
                 onTriggered: footerBridge.muteClicked()
+                onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Mute/Unmute", cx, ay, by)
+                onHoverExited: footerBridge.hideTooltip()
             }
 
             Item {
@@ -962,20 +1112,6 @@ Rectangle {
                     color: root.accentColor
                 }
 
-                Rectangle {
-                    id: volTip
-                    visible: opacity > 0
-                    opacity: (volArea.containsMouse || volArea.pressed) ? 1.0 : 0.0
-                    Behavior on opacity { NumberAnimation { duration: 120 } }
-                    width: tipText.implicitWidth + 16; height: 22; radius: 4
-                    color: "#1a1a1a"
-                    border.width: 1; border.color: "#3a3a3a"
-                    x: Math.max(0, Math.min(volSliderWrap.handleX - width / 2, volSliderWrap.width - width))
-                    y: -30
-                    Text { id: tipText; anchors.centerIn: parent; text: root.volume + "%"; color: "#dddddd"
-                           font.family: root.fontFamily; font.pixelSize: 11 }
-                }
-
                 MouseArea {
                     id: volArea
                     anchors.fill: parent
@@ -988,8 +1124,37 @@ Rectangle {
                         var ratio = volSliderWrap.grooveW > 0 ? x / volSliderWrap.grooveW : 0
                         return Math.round(ratio * 100)
                     }
-                    onPressed: (mouse) => footerBridge.volumeChangedByUser(valueFromMouse(mouse.x))
-                    onPositionChanged: (mouse) => { if (pressed) footerBridge.volumeChangedByUser(valueFromMouse(mouse.x)) }
+                    // Routed through the same native showTooltip/hideTooltip
+                    // used by the rest of the footer's buttons (matches the
+                    // pre-rewrite ClickableSlider's TriangleTooltip — themed
+                    // colors + drop shadow — instead of the plain flat
+                    // Rectangle bubble the QML rewrite originally used here).
+                    // Pass the just-computed value directly rather than
+                    // root.volume, which lags a frame behind during drag
+                    // (round-trips through footerBridge.volumeChangedByUser).
+                    function showVolTooltip(val) {
+                        var a = mapToGlobal(volSliderWrap.handleX, -4)
+                        var b = mapToGlobal(volSliderWrap.handleX, height + 4)
+                        footerBridge.showTooltip(val + "%", a.x, a.y, b.y)
+                    }
+                    onEntered: showVolTooltip(root.volume)
+                    onExited: { if (!pressed) footerBridge.hideTooltip() }
+                    onPressed: (mouse) => {
+                        var v = valueFromMouse(mouse.x)
+                        footerBridge.volumeChangedByUser(v)
+                        showVolTooltip(v)
+                    }
+                    onPositionChanged: (mouse) => {
+                        if (pressed) {
+                            var v = valueFromMouse(mouse.x)
+                            footerBridge.volumeChangedByUser(v)
+                            showVolTooltip(v)
+                        }
+                    }
+                    onReleased: {
+                        if (containsMouse) showVolTooltip(root.volume)
+                        else footerBridge.hideTooltip()
+                    }
                 }
             }
 
@@ -999,6 +1164,8 @@ Rectangle {
                 hoverColor: root.hoverColor
                 iconSource: root.tintedIcon("cast", root.castConnected ? root.accentColor : "#555555")
                 onTriggered: footerBridge.castClicked()
+                onHoverEntered: (cx, ay, by) => footerBridge.showTooltip("Cast to device", cx, ay, by)
+                onHoverExited: footerBridge.hideTooltip()
             }
         }
     }

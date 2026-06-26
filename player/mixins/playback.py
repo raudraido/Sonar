@@ -315,7 +315,7 @@ class PlaybackMixin:
             print(f"[TIMING] +{time.time() - t0:.3f}s | UI Text Updated")
 
             # Reset Seek Bar
-            self._footer_panel.set_position_ms(0)
+            self._footer_panel.set_position_ms(0, hard=True)
 
             # Reset waveform to loading state so "ANALYZING WAVEFORM..." is shown
             # while the C++ engine generates data for the new track.
@@ -409,12 +409,11 @@ class PlaybackMixin:
         
         if self.audio_engine.is_playing:
             self.audio_engine.pause()
-            self.smooth_timer.stop()
             self._footer_panel.set_playing(False)
             self._cast_relay_pause()
         else:
             # If nothing is selected, default to the top track
-            if self.current_index == -1: 
+            if self.current_index == -1:
                 self.current_index = 0
 
             # Let your native playback manager handle the fresh track safely!
@@ -423,8 +422,6 @@ class PlaybackMixin:
                 self._play_with_cast_sync(track)
             else:
                 self.audio_engine.play()
-                self.last_engine_update_time = time.time()
-                self.smooth_timer.start()
                 self._footer_panel.set_playing(True)
                 self._cast_relay_play()
 
@@ -588,7 +585,7 @@ class PlaybackMixin:
         self.audio_engine.stop()
 
         self._footer_panel.set_playing(False)
-        self._footer_panel.set_position_ms(0)
+        self._footer_panel.set_position_ms(0, hard=True)
 
         if getattr(self, 'visualizer', None):
             self.visualizer.reset()
@@ -644,39 +641,30 @@ class PlaybackMixin:
             self._footer_panel.set_duration_ms(duration)
 
     def update_ui_state(self, position):
-        # 1. SHIELD MUST BE FIRST
-        if time.time() < getattr(self, 'ignore_updates_until', 0):
+        """Continuous decoder poll (~20-62Hz) — never a deliberate jump. QML
+        is responsible for smoothing/extrapolating this between polls and
+        guarantees it never displays backward (see footer_bar.qml's
+        positionClock FrameAnimation); this just forwards the raw fact."""
+        if time.time() < getattr(self, '_seek_settle_until', 0):
             return
 
-        # 2. DO NOT INTERFERE IF SCRATCHING
         is_djing = self._footer_panel.is_dragging or self._footer_panel.is_spinning_freely
         if is_djing:
             return
-
-        # 3. SAFE TO UPDATE
-        self.last_engine_pos = position
-        self.last_engine_update_time = time.time()
 
         self._footer_panel.set_position_ms(position)
 
         if hasattr(self, '_queue_panel'):
             self._queue_panel.update_lyrics_position(int(position))
 
-    def run_smooth_interpolator(self):
-        is_djing = self._footer_panel.is_dragging or self._footer_panel.is_spinning_freely
+    def on_engine_position_jump(self, ms):
+        """Deliberate discontinuity (seek/track-start/stop/loop) from
+        AudioEngine.positionJumped — snaps the display exactly, and briefly
+        suppresses update_ui_state so a stale pre-jump poll already in
+        flight can't overwrite it."""
+        self._seek_settle_until = time.time() + 1.0
+        self._footer_panel.set_position_ms(ms, hard=True)
 
-        if self.audio_engine.is_playing and not is_djing:
-            # Safe elapsed time calculation
-            elapsed_ms = (time.time() - getattr(self, 'last_engine_update_time', time.time())) * 1000
-            predicted_pos = int(getattr(self, 'last_engine_pos', 0) + elapsed_ms)
-
-            # Cap it to duration
-            duration = self._footer_panel.duration_ms
-            if duration > 0:
-                predicted_pos = min(predicted_pos, duration)
-
-            self._footer_panel.set_position_ms(predicted_pos)
-    
     def sync_playlist_duration(self):
         if 0 <= self.current_index < self.tree.topLevelItemCount():
             duration_ms = self.audio_engine.total_ms
@@ -714,9 +702,6 @@ class PlaybackMixin:
         else: self.audio_engine.seek(target_ms)
         
         self.queued_next_index = -1; self.preload_next()
-        self.ignore_updates_until = time.time() + 1.0
-        self.last_engine_pos = target_ms
-        self.last_engine_update_time = time.time()
         self._cast_relay_seek(target_ms)
 
     def on_waveform_toggled(self, mode_int):

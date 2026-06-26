@@ -10,7 +10,8 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Qt
 
 
 class AudioEngine(QObject):
-    positionChanged     = pyqtSignal(int)
+    positionChanged     = pyqtSignal(int)   # continuous polled position — may jitter by a few ms
+    positionJumped      = pyqtSignal(int)   # discontinuous jump (seek/track-start/stop/loop) — exact
     waveform_generated  = pyqtSignal(list)
     durationChanged     = pyqtSignal(int)
     endOfMedia          = pyqtSignal()
@@ -178,7 +179,7 @@ class AudioEngine(QObject):
         if self.lib.load_track(path.encode('utf-8')) == 1:
             self.total_ms = self.lib.get_duration()
             self.durationChanged.emit(int(self.total_ms))
-            self.positionChanged.emit(0)
+            self.positionJumped.emit(0)
             return True
         return False
 
@@ -198,7 +199,7 @@ class AudioEngine(QObject):
             if self.lib.check_track_switch() == 1:
                 self.total_ms = self.lib.get_duration()
                 self.durationChanged.emit(int(self.total_ms))
-                self.positionChanged.emit(0)
+                self.positionJumped.emit(0)
                 self.mediaSwitched.emit()
 
             self.positionChanged.emit(pos)
@@ -250,12 +251,12 @@ class AudioEngine(QObject):
             self.lib.stop()
         self.is_playing = False
         self.update_timer.stop()
-        self.positionChanged.emit(0)
+        self.positionJumped.emit(0)
 
     def seek(self, ms: int):
         if self.lib:
             self.lib.seek(int(ms))
-        self.positionChanged.emit(ms)
+        self.positionJumped.emit(ms)
         self.ignore_end_checks_until = time.time() + 2.0
 
     def set_volume(self, val: int):

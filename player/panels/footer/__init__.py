@@ -87,6 +87,7 @@ class FooterPanel(QWidget):
             # modes are restored, scratch mode is not (never resume straight
             # into the DJ-scratch view on launch).
             self._display_mode = saved_mode
+        self._show_remaining = bool(int(window.settings.value('show_remaining_time', 0) or 0))
         self._position_ms = 0
         self._duration_ms = 1
         self._is_playing = False
@@ -159,6 +160,7 @@ class FooterPanel(QWidget):
         # Push initial state once QML has loaded.
         self._bridge.volumeChanged.emit(self._volume)
         self._bridge.displayModeChanged.emit(self._display_mode)
+        self._bridge.showRemainingChanged.emit(self._show_remaining)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -173,11 +175,11 @@ class FooterPanel(QWidget):
     def is_playing(self):
         return self._is_playing
 
-    def set_position_ms(self, ms):
+    def set_position_ms(self, ms, hard=False):
         if self._is_scratching:
             return
         self._position_ms = int(ms)
-        self._bridge.positionMsChanged.emit(self._position_ms)
+        self._bridge.positionMsChanged.emit(self._position_ms, bool(hard))
 
     @property
     def position_ms(self):
@@ -259,6 +261,14 @@ class FooterPanel(QWidget):
         self._display_mode = int(mode)
         self._bridge.displayModeChanged.emit(self._display_mode)
         self.mode_toggled.emit(self._display_mode)
+
+    @property
+    def show_remaining(self):
+        return self._show_remaining
+
+    def _on_remaining_toggled(self, on):
+        self._show_remaining = bool(on)
+        self._bridge.showRemainingChanged.emit(self._show_remaining)
 
     def _compute_scratch_frame(self, current_index, pixels_per_sample, width, height):
         width, height = int(width), int(height)
