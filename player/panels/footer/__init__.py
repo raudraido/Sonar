@@ -34,7 +34,7 @@ class FooterPanel(QWidget):
     mute_clicked            = pyqtSignal()
     seek_requested          = pyqtSignal(int)
     scratch_mode_changed   = pyqtSignal(bool)
-    velocity_changed        = pyqtSignal(float)
+    scratch_target_changed  = pyqtSignal(float)
     position_updated        = pyqtSignal(int)
     mode_toggled             = pyqtSignal(int)
     artist_clicked          = pyqtSignal(str)
@@ -80,7 +80,9 @@ class FooterPanel(QWidget):
         self._samples_mid = []
         self._samples_high = []
         self._beatgrid_bpm = 0.0
-        self._beatgrid_anchor_ms = 0.0
+        # Real detected beat onset positions (ms), not an extrapolated
+        # anchor+interval grid — see get_file_beat_grid in audio_core.cpp.
+        self._beatgrid_positions = []
         self._has_real_data = False
         self._display_mode = 2
         try:
@@ -261,11 +263,11 @@ class FooterPanel(QWidget):
         self._samples_mid = []
         self._samples_high = []
         self._beatgrid_bpm = 0.0
-        self._beatgrid_anchor_ms = 0.0
+        self._beatgrid_positions = []
         self._bridge.hasRealDataChanged.emit(False)
         self._bridge.samplesChanged.emit()
         self._bridge.bandSamplesChanged.emit()
-        self._bridge.beatGridChanged.emit(0.0, 0.0)
+        self._bridge.beatGridChanged.emit(0.0)
 
     def set_real_samples(self, new_samples):
         if not new_samples:
@@ -283,10 +285,14 @@ class FooterPanel(QWidget):
         self._samples_high = high
         self._bridge.bandSamplesChanged.emit()
 
-    def set_beatgrid(self, bpm, anchor_ms):
+    def set_beatgrid(self, bpm, beat_positions_ms):
         self._beatgrid_bpm = float(bpm or 0.0)
-        self._beatgrid_anchor_ms = float(anchor_ms or 0.0)
-        self._bridge.beatGridChanged.emit(self._beatgrid_bpm, self._beatgrid_anchor_ms)
+        self._beatgrid_positions = list(beat_positions_ms or [])
+        # Pull-style, like samples/bandSamples above — beat_positions_ms can
+        # be thousands of floats, too large to want copied through a signal
+        # argument; QML pulls it via footerBridge.getBeatPositions() once
+        # notified.
+        self._bridge.beatGridChanged.emit(self._beatgrid_bpm)
 
     def _on_mode_toggled(self, mode):
         self._display_mode = int(mode)

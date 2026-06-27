@@ -32,8 +32,7 @@ class ScratchWaveformItem : public QQuickItem {
     Q_PROPERTY(double pixelsPerSample READ pixelsPerSample WRITE setPixelsPerSample NOTIFY pixelsPerSampleChanged)
     Q_PROPERTY(double hue READ hue WRITE setHue NOTIFY hueChanged)
     Q_PROPERTY(double durationMs READ durationMs WRITE setDurationMs NOTIFY durationMsChanged)
-    Q_PROPERTY(double beatGridBpm READ beatGridBpm WRITE setBeatGridBpm NOTIFY beatGridBpmChanged)
-    Q_PROPERTY(double beatGridAnchorMs READ beatGridAnchorMs WRITE setBeatGridAnchorMs NOTIFY beatGridAnchorMsChanged)
+    Q_PROPERTY(QVariantList beatPositionsMs READ beatPositionsMs WRITE setBeatPositionsMs NOTIFY beatPositionsMsChanged)
 
 public:
     explicit ScratchWaveformItem(QQuickItem *parent = nullptr);
@@ -63,11 +62,8 @@ public:
     double durationMs() const { return m_durationMs; }
     void setDurationMs(double v);
 
-    double beatGridBpm() const { return m_beatGridBpm; }
-    void setBeatGridBpm(double v);
-
-    double beatGridAnchorMs() const { return m_beatGridAnchorMs; }
-    void setBeatGridAnchorMs(double v);
+    QVariantList beatPositionsMs() const { return m_beatPositionsVariant; }
+    void setBeatPositionsMs(const QVariantList &v);
 
 signals:
     void samplesChanged();
@@ -79,8 +75,7 @@ signals:
     void pixelsPerSampleChanged();
     void hueChanged();
     void durationMsChanged();
-    void beatGridBpmChanged();
-    void beatGridAnchorMsChanged();
+    void beatPositionsMsChanged();
 
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -95,6 +90,6 @@ private:
     double m_pixelsPerSample = 1.5;
     double m_hue = -1.0;
     double m_durationMs = 1.0;
-    double m_beatGridBpm = 0.0;
-    double m_beatGridAnchorMs = 0.0;
+    QVariantList m_beatPositionsVariant;
+    QVector<double> m_beatPositionsMs;  // sorted ascending — real detected beat onsets
 };

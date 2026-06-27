@@ -61,7 +61,7 @@ Rectangle {
     property var  samplesMid:         []
     property var  samplesHigh:        []
     property real beatGridBpm:        0
-    property real beatGridAnchorMs:   0
+    property var  beatPositionsMs:    []
 
     // ── Track info ───────────────────────────────────────────────────────────
     property string trackTitle:   ""
@@ -180,9 +180,9 @@ Rectangle {
             root.samplesMid = footerBridge.getMidSamples()
             root.samplesHigh = footerBridge.getHighSamples()
         }
-        function onBeatGridChanged(bpm, anchorMs) {
+        function onBeatGridChanged(bpm) {
             root.beatGridBpm = bpm
-            root.beatGridAnchorMs = anchorMs
+            root.beatPositionsMs = footerBridge.getBeatPositions()
             waveformCanvas.requestPaint()
         }
 
@@ -726,29 +726,24 @@ Rectangle {
                             paintBeatGrid(ctx)
                         }
 
-                        // Same beat-grid concept as ScratchWaveformItem's
-                        // (player/native/scratch_waveform/scratchwaveformitem.cpp)
-                        // — anchorMs + n*(60000/bpm) — but mapped across the
-                        // whole track's width here instead of zoomed
-                        // sample-index space, since bar mode always shows
-                        // the full track.
+                        // Draws a line at each *actually detected* beat
+                        // position (root.beatPositionsMs, from
+                        // get_file_beat_grid in audio_core.cpp) instead of
+                        // extrapolating evenly-spaced lines from a single
+                        // anchor+bpm — so it always lands on a real
+                        // transient instead of drifting off due to the
+                        // track not being perfectly constant-tempo, or an
+                        // octave (half/double-tempo) detection error.
                         function paintBeatGrid(ctx) {
-                            if (root.beatGridBpm <= 0 || root.durationMs <= 0) return
-                            var intervalMs = 60000.0 / root.beatGridBpm
+                            var positions = root.beatPositionsMs
+                            if (!positions || positions.length === 0 || root.durationMs <= 0) return
                             var pxPerMs = width / root.durationMs
 
                             ctx.strokeStyle = "rgba(255,255,255,0.32)"
                             ctx.lineWidth = 1
                             ctx.beginPath()
-                            var beatMs = root.beatGridAnchorMs
-                            // Walk backward from the anchor too, so beats
-                            // before it (anchor is just one coherent
-                            // region's first beat, not necessarily the
-                            // track's first beat) still get drawn.
-                            while (beatMs > 0) beatMs -= intervalMs
-                            for (; beatMs <= root.durationMs; beatMs += intervalMs) {
-                                if (beatMs < 0) continue
-                                var x = Math.round(beatMs * pxPerMs) + 0.5
+                            for (var i = 0; i < positions.length; i++) {
+                                var x = Math.round(positions[i] * pxPerMs) + 0.5
                                 ctx.moveTo(x, 0); ctx.lineTo(x, height)
                             }
                             ctx.stroke()
@@ -849,8 +844,7 @@ Rectangle {
                         pixelsPerSample: scratchArea.pixelsPerSample
                         hue: root.accentQColor.hsvHue
                         durationMs: root.durationMs
-                        beatGridBpm: root.beatGridBpm
-                        beatGridAnchorMs: root.beatGridAnchorMs
+                        beatPositionsMs: root.beatPositionsMs
 
                         // Center scratch-cursor line — always drawn in scratch
                         // mode regardless of data availability, mirroring the
@@ -879,16 +873,12 @@ Rectangle {
                         cursorShape: root.displayMode === 0 ? Qt.OpenHandCursor : Qt.PointingHandCursor
 
                         property bool isDraggingLocal: false
-                        property bool isSpinningFreely: false
-                        property real lastMouseX: 0
-                        property real lastMoveTime: 0
-                        property real currentVelocity: 0
+                        property real dragStartMouseX: 0   // fixed at press — total-displacement reference
+                        property real lastMouseX: 0         // updated per event — incremental visual feedback only
                         property real scratchCurrentIndex: 0
                         property real pixelsPerSample: 1.5
                         property real basePixelsPerSample: 1.5
                         property real zoomLevel: 1.0
-
-                        function nowSec() { return Date.now() / 1000.0 }
 
                         // scratchImg (the native ScratchWaveformItem sibling
                         // above) has its currentIndex/pixelsPerSample properties
@@ -908,14 +898,11 @@ Rectangle {
                                 waveformCanvas.requestPaint()
                                 return
                             }
-                            isSpinningFreely = false
                             cursorShape = Qt.ClosedHandCursor
+                            dragStartMouseX = mouse.x
                             lastMouseX = mouse.x
-                            lastMoveTime = nowSec()
-                            currentVelocity = 0
                             footerBridge.scratchModeChanged(true)
-                            footerBridge.velocityChanged(0.0)
-                            decayTimer.start()
+                            footerBridge.scratchTargetChanged(0.0)
                         }
 
                         onPositionChanged: (mouse) => {
@@ -929,27 +916,34 @@ Rectangle {
                             }
                             var totalSamples = root.samples.length
                             if (totalSamples < 2) return
-                            var now = nowSec()
-                            var dt = now - lastMoveTime
-                            if (dt < 0.001) dt = 0.001
-                            var deltaX = mouse.x - lastMouseX
                             var totalPixels = totalSamples * pixelsPerSample
-                            var ratio = deltaX / totalPixels
-                            var deltaMs = ratio * root.durationMs
-                            currentVelocity = -(deltaMs / (dt * 1000.0))
-                            footerBridge.velocityChanged(currentVelocity)
 
-                            var samplesShifted = deltaX / pixelsPerSample
+                            // Target is the TOTAL displacement since press
+                            // (not a per-event delta) — mirrors Mixxx's
+                            // "scratch_position" control object. The native
+                            // position controller (data_callback in
+                            // audio_core.cpp) smoothly converges actual
+                            // playback toward this target every audio
+                            // buffer, which is what makes this immune to
+                            // any single noisy/closely-spaced mouse event —
+                            // unlike the old raw instantaneous-velocity
+                            // approach (deltaMs/dt), which could spike
+                            // arbitrarily from one fast, tiny movement.
+                            var totalDeltaX = mouse.x - dragStartMouseX
+                            var targetDeltaMs = -((totalDeltaX / totalPixels) * root.durationMs)
+                            footerBridge.scratchTargetChanged(targetDeltaMs)
+
+                            // Visual feedback only, per-event incremental —
+                            // independent of the native controller, purely
+                            // for immediate responsiveness while dragging.
+                            var samplesShifted = (mouse.x - lastMouseX) / pixelsPerSample
                             scratchCurrentIndex -= samplesShifted
                             scratchCurrentIndex = Math.max(0, Math.min(scratchCurrentIndex, totalSamples - 1))
-
                             var ratioIdx = scratchCurrentIndex / (totalSamples - 1)
                             root.setLocalPosition(Math.round(ratioIdx * root.durationMs))
                             footerBridge.positionUpdated(Math.round(root.displayPositionMs))
 
                             lastMouseX = mouse.x
-                            lastMoveTime = now
-                            decayTimer.start()
                             requestScratchFrame()
                         }
 
@@ -963,15 +957,16 @@ Rectangle {
                                 return
                             }
                             cursorShape = Qt.OpenHandCursor
-                            if (Math.abs(currentVelocity) < 0.5) {
-                                isSpinningFreely = false
-                                decayTimer.stop()
-                                var target2 = Math.max(0, Math.round(root.displayPositionMs))
-                                footerBridge.seekRequested(target2)
-                                footerBridge.scratchModeChanged(false)
-                            } else {
-                                isSpinningFreely = true
-                            }
+                            // Always resume right where you let go — no
+                            // momentum/spin-up (matches Mixxx: release just
+                            // continues normal playback from the release
+                            // point). One native read for the exact ground-
+                            // truth position before computing the seek target.
+                            var releaseMs = footerBridge.getScratchPositionMs()
+                            if (releaseMs >= 0) root.setLocalPosition(releaseMs)
+                            var target2 = Math.max(0, Math.round(root.displayPositionMs))
+                            footerBridge.seekRequested(target2)
+                            footerBridge.scratchModeChanged(false)
                         }
 
                         onWheel: (wheel) => {
@@ -984,46 +979,6 @@ Rectangle {
                             zoomLevel = Math.max(0.1, Math.min(zoomLevel, 5.0))
                             pixelsPerSample = basePixelsPerSample * zoomLevel
                             requestScratchFrame()
-                        }
-
-                        Timer {
-                            id: decayTimer
-                            interval: 20; repeat: true
-                            onTriggered: {
-                                if (scratchArea.isSpinningFreely) {
-                                    var targetVel = root.isPlaying ? 1.0 : 0.0
-                                    scratchArea.currentVelocity += (targetVel - scratchArea.currentVelocity) * 0.15
-                                    var msShifted = scratchArea.currentVelocity * 20.0
-                                    root.setLocalPosition(Math.max(0, Math.min(root.displayPositionMs + msShifted, root.durationMs)))
-                                    var total = root.samples.length
-                                    if (total > 1) {
-                                        var ratio = root.durationMs > 0 ? root.displayPositionMs / root.durationMs : 0
-                                        scratchArea.scratchCurrentIndex = ratio * (total - 1)
-                                    }
-                                    footerBridge.velocityChanged(scratchArea.currentVelocity)
-                                    footerBridge.positionUpdated(Math.round(root.displayPositionMs))
-                                    scratchArea.requestScratchFrame()
-
-                                    if (Math.abs(scratchArea.currentVelocity - targetVel) < 0.05) {
-                                        scratchArea.currentVelocity = targetVel
-                                        footerBridge.velocityChanged(scratchArea.currentVelocity)
-                                        scratchArea.isSpinningFreely = false
-                                        decayTimer.stop()
-                                        var target = Math.max(0, Math.round(root.displayPositionMs))
-                                        footerBridge.seekRequested(target)
-                                        footerBridge.scratchModeChanged(false)
-                                    }
-                                } else {
-                                    if (scratchArea.nowSec() - scratchArea.lastMoveTime > 0.08) {
-                                        scratchArea.currentVelocity *= 0.5
-                                        if (Math.abs(scratchArea.currentVelocity) < 0.05) {
-                                            scratchArea.currentVelocity = 0.0
-                                            decayTimer.stop()
-                                        }
-                                        footerBridge.velocityChanged(scratchArea.currentVelocity)
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -1038,7 +993,7 @@ Rectangle {
                     // see the property comment near the top of this file.
                     FrameAnimation {
                         id: positionClock
-                        running: root.isPlaying && !scratchArea.isDraggingLocal && !scratchArea.isSpinningFreely
+                        running: root.isPlaying && !scratchArea.isDraggingLocal
 
                         // 0 is the "needs (re)init" sentinel — real Date.now()
                         // values are huge, so this can't collide. Reset

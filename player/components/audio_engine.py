@@ -85,14 +85,19 @@ class AudioEngine(QObject):
 
         self.lib.set_scratch_mode.argtypes     = [ctypes.c_int]
         self.lib.set_scratch_mode.restype      = None
-        self.lib.set_scratch_velocity.argtypes = [ctypes.c_float]
-        self.lib.set_scratch_velocity.restype  = None
+        self.lib.set_scratch_target_delta_ms.argtypes = [ctypes.c_double]
+        self.lib.set_scratch_target_delta_ms.restype  = None
+        self.lib.get_scratch_position_ms.argtypes = []
+        self.lib.get_scratch_position_ms.restype  = ctypes.c_double
 
         self.lib.set_vis_active.argtypes = [ctypes.c_int]
         self.lib.set_vis_active.restype  = None
 
         self.lib.generate_waveform.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
         self.lib.generate_waveform.restype  = ctypes.c_int
+
+        self.lib.get_file_duration_ms.argtypes = [ctypes.c_char_p]
+        self.lib.get_file_duration_ms.restype  = ctypes.c_longlong
 
         self.lib.get_file_bpm.argtypes = [ctypes.c_char_p]
         self.lib.get_file_bpm.restype  = ctypes.c_float
@@ -106,12 +111,13 @@ class AudioEngine(QObject):
         ]
         self.lib.generate_waveform_bands.restype = ctypes.c_int
 
-        self.lib.get_file_beatgrid.argtypes = [
+        self.lib.get_file_beat_grid.argtypes = [
             ctypes.c_char_p,
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int,
         ]
-        self.lib.get_file_beatgrid.restype = ctypes.c_int
+        self.lib.get_file_beat_grid.restype = ctypes.c_int
 
         # ------------------------------------------------------------------
         # Initialise engine and polling timer
@@ -142,23 +148,51 @@ class AudioEngine(QObject):
             return 0.0
         return round(self.lib.get_file_bpm(path.encode('utf-8')), 2)
 
+    _MAX_BEAT_GRID_POINTS = 20000  # generous even for a long, fast-tempo mix
+
     def analyze_beatgrid(self, path: str):
-        """Returns (bpm, anchor_ms) for beat-grid line placement, or None if
-        no coherent tempo could be detected. anchor_ms is the position of
-        the first beat in the const-tempo region the BPM came from — grid
-        lines are anchor_ms + n * (60000 / bpm)."""
+        """Returns (bpm, [beat_position_ms, ...]) for beat-grid line
+        placement, or None if no coherent tempo could be detected. Each
+        position is a real detected beat onset (see get_file_beat_grid in
+        audio_core.cpp) — unlike extrapolating evenly-spaced lines from a
+        single anchor+bpm, this can't drift off real transients due to
+        tempo not being perfectly constant or an octave (half/double-tempo)
+        detection error compounding over many beats."""
         if not self.lib:
             return None
         bpm_out = ctypes.c_float(0.0)
-        anchor_out = ctypes.c_float(0.0)
-        ok = self.lib.get_file_beatgrid(path.encode('utf-8'), ctypes.byref(bpm_out), ctypes.byref(anchor_out))
-        if not ok:
+        beat_array = (ctypes.c_float * self._MAX_BEAT_GRID_POINTS)()
+        count = self.lib.get_file_beat_grid(
+            path.encode('utf-8'), ctypes.byref(bpm_out), beat_array, self._MAX_BEAT_GRID_POINTS)
+        if count <= 0:
             return None
-        return (round(bpm_out.value, 2), round(anchor_out.value, 1))
+        return (round(bpm_out.value, 2), [round(beat_array[i], 1) for i in range(count)])
 
     # ------------------------------------------------------------------
     # Waveform generation
     # ------------------------------------------------------------------
+    # Points-per-second of audio for waveform analysis resolution — matches
+    # Mixxx's mainWaveformSampleRate (analyzerwaveform.cpp upstream: 441
+    # visual samples/sec, scaled by track length, not a fixed total point
+    # count). A flat 10000-points-per-track default made longer tracks far
+    # coarser than this — e.g. ~40 points/sec on a 4-minute song — which is
+    # why scratch mode's zoomed-in view showed smooth interpolated blobs
+    # instead of each transient's actual jagged shape: there was no finer
+    # data underneath to draw.
+    _WAVEFORM_DENSITY_PER_SEC = 441
+    _WAVEFORM_MIN_POINTS = 2000
+    _WAVEFORM_MAX_POINTS = 400000  # ~15 min of audio at full 441/sec density
+
+    def _resolve_waveform_point_count(self, target_path: str, fallback: int) -> int:
+        try:
+            probe_ms = self.lib.get_file_duration_ms(target_path.encode('utf-8'))
+        except Exception:
+            probe_ms = 0
+        if not probe_ms or probe_ms <= 0:
+            return fallback
+        computed = int((probe_ms / 1000.0) * self._WAVEFORM_DENSITY_PER_SEC)
+        return max(self._WAVEFORM_MIN_POINTS, min(computed, self._WAVEFORM_MAX_POINTS))
+
     def request_waveform(self, path: str, num_points: int = 3000):
         """Generate a waveform array in a background thread. Handles stream URLs via a temp file."""
         self._waveform_token = getattr(self, '_waveform_token', 0) + 1
@@ -187,8 +221,9 @@ class AudioEngine(QObject):
                     try: os.remove(target_path)
                     except OSError: pass
                 return
-            out_array = (ctypes.c_float * num_points)()
-            exact_ms  = self.lib.generate_waveform(target_path.encode('utf-8'), out_array, num_points)
+            actual_num_points = self._resolve_waveform_point_count(target_path, num_points)
+            out_array = (ctypes.c_float * actual_num_points)()
+            exact_ms  = self.lib.generate_waveform(target_path.encode('utf-8'), out_array, actual_num_points)
             if is_temp:
                 try:
                     os.remove(target_path)
@@ -240,11 +275,12 @@ class AudioEngine(QObject):
                     try: os.remove(target_path)
                     except OSError: pass
                 return
-            low_array  = (ctypes.c_float * num_points)()
-            mid_array  = (ctypes.c_float * num_points)()
-            high_array = (ctypes.c_float * num_points)()
+            actual_num_points = self._resolve_waveform_point_count(target_path, num_points)
+            low_array  = (ctypes.c_float * actual_num_points)()
+            mid_array  = (ctypes.c_float * actual_num_points)()
+            high_array = (ctypes.c_float * actual_num_points)()
             ok = self.lib.generate_waveform_bands(
-                target_path.encode('utf-8'), low_array, mid_array, high_array, num_points)
+                target_path.encode('utf-8'), low_array, mid_array, high_array, actual_num_points)
             if is_temp:
                 try:
                     os.remove(target_path)
@@ -386,9 +422,29 @@ class AudioEngine(QObject):
         if self.lib:
             self.lib.set_scratch_mode(ctypes.c_int(1 if active else 0))
 
-    def set_scratch_velocity(self, velocity: float):
+    def set_scratch_target_delta_ms(self, delta_ms: float):
+        """Reports the mouse-implied cumulative displacement since scratch
+        start, in ms — mirrors Mixxx's "scratch_position" control object.
+        audio_core.cpp's data_callback runs a position controller comparing
+        this target against the actually-achieved position to compute a
+        smoothly-converging playback rate every audio buffer, instead of
+        trusting one raw instantaneous velocity sample (which a single
+        closely-spaced/noisy mouse event could spike arbitrarily)."""
         if self.lib:
-            self.lib.set_scratch_velocity(ctypes.c_float(float(velocity)))
+            self.lib.set_scratch_target_delta_ms(ctypes.c_double(float(delta_ms)))
+
+    def get_scratch_position_ms(self):
+        """The absolute track position actually being played during a
+        scratch — the audio thread's own continuously-integrated position
+        (see get_scratch_position_ms in audio_core.cpp), not a UI-side
+        estimate. Returns None when not currently scratching. The UI should
+        use this as the single source of truth for both the visual cursor
+        and the seek target on release, instead of computing its own
+        parallel position from raw mouse deltas."""
+        if not self.lib:
+            return None
+        ms = self.lib.get_scratch_position_ms()
+        return ms if ms >= 0 else None
 
     # ------------------------------------------------------------------
     # State queries

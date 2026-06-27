@@ -59,17 +59,10 @@ void ScratchWaveformItem::setDurationMs(double v) {
     update();
 }
 
-void ScratchWaveformItem::setBeatGridBpm(double v) {
-    if (m_beatGridBpm == v) return;
-    m_beatGridBpm = v;
-    emit beatGridBpmChanged();
-    update();
-}
-
-void ScratchWaveformItem::setBeatGridAnchorMs(double v) {
-    if (m_beatGridAnchorMs == v) return;
-    m_beatGridAnchorMs = v;
-    emit beatGridAnchorMsChanged();
+void ScratchWaveformItem::setBeatPositionsMs(const QVariantList &v) {
+    m_beatPositionsVariant = v;
+    toDoubleVector(v, m_beatPositionsMs);
+    emit beatPositionsMsChanged();
     update();
 }
 
@@ -156,16 +149,19 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
 
     // Per-band (low/mid/high) coloring — mirrors Mixxx's HSV/RGB waveform
     // renderers (src/waveform/renderers/allshader/waveformrendererhsv.cpp,
-    // waveformrendererrgb.cpp upstream): kicks/bass read green, mids blue,
-    // transients/highs magenta, mixed by each band's share of the column's
-    // total energy. Only used once generate_waveform_bands' arrays have
-    // landed and line up sample-for-sample with m_samples; otherwise this
-    // falls back to the original single-hue-shift-by-amplitude coloring.
+    // waveformrendererrgb.cpp upstream): each band gets its own hue, mixed
+    // by its share of the column's total energy. Hues are derived from the
+    // app's accent color (baseHue) rather than fixed green/blue/magenta, so
+    // the waveform follows the user's theme — bass/kicks read as the accent
+    // color itself, mid/high are hue-shifted ±40° from it. Only used once
+    // generate_waveform_bands' arrays have landed and line up sample-for-
+    // sample with m_samples; otherwise this falls back to the original
+    // single-hue-shift-by-amplitude coloring.
     const bool hasBands = m_samplesLow.size() == total &&
             m_samplesMid.size() == total && m_samplesHigh.size() == total;
-    constexpr Rgb kLowColor  = {0.25, 1.00, 0.35};
-    constexpr Rgb kMidColor  = {0.25, 0.55, 1.00};
-    constexpr Rgb kHighColor = {1.00, 0.25, 0.85};
+    const Rgb kLowColor  = hsvToRgb(baseHue, 215.0, 255.0);
+    const Rgb kMidColor  = hsvToRgb(std::fmod(baseHue + 40.0, 360.0), 215.0, 255.0);
+    const Rgb kHighColor = hsvToRgb(std::fmod(baseHue + 320.0, 360.0), 215.0, 255.0);
 
     // Math mirrors the old per-pixel JS/numpy renderer exactly (its
     // user_picked flag was always false in practice, so that branch is
@@ -190,22 +186,14 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
         const double frac = exactIndex - static_cast<double>(idx1);
         const double rawVal = m_samples[idx1] + (m_samples[idx1 + 1] - m_samples[idx1]) * frac;
 
-        // Light neighborhood smoothing for the bar height only (color/hue
-        // below still uses rawVal, so transients keep their punch) — quiet
-        // stretches between peaks otherwise collapse to near-0px columns,
-        // which reads as disconnected floating diamonds rather than a
-        // continuous waveform. A small minimum floor on top keeps even
-        // silent columns showing a thin baseline instead of vanishing.
-        const qsizetype smoothSpan = 3;
-        double smoothSum = 0.0;
-        int smoothCount = 0;
-        for (qsizetype k = -smoothSpan; k <= smoothSpan; ++k) {
-            const qsizetype si = idx1 + k;
-            if (si < 0 || si >= total) continue;
-            smoothSum += m_samples[si];
-            ++smoothCount;
-        }
-        const double smoothedVal = smoothCount > 0 ? smoothSum / smoothCount : rawVal;
+        // No neighbor smoothing — m_samples is already RMS-per-bucket (see
+        // generate_waveform in audio_core.cpp), which never truly collapses
+        // to 0 between hits the way the old peak/mean-abs data could.
+        // Averaging neighboring buckets together on top of that just blurs
+        // each kick's actual attack/decay shape into a soft blob instead of
+        // the sharp "shark-tooth" silhouette real transients have — exactly
+        // the flattened, undersized look that didn't match Mixxx's render.
+        const double smoothedVal = rawVal;
 
         // Linear, not squared — Mixxx's own height mapping is pure linear
         // (heightFactor * peakValue, waveformrendererfiltered.cpp upstream),
@@ -255,25 +243,31 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
         verts.append({xf0, bottom, R, G, B, A});
     }
 
-    // Beat-grid lines (Mixxx-style) — anchorMs + n*(60000/bpm) for every
-    // beat falling within the visible sample window. Drawn last so they
+    // Beat-grid lines — one at each *actually detected* beat position
+    // (m_beatPositionsMs, real onsets from get_file_beat_grid in
+    // audio_core.cpp) that falls within the visible sample window, instead
+    // of extrapolating evenly-spaced lines from a single anchor+bpm — that
+    // approach assumed perfectly constant tempo from one point and was
+    // vulnerable to the tracker's own octave (half/double-tempo) errors
+    // visibly drifting off the real transients. Drawn last so they
     // composite on top of the waveform columns above. m_durationMs/total
     // convert a beat's ms position into the same fractional-sample-index
-    // space the waveform columns above are positioned in.
-    if (m_beatGridBpm > 0.0 && m_durationMs > 0.0) {
-        const double intervalMs = 60000.0 / m_beatGridBpm;
+    // space the waveform columns above are positioned in. m_beatPositionsMs
+    // is sorted ascending, so binary-search the visible ms range instead of
+    // scanning every beat in the track on every repaint.
+    if (!m_beatPositionsMs.isEmpty() && m_durationMs > 0.0) {
         const double msPerIndex = m_durationMs / static_cast<double>(total - 1);
         const double leftIndex  = m_currentIndex + (0 - centerX0) / m_pixelsPerSample;
         const double rightIndex = m_currentIndex + (w - centerX0) / m_pixelsPerSample;
-        const double msStart = leftIndex  * msPerIndex;
-        const double msEnd   = rightIndex * msPerIndex;
-        const long long kStart = static_cast<long long>(std::floor((msStart - m_beatGridAnchorMs) / intervalMs)) - 1;
-        const long long kEnd   = static_cast<long long>(std::ceil((msEnd - m_beatGridAnchorMs) / intervalMs)) + 1;
+        const double msStart = std::min(leftIndex, rightIndex) * msPerIndex;
+        const double msEnd   = std::max(leftIndex, rightIndex) * msPerIndex;
+
+        const auto beginIt = std::lower_bound(m_beatPositionsMs.begin(), m_beatPositionsMs.end(), msStart);
+        const auto endIt   = std::upper_bound(m_beatPositionsMs.begin(), m_beatPositionsMs.end(), msEnd);
 
         const quint8 gridA = static_cast<quint8>(std::round(0.32 * 255.0));
-        for (long long k = kStart; k <= kEnd; ++k) {
-            const double beatMs = m_beatGridAnchorMs + static_cast<double>(k) * intervalMs;
-            if (beatMs < 0.0 || beatMs > m_durationMs) continue;
+        for (auto it = beginIt; it != endIt; ++it) {
+            const double beatMs = *it;
             const double beatIndex = beatMs / msPerIndex;
             const double xCenter = centerX0 + (beatIndex - m_currentIndex) * m_pixelsPerSample;
             if (xCenter < -1.0 || xCenter > w + 1.0) continue;

@@ -1189,7 +1189,7 @@ class SonarPlayer(
         self._footer_panel.seek_requested.connect(self.on_waveform_seek)
         self._footer_panel.mode_toggled.connect(self.on_waveform_toggled)
         self._footer_panel.scratch_mode_changed.connect(self.audio_engine.set_scratch_mode)
-        self._footer_panel.velocity_changed.connect(self.audio_engine.set_scratch_velocity)
+        self._footer_panel.scratch_target_changed.connect(self.audio_engine.set_scratch_target_delta_ms)
         self._footer_panel.artist_clicked.connect(self.on_footer_artist_click)
         self._footer_panel.album_clicked.connect(self.on_footer_album_click)
         self._footer_panel.title_clicked.connect(self.on_footer_title_click)

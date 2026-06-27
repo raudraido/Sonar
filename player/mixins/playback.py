@@ -767,11 +767,16 @@ class PlaybackMixin:
         return {}
 
     def load_beatgrid_cache(self):
-        """Loads the saved beat-grid anchor dictionary (track_id -> anchor_ms)
-        from the app_data folder. Kept separate from bpm_cache so existing
-        cached BPMs (from before the beat-grid feature existed) don't need
-        their format migrated — see _perform_heavy_visual_update's gating,
-        which re-runs BPMWorker once per track until both caches have it."""
+        """Loads the saved beat-grid dictionary (track_id -> [beat_position_ms,
+        ...]) from the app_data folder. Kept separate from bpm_cache so
+        existing cached BPMs (from before the beat-grid feature existed)
+        don't need their format migrated — see _perform_heavy_visual_update's
+        gating, which re-runs BPMWorker once per track until both caches
+        have it. Entries are filtered to lists only — an earlier version of
+        this cache stored a single scalar anchor_ms per track instead of the
+        full beat-position list; those stale entries are dropped here so
+        they're treated as a cache miss and recomputed in the new format,
+        rather than crashing downstream code expecting a list."""
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -782,7 +787,8 @@ class PlaybackMixin:
         if os.path.exists(self.beatgrid_cache_file):
             try:
                 with open(self.beatgrid_cache_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                return {k: v for k, v in data.items() if isinstance(v, list)}
             except Exception:
                 return {}
         return {}
@@ -839,19 +845,19 @@ class PlaybackMixin:
         else:
             self.file_type_label.setText(self.current_file_type_text)
 
-    def _on_beatgrid_calculated(self, bpm, anchor_ms, track_id):
-        """Caches the beat-grid anchor (first-beat position, see
-        get_file_beatgrid in audio_core.cpp) and pushes it to the footer's
-        waveform if it's still for the track currently playing — a worker
-        for a since-skipped track can finish after the fact."""
+    def _on_beatgrid_calculated(self, bpm, beat_positions_ms, track_id):
+        """Caches the real detected beat positions (see get_file_beat_grid
+        in audio_core.cpp) and pushes them to the footer's waveform if it's
+        still for the track currently playing — a worker for a since-skipped
+        track can finish after the fact."""
         if not hasattr(self, 'beatgrid_cache'):
             self.beatgrid_cache = {}
-        self.beatgrid_cache[track_id] = anchor_ms
+        self.beatgrid_cache[track_id] = beat_positions_ms
         self.save_beatgrid_cache()
 
         current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
         if track_id == current_track_id:
-            self._footer_panel.set_beatgrid(bpm, anchor_ms)
+            self._footer_panel.set_beatgrid(bpm, beat_positions_ms)
 
     def import_music(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Open Music Files", "", "Audio Files (*.mp3 *.flac *.wav *.ogg *.m4a)")

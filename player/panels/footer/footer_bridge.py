@@ -58,7 +58,7 @@ class FooterBridge(QObject):
     samplesChanged             = pyqtSignal()
     hasRealDataChanged         = pyqtSignal(bool)
     bandSamplesChanged         = pyqtSignal()
-    beatGridChanged            = pyqtSignal(float, float)   # bpm, anchorMs
+    beatGridChanged            = pyqtSignal(float)   # bpm; pull getBeatPositions() for the (large) position list
 
     coverVersionChanged        = pyqtSignal(int)
     trackInfoChanged           = pyqtSignal(str, str, str)   # title, artist, album
@@ -86,6 +86,10 @@ class FooterBridge(QObject):
     @pyqtSlot(result=list)
     def getHighSamples(self):
         return list(self._panel._samples_high)
+
+    @pyqtSlot(result=list)
+    def getBeatPositions(self):
+        return list(self._panel._beatgrid_positions)
 
     # ── Slots: QML -> Python ─────────────────────────────────────────────
     @pyqtSlot()
@@ -129,9 +133,24 @@ class FooterBridge(QObject):
         self._panel._is_scratching = active
         self._panel.scratch_mode_changed.emit(active)
 
+    @pyqtSlot(result=float)
+    def getScratchPositionMs(self):
+        """Pull-style query for the audio thread's own continuously-
+        integrated scratch position (see get_scratch_position_ms in
+        audio_core.cpp) — the UI polls this to keep the visual cursor (and
+        the eventual release-seek target) reconciled against what's
+        actually audible, instead of drifting from its own independently
+        computed, purely event-driven mouse-delta estimate. Returns -1.0
+        when not currently scratching (mirrors the native convention)."""
+        engine = getattr(self._panel._window, 'audio_engine', None)
+        if not engine:
+            return -1.0
+        ms = engine.get_scratch_position_ms()
+        return float(ms) if ms is not None else -1.0
+
     @pyqtSlot(float)
-    def velocityChanged(self, velocity):
-        self._panel.velocity_changed.emit(velocity)
+    def scratchTargetChanged(self, delta_ms):
+        self._panel.scratch_target_changed.emit(delta_ms)
 
     @pyqtSlot(int)
     def positionUpdated(self, ms):

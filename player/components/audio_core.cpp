@@ -169,10 +169,76 @@ struct AudioEngine {
     std::atomic<bool> track_switched_flag{false};   
     std::atomic<float> master_volume{1.0f};
 
-    // Turntable Variables
+    // ── Turntable / scratch ──────────────────────────────────────────────
+    // Architecture mirrors Mixxx's actual scratch engine (src/engine/
+    // positionscratchcontroller.{h,cpp} + CachingReader upstream), not the
+    // small forward-only RAM ring buffer this used to resample out of:
+    //   1. A dedicated decoder (scratch_decoder), opened from the SAME
+    //      in-memory file bytes (engine.file_data) the normal playback
+    //      decoder already uses, but completely independent state — never
+    //      touches engine.decoder, so gapless preload/transition logic is
+    //      untouched. Real seekable random-access across the WHOLE track,
+    //      not a small lookahead-only cache that wrapped to wrong/stale
+    //      content once you scratched beyond its bounds (the "buffer
+    //      issue" symptom).
+    //   2. A sliding window of decoded PCM around the current scratch
+    //      position (double-buffered — scratch_window[0]/[1] — so the
+    //      real-time audio callback always reads a fully-formed buffer
+    //      lock-free while producer_loop decodes the *other* one in the
+    //      background and atomically flips scratch_active_window once
+    //      ready, recentering whenever the cursor nears either edge).
+    //   3. A PD (proportional-derivative) position controller, not raw
+    //      velocity integration — the UI reports a *target* cumulative
+    //      displacement (set_scratch_target_delta, mirrors Mixxx's
+    //      "scratch_position" control), and data_callback computes a
+    //      smoothly-converging rate toward it each buffer, with explicit
+    //      stale-target handling (decays toward 0 if the UI stops sending
+    //      updates) instead of trusting one possibly-noisy instantaneous
+    //      velocity sample forever.
     std::atomic<bool> is_scratching{false};
-    std::atomic<float> scratch_velocity{0.0f};
-    std::atomic<float> scratch_cursor{0.0f};
+
+    ma_decoder scratch_decoder{};
+    std::atomic<bool> scratch_decoder_loaded{false};
+    // The scratch decoder's own reported length — for a network-streamed
+    // track (see set_scratch_mode's stream_ctx fallback), this is a
+    // snapshot of however many bytes had downloaded *at the moment
+    // scratching began*, frozen even as the real download keeps growing in
+    // the background. It can be meaningfully SHORTER than engine.total_frames
+    // (the real full-track length). Every scratch-window seek must clamp to
+    // THIS, not total_frames — seeking a decoder into a truncated buffer
+    // past what it can actually decode is what caused the app to hang after
+    // scratching forward past the downloaded portion (some formats, MP3
+    // especially, scan for a sync point with no guaranteed bound on a
+    // truncated file).
+    std::atomic<long long> scratch_decoder_total_frames{0};
+
+    static constexpr int kScratchWindowSeconds = 20;
+    static constexpr size_t kScratchWindowFrames =
+            (size_t)kScratchWindowSeconds * SAMPLE_RATE;
+    static constexpr long long kScratchRefillMarginFrames =
+            (long long)4 * SAMPLE_RATE;  // recenter once within 4s of an edge
+
+    std::vector<float> scratch_window[2];        // interleaved stereo, kScratchWindowFrames each
+    std::atomic<long long> scratch_window_start_frame[2]{0, 0};
+    std::atomic<int> scratch_active_window{0};   // which of [0]/[1] the audio callback reads
+    std::atomic<bool> scratch_refill_in_progress{false};
+
+    // scratch_origin_frame: absolute track frame current_frame was at when
+    // scratch mode was entered (set_scratch_mode(1)). scratch_cumulative_delta:
+    // unwrapped sum of every rate sample actually applied since then (every
+    // audio frame, continuously, not just once per UI mouse-move event) —
+    // together these are the single source of truth for "what's actually
+    // audible right now" (get_scratch_position_ms), instead of the UI
+    // computing its own parallel, purely event-driven position estimate.
+    std::atomic<long long> scratch_origin_frame{0};
+    std::atomic<double> scratch_cumulative_delta{0.0};
+
+    // PD controller state (mirrors Mixxx's VelocityController/RateIIFilter,
+    // simplified — see data_callback's scratch branch for the actual math).
+    std::atomic<double> scratch_target_delta{0.0};      // UI-reported target (frames, relative to origin)
+    std::atomic<long long> scratch_target_updated_at_ns{0};
+    double scratch_pd_last_error = 0.0;                 // audio-thread-local, no atomic needed
+    double scratch_pd_filtered_rate = 0.0;
     std::atomic<bool> vis_active{true};
 
     float vis_left_buf[65536] = {}; 
@@ -201,6 +267,38 @@ bool load_file_to_vector(const char* path, std::vector<char>& buffer) {
 ma_result open_decoder_memory(const std::vector<char>& buffer, ma_decoder* pDecoder) {
     ma_decoder_config config = ma_decoder_config_init(ma_format_f32, CHANNELS, SAMPLE_RATE);
     return ma_decoder_init_memory(buffer.data(), buffer.size(), &config, pDecoder);
+}
+
+// Decodes AudioEngine::kScratchWindowFrames frames starting at startFrame
+// (clamped >= 0) from engine.scratch_decoder into `window`. Used both for
+// the initial window (set_scratch_mode, synchronous — a one-time UI-
+// triggered transition, not a per-frame operation, so blocking briefly is
+// fine) and for background recentering (producer_loop, while scratching —
+// see kScratchRefillMarginFrames).
+bool fill_scratch_window(std::vector<float>& window, long long startFrame) {
+    if (startFrame < 0) startFrame = 0;
+    // Clamp to what the scratch decoder can actually decode (see
+    // scratch_decoder_total_frames's comment) — for a network-streamed
+    // track this can be meaningfully shorter than the real full track,
+    // since it's a snapshot frozen at whatever had downloaded when
+    // scratching began. Seeking past it risks the decoder hanging while
+    // scanning a truncated buffer for a sync point that doesn't exist
+    // (this is what caused the app to freeze after scratching forward).
+    long long decoderLen = engine.scratch_decoder_total_frames.load();
+    if (decoderLen > 0 && startFrame >= decoderLen) {
+        startFrame = decoderLen > 0 ? decoderLen - 1 : 0;
+        if (startFrame < 0) startFrame = 0;
+    }
+    if (ma_decoder_seek_to_pcm_frame(&engine.scratch_decoder, (ma_uint64)startFrame) != MA_SUCCESS) {
+        return false;
+    }
+    window.resize(AudioEngine::kScratchWindowFrames * CHANNELS);
+    ma_uint64 framesRead = 0;
+    ma_decoder_read_pcm_frames(&engine.scratch_decoder, window.data(), AudioEngine::kScratchWindowFrames, &framesRead);
+    if (framesRead < AudioEngine::kScratchWindowFrames) {
+        std::fill(window.begin() + framesRead * CHANNELS, window.end(), 0.0f);
+    }
+    return true;
 }
 
 static const int VIS_FFT_N = 8192;
@@ -247,27 +345,92 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
     
     float* out = (float*)pOutput;
     
-    // THE SCRATCH RESAMPLER
+    // THE SCRATCH RESAMPLER — position controller driving reads from a
+    // sliding window (see AudioEngine's scratch fields for the full design
+    // rationale: mirrors Mixxx's PositionScratchController + CachingReader,
+    // replacing the old fixed-size forward-only ring buffer + raw-velocity
+    // approach that could wrap to stale/wrong content and was vulnerable to
+    // any single noisy instantaneous-velocity sample).
+    //
+    // Exponential convergence with a fixed TIME CONSTANT, not a literal
+    // per-callback PD gain — Mixxx's own controller has to explicitly
+    // renormalize its gains by m_callsPerDt (derived from buffer size) for
+    // exactly this reason: a fixed per-callback correction overcorrects
+    // when callbacks are infrequent/buffers are large (our engine runs a
+    // "conservative" performance profile with larger buffers than typical),
+    // causing the position to overshoot the target and oscillate back and
+    // forth every callback instead of smoothly settling. Expressing the
+    // correction as "close this fraction of the gap per second of real
+    // time" is buffer-size-independent by construction — frameCount only
+    // changes how much *time* a callback represents, not the rate itself.
     if (scratching) {
-        float v = engine.scratch_velocity.load();
-        float cursor = engine.scratch_cursor.load();
-        size_t max_frames = engine.buffer.size / CHANNELS;
-        
-        for (ma_uint32 i = 0; i < frameCount; i++) {
-            cursor += v;
-            
-            // Loop the 10-second RAM buffer mathematically
-            while (cursor < 0) cursor += max_frames;
-            while (cursor >= max_frames) cursor -= max_frames;
-            
-            int idx = (int)cursor;
-            out[i*2]   = engine.buffer.data[idx*2];
-            out[i*2+1] = engine.buffer.data[idx*2+1];
+        double targetDelta = engine.scratch_target_delta.load(std::memory_order_relaxed);
+        double currentDelta = engine.scratch_cumulative_delta.load(std::memory_order_relaxed);
+        long long targetUpdatedAtNs = engine.scratch_target_updated_at_ns.load(std::memory_order_relaxed);
+
+        using namespace std::chrono;
+        long long nowNs = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+        double sinceUpdateMs = (double)(nowNs - targetUpdatedAtNs) / 1.0e6;
+        double dtSec = (double)frameCount / SAMPLE_RATE;
+
+        double error = targetDelta - currentDelta;
+        double rate;
+        // If the UI hasn't sent a new target in a while, assume the mouse
+        // has stopped and decay toward 0 instead of continuing to chase a
+        // now-meaningless stale target — mirrors Mixxx's "assume missing
+        // mouse update" / "mouse has stopped" handling (kMoveDelayMax).
+        constexpr double kStaleMs = 60.0;
+        if (sinceUpdateMs > kStaleMs) {
+            double decayAlpha = 1.0 - std::exp(-dtSec / 0.05);  // ~50ms decay time constant
+            rate = engine.scratch_pd_filtered_rate * (1.0 - decayAlpha);
+            if (std::abs(rate) < 0.01) rate = 0.0;
+        } else {
+            constexpr double kConvergeTauSec = 0.08;  // close ~63% of the gap every 80ms
+            double rawRate = error / (kConvergeTauSec * SAMPLE_RATE);
+            rawRate = std::max(-8.0, std::min(8.0, rawRate));
+            // Low-pass filter, time-constant based (same buffer-size-
+            // independence reasoning as above) — except on strong
+            // decelerations, skip filtering those to avoid overshoot.
+            constexpr double kFilterTauSec = 0.03;
+            double filterAlpha = 1.0 - std::exp(-dtSec / kFilterTauSec);
+            if (std::abs(rawRate) - std::abs(engine.scratch_pd_filtered_rate) > -0.1) {
+                rate = engine.scratch_pd_filtered_rate +
+                        (rawRate - engine.scratch_pd_filtered_rate) * filterAlpha;
+            } else {
+                rate = rawRate;
+            }
         }
-        engine.scratch_cursor.store(cursor);
-        
+        engine.scratch_pd_last_error = error;
+        engine.scratch_pd_filtered_rate = rate;
+
+        int activeIdx = engine.scratch_active_window.load(std::memory_order_acquire);
+        std::vector<float>& window = engine.scratch_window[activeIdx];
+        long long windowStartFrame = engine.scratch_window_start_frame[activeIdx].load(std::memory_order_acquire);
+        long long originFrame = engine.scratch_origin_frame.load(std::memory_order_relaxed);
+        long long windowFrames = (long long)AudioEngine::kScratchWindowFrames;
+
+        if (window.empty()) {
+            memset(out, 0, frameCount * CHANNELS * sizeof(float));
+        } else {
+            for (ma_uint32 i = 0; i < frameCount; i++) {
+                currentDelta += rate;
+                long long absFrame = originFrame + (long long)std::llround(currentDelta);
+                long long windowIdx = absFrame - windowStartFrame;
+                // Safety clamp — should rarely trigger thanks to
+                // producer_loop's background recentering, but guards
+                // against an edge case (e.g. a refill lagging behind a very
+                // fast scratch) indexing out of bounds.
+                if (windowIdx < 0) windowIdx = 0;
+                if (windowIdx >= windowFrames) windowIdx = windowFrames - 1;
+
+                out[i * 2]     = window[windowIdx * 2];
+                out[i * 2 + 1] = window[windowIdx * 2 + 1];
+            }
+        }
+        engine.scratch_cumulative_delta.store(currentDelta, std::memory_order_relaxed);
+
         // Soft mute if the turntable is fully stopped to prevent static hum
-        if (std::abs(v) < 0.01f) {
+        if (std::abs(rate) < 0.01) {
             memset(out, 0, frameCount * CHANNELS * sizeof(float));
         }
     } else {
@@ -382,6 +545,22 @@ void producer_loop() {
                 // the instant playback resumes after a seek.
                 engine.current_frame = target + engine.output_latency_frames.load();
                 engine.frames_until_switch = -1;
+                // Re-anchor current_frame_timestamp_ns to right now — without
+                // this, get_position_anchor()'s timestamp stays whatever it
+                // was from the last *normal* playback callback (which can be
+                // many seconds stale after a scratch-mode drag, since
+                // data_callback's "Track timing logic" skips updating this
+                // timestamp entirely while engine.is_scratching is true — see
+                // below). A caller projecting position forward by elapsed-
+                // since-that-stale-timestamp would overshoot by however long
+                // the drag lasted, landing playback far past the drop point
+                // the instant scratch mode released back to normal playback.
+                {
+                    using namespace std::chrono;
+                    engine.current_frame_timestamp_ns.store(
+                            duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                            std::memory_order_relaxed);
+                }
                 
                 ma_uint64 frames_read = 0;
                 for(int k=0; k<4; k++) {
@@ -425,10 +604,19 @@ void producer_loop() {
 
                     if (engine.next_decoder_loaded) {
                         ma_decoder_uninit(&engine.decoder);
+                        // scratch_decoder reads directly from engine.file_data's
+                        // memory (ma_decoder_init_memory) — must be invalidated
+                        // before that memory gets replaced below, or it's left
+                        // pointing at freed/moved-from memory.
+                        if (engine.scratch_decoder_loaded) {
+                            engine.is_scratching.store(false);
+                            ma_decoder_uninit(&engine.scratch_decoder);
+                            engine.scratch_decoder_loaded = false;
+                        }
                         engine.file_data = std::move(engine.next_file_data);
                         engine.decoder = engine.next_decoder;
                         engine.next_decoder_loaded = false;
-                        
+
                         ma_uint64 len;
                         ma_decoder_get_length_in_pcm_frames(&engine.decoder, &len);
                         engine.pending_total_frames = len;
@@ -442,6 +630,52 @@ void producer_loop() {
             } else {
                 lock.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        } else if (engine.is_scratching.load() && engine.scratch_decoder_loaded.load()
+                && !engine.scratch_refill_in_progress.load()) {
+            // Keep the sliding scratch window centered on the cursor in the
+            // background, so the real-time audio callback never blocks on a
+            // decoder seek — recenters once the cursor comes within
+            // kScratchRefillMarginFrames of either edge of the active window.
+            int activeIdx = engine.scratch_active_window.load(std::memory_order_acquire);
+            long long windowStart = engine.scratch_window_start_frame[activeIdx].load(std::memory_order_acquire);
+            long long cursorFrame = engine.scratch_origin_frame.load() +
+                    (long long)std::llround(engine.scratch_cumulative_delta.load(std::memory_order_relaxed));
+            long long offsetInWindow = cursorFrame - windowStart;
+            long long windowFrames = (long long)AudioEngine::kScratchWindowFrames;
+
+            bool nearStart = offsetInWindow < AudioEngine::kScratchRefillMarginFrames;
+            bool nearEnd = offsetInWindow > windowFrames - AudioEngine::kScratchRefillMarginFrames;
+            if (nearStart || nearEnd) {
+                int inactiveIdx = 1 - activeIdx;
+                long long newStart = cursorFrame - windowFrames / 2;
+                if (newStart < 0) newStart = 0;
+                long long decoderLen = engine.scratch_decoder_total_frames.load();
+                if (decoderLen > 0 && newStart > decoderLen - 1) newStart = decoderLen - 1;
+                if (newStart < 0) newStart = 0;
+
+                // Dragging past either end pins newStart at the same clamped
+                // boundary every iteration (cursorFrame keeps going further
+                // negative/past-length, but the window can't follow past 0
+                // or the decoder's actual length) — without this check,
+                // that re-triggers an identical refill every single
+                // producer_loop iteration in a tight spin, repeatedly
+                // grabbing decode_mutex and starving anything else that
+                // needs it (e.g. seek() on release, called synchronously
+                // from the GUI thread — looks exactly like an app freeze).
+                if (newStart != windowStart) {
+                    engine.scratch_refill_in_progress.store(true);
+                    std::lock_guard<std::mutex> lock(engine.decode_mutex);
+                    if (engine.is_scratching.load() &&
+                            fill_scratch_window(engine.scratch_window[inactiveIdx], newStart)) {
+                        engine.scratch_window_start_frame[inactiveIdx].store(newStart, std::memory_order_release);
+                        engine.scratch_active_window.store(inactiveIdx, std::memory_order_release);
+                    }
+                    engine.scratch_refill_in_progress.store(false);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -735,15 +969,21 @@ extern "C" {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Shared by get_file_bpm/get_file_beatgrid — decodes once, runs the QM
-    // tempo tracker, and returns both the snapped BPM and (via
-    // anchorFrameOut) the coherent region's first-beat frame position.
-    // Returns 0.0f (anchor left untouched) on failure/no-beats-detected.
-    static float analyze_bpm_and_anchor(const char* path, double* anchorFrameOut) {
+    // Shared by get_file_bpm/get_file_beat_grid — decodes once and runs the
+    // QM tempo tracker, returning the actual per-beat onset positions (in
+    // audio frames). Callers either collapse these into one constant-tempo
+    // bpm+region (make_const_bpm_ex, for the BPM display text) or use them
+    // directly as beat-grid line positions — the latter is what actually
+    // lands on each real transient, unlike extrapolating evenly-spaced
+    // lines from a single anchor+bpm, which silently assumes the track is
+    // perfectly constant-tempo from that one point and is vulnerable to the
+    // tracker's own octave (half/double-tempo) errors compounding into a
+    // visibly wrong grid.
+    static bool analyze_beat_frames(const char* path, std::vector<double>* outBeatFrames) {
         // Decode to mono — the QM detection function operates on mono frames
         ma_decoder decoder;
         ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
-        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return 0.0f;
+        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return false;
 
         // Queen Mary tempo tracker parameters (identical to Mixxx defaults)
         const float kStepSecs      = 0.01161f;  // ~512 samples @ 44.1 kHz
@@ -804,7 +1044,7 @@ extern "C" {
                                         (size_t)(windowSize / 2 - 1));
         feed(nullptr, silenceNeeded);
 
-        if ((int)detResults.size() < 6) return 0.0f;
+        if ((int)detResults.size() < 6) return false;
 
         // Skip first 2 frames (noise artifact) — same as Mixxx
         std::vector<double> df_vals(detResults.begin() + 2, detResults.end());
@@ -817,35 +1057,45 @@ extern "C" {
         // Refined beat positions in df-frame units
         std::vector<double> rawBeats;
         tt.calculateBeats(df_vals, beatPeriod, rawBeats);
-        if (rawBeats.size() < 2) return 0.0f;
+        if (rawBeats.size() < 2) return false;
 
         // Convert to audio frames (matches Mixxx's FramePos conversion)
-        std::vector<double> beatFrames;
-        beatFrames.reserve(rawBeats.size());
+        outBeatFrames->clear();
+        outBeatFrames->reserve(rawBeats.size());
         for (double b : rawBeats)
-            beatFrames.push_back(b * stepSizeFrames + stepSizeFrames / 2);
-
-        // Mixxx's makeConstBpm pipeline: find longest coherent region → snap
-        auto regions = retrieve_const_regions(beatFrames);
-        return make_const_bpm_ex(regions, anchorFrameOut);
+            outBeatFrames->push_back(b * stepSizeFrames + stepSizeFrames / 2);
+        return true;
     }
 
     EXPORT float get_file_bpm(const char* path) {
-        return analyze_bpm_and_anchor(path, nullptr);
+        std::vector<double> beatFrames;
+        if (!analyze_beat_frames(path, &beatFrames)) return 0.0f;
+        auto regions = retrieve_const_regions(beatFrames);
+        return make_const_bpm_ex(regions, nullptr);
     }
 
-    // bpmOut/anchorMsOut are written on success. Returns 1 on success, 0 on
-    // failure (a boolean instead of get_file_bpm's "0.0f means failure", so
-    // a genuine 0.0f anchor at frame 0 isn't ambiguous with failure).
-    // anchorMsOut is the first-beat position in ms — beat-grid lines are
-    // anchorMs + n * (60000/bpm) for every n covering the track.
-    EXPORT int get_file_beatgrid(const char* path, float* bpmOut, float* anchorMsOut) {
-        double anchorFrame = 0.0;
-        float bpm = analyze_bpm_and_anchor(path, &anchorFrame);
-        if (bpm <= 0.0f) return 0;
-        if (bpmOut) *bpmOut = bpm;
-        if (anchorMsOut) *anchorMsOut = (float)(anchorFrame * 1000.0 / SAMPLE_RATE);
-        return 1;
+    // Returns the actual number of detected beats written to outBeatMsBuffer
+    // (capped at maxBeats), or -1 on failure/no-beats-detected. bpmOut
+    // receives the same snapped constant-tempo BPM get_file_bpm would (for
+    // display text) — computed from the same single decode, not a separate
+    // one. outBeatMsBuffer[i] is the real onset position (ms) of beat i;
+    // unlike the old anchor+interval extrapolation, drawing a line at each
+    // of these always lands on an actual detected transient.
+    EXPORT int get_file_beat_grid(const char* path, float* bpmOut, float* outBeatMsBuffer, int maxBeats) {
+        std::vector<double> beatFrames;
+        if (!analyze_beat_frames(path, &beatFrames) || beatFrames.empty()) return -1;
+
+        if (bpmOut) {
+            auto regions = retrieve_const_regions(beatFrames);
+            *bpmOut = make_const_bpm_ex(regions, nullptr);
+        }
+
+        int count = 0;
+        for (double f : beatFrames) {
+            if (count >= maxBeats) break;
+            outBeatMsBuffer[count++] = (float)(f * 1000.0 / SAMPLE_RATE);
+        }
+        return count;
     }
 
     // Per-band (low/mid/high) waveform envelope for scratch-mode's
@@ -1018,6 +1268,14 @@ extern "C" {
         engine.is_seeking = false;
         if (engine.decoder_loaded) { ma_decoder_uninit(&engine.decoder); engine.decoder_loaded = false; }
         if (engine.next_decoder_loaded) { ma_decoder_uninit(&engine.next_decoder); engine.next_decoder_loaded = false; }
+        // scratch_decoder reads directly from engine.file_data's memory
+        // (ma_decoder_init_memory) — must be invalidated before that memory
+        // is cleared/replaced below.
+        if (engine.scratch_decoder_loaded) {
+            engine.is_scratching.store(false);
+            ma_decoder_uninit(&engine.scratch_decoder);
+            engine.scratch_decoder_loaded = false;
+        }
         engine.track_switched_flag = false;
         engine.frames_until_switch = -1;
         engine.file_data.clear();
@@ -1101,6 +1359,24 @@ extern "C" {
     }
 
     EXPORT long long get_duration() { return (engine.total_frames * 1000) / SAMPLE_RATE; }
+
+    // Cheap duration probe (header read only, no decode loop) — lets
+    // callers size a waveform-analysis buffer by track length *before*
+    // calling generate_waveform/generate_waveform_bands, instead of using a
+    // fixed point count for every track regardless of duration (which is
+    // what made our waveform resolution far coarser than Mixxx's — see
+    // mainWaveformSampleRate=441 in analyzerwaveform.cpp upstream: it scales
+    // points-per-second of audio, not points-per-track).
+    EXPORT long long get_file_duration_ms(const char* path) {
+        ma_decoder decoder;
+        ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
+        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return 0;
+        ma_uint64 total_frames = 0;
+        ma_result r = ma_decoder_get_length_in_pcm_frames(&decoder, &total_frames);
+        ma_decoder_uninit(&decoder);
+        if (r != MA_SUCCESS) return 0;
+        return (long long)((total_frames * 1000) / SAMPLE_RATE);
+    }
     
     EXPORT void get_vis_data(float* output) {
         std::lock_guard<std::mutex> lock(engine.vis_snapshot_mutex);
@@ -1118,16 +1394,104 @@ extern "C" {
 
     EXPORT void set_scratch_mode(int mode) {
         bool active = (mode == 1);
-        engine.is_scratching.store(active);
-        if (active) {
-            size_t read_floats = engine.buffer.read_pos.load();
-            engine.scratch_cursor.store((float)(read_floats / CHANNELS));
-            engine.scratch_velocity.store(0.0f);
+        if (!active) {
+            engine.is_scratching.store(false);
+            return;
         }
+
+        std::lock_guard<std::mutex> lock(engine.decode_mutex);
+        // Dedicated decoder from the SAME in-memory file bytes the normal
+        // playback decoder uses — independent state, never touches
+        // engine.decoder (gapless preload/transition logic is untouched).
+        if (engine.scratch_decoder_loaded) {
+            ma_decoder_uninit(&engine.scratch_decoder);
+            engine.scratch_decoder_loaded = false;
+        }
+        // engine.file_data only holds the full track bytes for local-file
+        // loads (load_track) and gapless-preloaded tracks. Network-streamed
+        // playback (play_network_stream/stream_append) instead reads through
+        // stream_ctx's own growing byte buffer via MyReadCallback/
+        // MySeekCallback — file_data stays empty there, which silently
+        // failed this whole function (is_scratching never became true, so
+        // scratching had no audible effect at all and playback just
+        // continued normally). Fall back to a snapshot of whatever's been
+        // downloaded so far in that case — scratching beyond the
+        // downloaded portion just won't have audio yet, the same
+        // limitation streaming already has for seeking ahead of the buffer.
+        if (engine.file_data.empty()) {
+            std::lock_guard<std::mutex> streamLock(stream_ctx.mutex);
+            if (stream_ctx.buffer.empty()) return;
+            engine.file_data = stream_ctx.buffer;
+        }
+        if (open_decoder_memory(engine.file_data, &engine.scratch_decoder) != MA_SUCCESS) {
+            return;  // is_scratching stays false — safe no-op if no track loaded
+        }
+        engine.scratch_decoder_loaded = true;
+        ma_uint64 scratchLen = 0;
+        ma_decoder_get_length_in_pcm_frames(&engine.scratch_decoder, &scratchLen);
+        engine.scratch_decoder_total_frames.store((long long)scratchLen);
+
+        // Absolute-position tracking — current_frame, latency-compensated
+        // the same way get_position() is, is the best available estimate of
+        // "what's actually audible right now" at the instant scratching begins.
+        long long origin = engine.current_frame - engine.output_latency_frames.load();
+        if (origin < 0) origin = 0;
+        if (origin > (long long)scratchLen) origin = (long long)scratchLen;
+
+        long long halfWindow = (long long)(AudioEngine::kScratchWindowFrames / 2);
+        long long windowStart = origin - halfWindow;
+        if (windowStart < 0) windowStart = 0;
+
+        fill_scratch_window(engine.scratch_window[0], windowStart);
+        engine.scratch_window_start_frame[0].store(windowStart, std::memory_order_release);
+        engine.scratch_active_window.store(0, std::memory_order_release);
+        engine.scratch_refill_in_progress.store(false);
+
+        engine.scratch_origin_frame.store(origin);
+        engine.scratch_cumulative_delta.store(0.0, std::memory_order_relaxed);
+        engine.scratch_target_delta.store(0.0, std::memory_order_relaxed);
+        using namespace std::chrono;
+        engine.scratch_target_updated_at_ns.store(
+                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
+        engine.scratch_pd_last_error = 0.0;
+        engine.scratch_pd_filtered_rate = 0.0;
+
+        // Set last, once the decoder/window/origin above are all actually
+        // ready — the audio callback checks this flag every invocation and
+        // must never see it true before its dependencies are prepared.
+        engine.is_scratching.store(true);
     }
-    
-    EXPORT void set_scratch_velocity(float vel) {
-        engine.scratch_velocity.store(vel);
+
+    // The absolute track position (ms) actually being played during a
+    // scratch — scratch_origin_frame + the unwrapped sum of every rate
+    // sample applied since scratch mode began (see scratch_cumulative_delta's
+    // comment above). Returns -1 if not currently scratching (so callers
+    // don't mistake a meaningless value for a real position).
+    EXPORT double get_scratch_position_ms() {
+        if (!engine.is_scratching.load()) return -1.0;
+        double frame = (double)engine.scratch_origin_frame.load() +
+                engine.scratch_cumulative_delta.load(std::memory_order_relaxed);
+        if (frame < 0.0) frame = 0.0;
+        double maxFrame = (double)engine.total_frames.load();
+        if (maxFrame > 0.0 && frame > maxFrame) frame = maxFrame;
+        return frame * 1000.0 / SAMPLE_RATE;
+    }
+
+    // Reports the mouse-implied cumulative displacement since scratch start,
+    // in milliseconds — mirrors Mixxx's "scratch_position" control object.
+    // data_callback runs a PD controller comparing this target against the
+    // actually-achieved cumulative_delta to compute a smoothly-converging
+    // playback rate every audio buffer, instead of trusting one raw
+    // instantaneous velocity sample (which a single closely-spaced/noisy
+    // mouse event could spike arbitrarily — the actual root cause of the
+    // "jumps somewhere I don't know" bug the old approach had).
+    EXPORT void set_scratch_target_delta_ms(double deltaMs) {
+        using namespace std::chrono;
+        engine.scratch_target_delta.store(deltaMs * SAMPLE_RATE / 1000.0, std::memory_order_relaxed);
+        engine.scratch_target_updated_at_ns.store(
+                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
     }
 
     EXPORT void set_vis_active(int active) {
@@ -1139,8 +1503,9 @@ extern "C" {
         if (engine.producer_thread.joinable()) engine.producer_thread.join(); 
         ma_device_uninit(&engine.device); 
         std::lock_guard<std::mutex> lock(engine.decode_mutex);
-        if (engine.decoder_loaded) ma_decoder_uninit(&engine.decoder); 
+        if (engine.decoder_loaded) ma_decoder_uninit(&engine.decoder);
         if (engine.next_decoder_loaded) ma_decoder_uninit(&engine.next_decoder);
+        if (engine.scratch_decoder_loaded) ma_decoder_uninit(&engine.scratch_decoder);
         engine.file_data.clear();
         engine.next_file_data.clear();
     }
