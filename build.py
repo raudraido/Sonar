@@ -93,6 +93,46 @@ def bundle_runtime_dlls(dll_name, bin_dir, libs_dir):
                 queue.append(dest)
 
 
+def build_scratch_waveform_plugin():
+    """Builds the native QML scratch-waveform plugin (player/native/scratch_waveform/)
+    via CMake — a separate Qt6 Quick module, not part of audio_core's plain-
+    ctypes build above. Required for scratch mode's waveform view; the rest
+    of the app runs fine without it. Non-fatal if cmake or Qt6 dev tools
+    aren't installed — prints what's missing and continues."""
+    print()
+    print("Attempting to build the scratch-waveform QML plugin...")
+
+    plugin_dir = os.path.join("player", "native", "scratch_waveform")
+    if not os.path.exists(os.path.join(plugin_dir, "CMakeLists.txt")):
+        print("ERROR: scratch_waveform CMakeLists.txt not found — skipping.")
+        return
+
+    if not shutil.which("cmake"):
+        print("SKIPPED: cmake not found — scratch mode's waveform view won't be available.")
+        print("  Linux:   sudo apt install cmake qt6-base-dev qt6-declarative-dev")
+        print("  macOS:   brew install cmake qt6")
+        print("  Windows: install CMake (https://cmake.org/download/) and Qt6")
+        print("           (https://www.qt.io/download-qt-installer) with the Quick/QML modules,")
+        print("           then re-run this script from a shell where both are on PATH.")
+        return
+
+    build_dir = os.path.join(plugin_dir, "build")
+    configure_cmd = ["cmake", "-S", plugin_dir, "-B", build_dir]
+    sys.stdout.flush()
+    result = subprocess.run(configure_cmd)
+    if result.returncode != 0:
+        print("SKIPPED: cmake configure failed (likely Qt6 not found) — scratch mode's")
+        print("  waveform view won't be available. See the cmake output above for details.")
+        return
+
+    sys.stdout.flush()
+    result = subprocess.run(["cmake", "--build", build_dir])
+    if result.returncode == 0:
+        print("SUCCESS: Built the scratch-waveform QML plugin.")
+    else:
+        print("FAILED: scratch-waveform plugin compile error. See output above.")
+
+
 def build():
     print("Attempting to compile audio_core.cpp...")
 
@@ -151,6 +191,7 @@ def build():
     cmd = f"g++ -shared -o {output_filename} {os.path.join(src_dir, 'audio_core.cpp')} {qm_sources} {flags}"
     print(f"Executing: {cmd}")
 
+    sys.stdout.flush()
     result = subprocess.run(cmd, shell=True)
     if result.returncode == 0:
         print(f"SUCCESS: Compiled {output_filename}")
@@ -158,6 +199,8 @@ def build():
             bundle_runtime_dlls(output_filename, curl_bin, os.path.join(src_dir, "libs"))
     else:
         print("FAILED: Compile error. Check the output above for details.")
+
+    build_scratch_waveform_plugin()
 
 
 if __name__ == "__main__":

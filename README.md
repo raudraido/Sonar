@@ -55,16 +55,20 @@ git clone https://github.com/raudraido/Sonar.git
 cd Sonar
 ```
 
-### 2. Install a C++ compiler with libcurl
+### 2. Install build tools
 
-The audio engine is a compiled C++ library. You need g++ and libcurl before running `build.py`.
+There are two native components: the audio engine (plain g++/libcurl) and the
+scratch-mode waveform view, a Qt6 Quick module built with CMake. The second
+one is optional — the app runs fine without it, you just won't get the
+scratch-mode waveform — so `build.py` skips it with a warning if CMake/Qt6
+aren't found instead of failing the whole build.
 
 **Windows — install MSYS2 (recommended)**
 
 1. Download and install [MSYS2](https://www.msys2.org/)
 2. Open the **MSYS2 MinGW64** terminal and run:
    ```bash
-   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-curl
+   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-curl mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6-declarative
    ```
 3. Add `C:\msys64\mingw64\bin` to your Windows PATH  
    *(Search "Edit the system environment variables" → Environment Variables → Path → New)*
@@ -72,14 +76,21 @@ The audio engine is a compiled C++ library. You need g++ and libcurl before runn
 **Linux (Debian/Ubuntu)**
 
 ```bash
-sudo apt install g++ libcurl4-openssl-dev
+sudo apt install g++ libcurl4-openssl-dev cmake qt6-base-dev qt6-declarative-dev
 ```
 
 **Linux (Fedora/RHEL)**
 
 ```bash
-sudo dnf install gcc-c++ libcurl-devel
+sudo dnf install gcc-c++ libcurl-devel cmake qt6-qtbase-devel qt6-qtdeclarative-devel
 ```
+
+**macOS**
+
+```bash
+brew install cmake qt6
+```
+(g++/libcurl ship with Xcode command line tools: `xcode-select --install`)
 
 ### 3. Install Python dependencies
 
@@ -92,13 +103,20 @@ pip install -r requirements.txt
 pip install evdev
 ```
 
-### 4. Build the C++ audio engine
+### 4. Build the native components
 
 ```bash
 python build.py
 ```
 
-This compiles `audio_core.cpp` and outputs `audio_core.dll` (Windows) or `audio_core.so` (Linux) in the project root. On Windows it also copies the required runtime DLLs into `libs/` automatically.
+This compiles `audio_core.cpp` and outputs `audio_core.dll` (Windows) or
+`audio_core.so` (Linux) in `player/components/`. On Windows it also copies
+the required runtime DLLs into `libs/` automatically.
+
+It then builds the scratch-mode waveform QML plugin via CMake (into
+`player/native/scratch_waveform/build/`). If CMake or Qt6 aren't installed,
+this step is skipped with a warning — the rest of the app still works, just
+without the scratch-mode waveform view.
 
 ### 5. Run
 
