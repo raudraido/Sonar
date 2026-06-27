@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <complex>
 #include <cmath>
+#include <chrono>
 #include <curl/curl.h>
 #include "qm-dsp/dsp/onsets/DetectionFunction.h"
 #include "qm-dsp/dsp/tempotracking/TempoTrackV2.h"
@@ -152,6 +153,15 @@ struct AudioEngine {
     std::atomic<long long> seek_target{-1}; 
     std::atomic<bool> is_seeking{false}; 
     std::atomic<long long> current_frame{0};
+    // Wall-clock instant (steady_clock, nanoseconds) at which current_frame's
+    // value became valid — i.e. taken at the top of the audio callback that
+    // last wrote it. Lets callers project the position forward to "right
+    // now" instead of being stuck at whatever current_frame last jumped to
+    // (it only advances once per audio buffer, which can be a large jump —
+    // see ma_performance_profile_conservative in audio_init below). Mirrors
+    // Mixxx's VisualPlayPosition::m_referenceTime (waveform/visualplayposition.h
+    // upstream): a real-time-thread timestamp anchor, not a polled one.
+    std::atomic<long long> current_frame_timestamp_ns{0};
     std::atomic<long long> output_latency_frames{0};
     std::atomic<long long> total_frames{0};
     std::atomic<long long> frames_until_switch{-1}; 
@@ -330,8 +340,8 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
             if (frames_left <= frameCount) {
                 engine.total_frames = engine.pending_total_frames.load();
                 long long new_frames = frameCount - frames_left;
-                engine.current_frame = new_frames; 
-                engine.frames_until_switch = -1; 
+                engine.current_frame = new_frames;
+                engine.frames_until_switch = -1;
                 engine.track_switched_flag = true;
             } else {
                 engine.frames_until_switch -= frameCount;
@@ -340,6 +350,15 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         } else {
             engine.current_frame += frameCount;
         }
+        // Stamp "now" as the instant current_frame's new value became valid
+        // — callers (get_position_anchor) project forward from this point
+        // using wall-clock elapsed time instead of waiting for the next
+        // callback, which is the only way to get sub-buffer-period position
+        // resolution out of a counter that only moves once per callback.
+        using namespace std::chrono;
+        engine.current_frame_timestamp_ns.store(
+                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
     }
 }
 
@@ -637,7 +656,11 @@ extern "C" {
 
     // BeatUtils::makeConstBpm — picks BPM from the longest coherent region,
     // tries to extend it from both ends, then snaps to a clean value.
-    static float make_const_bpm(const std::vector<ConstRegion>& regions) {
+    // anchorFrameOut, if non-null, receives the first-beat position (in
+    // audio frames) of the coherent region the BPM was actually derived
+    // from — the phase a beat-grid needs to draw lines that land on real
+    // beats instead of just being evenly spaced from track position 0.
+    static float make_const_bpm_ex(const std::vector<ConstRegion>& regions, double* anchorFrameOut) {
         const double kMaxPhaseErr   = 0.025 * SAMPLE_RATE;
         const int    kMinBeats      = 16;
 
@@ -704,11 +727,19 @@ extern "C" {
         float center = (float)(60.0 * SAMPLE_RATE / longBL);
         float mn     = (float)(60.0 * SAMPLE_RATE / blMax);
         float mx     = (float)(60.0 * SAMPLE_RATE / blMin);
+        if (anchorFrameOut) *anchorFrameOut = regions[startIdx].firstBeat;
         return bpm_round(mn, center, mx);
+    }
+    static float make_const_bpm(const std::vector<ConstRegion>& regions) {
+        return make_const_bpm_ex(regions, nullptr);
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    EXPORT float get_file_bpm(const char* path) {
+    // Shared by get_file_bpm/get_file_beatgrid — decodes once, runs the QM
+    // tempo tracker, and returns both the snapped BPM and (via
+    // anchorFrameOut) the coherent region's first-beat frame position.
+    // Returns 0.0f (anchor left untouched) on failure/no-beats-detected.
+    static float analyze_bpm_and_anchor(const char* path, double* anchorFrameOut) {
         // Decode to mono — the QM detection function operates on mono frames
         ma_decoder decoder;
         ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
@@ -796,7 +827,99 @@ extern "C" {
 
         // Mixxx's makeConstBpm pipeline: find longest coherent region → snap
         auto regions = retrieve_const_regions(beatFrames);
-        return make_const_bpm(regions);
+        return make_const_bpm_ex(regions, anchorFrameOut);
+    }
+
+    EXPORT float get_file_bpm(const char* path) {
+        return analyze_bpm_and_anchor(path, nullptr);
+    }
+
+    // bpmOut/anchorMsOut are written on success. Returns 1 on success, 0 on
+    // failure (a boolean instead of get_file_bpm's "0.0f means failure", so
+    // a genuine 0.0f anchor at frame 0 isn't ambiguous with failure).
+    // anchorMsOut is the first-beat position in ms — beat-grid lines are
+    // anchorMs + n * (60000/bpm) for every n covering the track.
+    EXPORT int get_file_beatgrid(const char* path, float* bpmOut, float* anchorMsOut) {
+        double anchorFrame = 0.0;
+        float bpm = analyze_bpm_and_anchor(path, &anchorFrame);
+        if (bpm <= 0.0f) return 0;
+        if (bpmOut) *bpmOut = bpm;
+        if (anchorMsOut) *anchorMsOut = (float)(anchorFrame * 1000.0 / SAMPLE_RATE);
+        return 1;
+    }
+
+    // Per-band (low/mid/high) waveform envelope for scratch-mode's
+    // Mixxx-style coloring — same chunked-decode/mean-abs-per-point shape as
+    // generate_waveform() above, but additionally splits each sample through
+    // a pair of persistent one-pole filters before accumulating, so kicks
+    // (low band) and transients (high band) can be colored independently
+    // instead of one flat amplitude value.
+    EXPORT int generate_waveform_bands(const char* path, float* low_buf, float* mid_buf, float* high_buf, int num_points) {
+        ma_decoder decoder;
+        ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
+        if (ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return 0;
+
+        ma_uint64 total_frames;
+        if (ma_decoder_get_length_in_pcm_frames(&decoder, &total_frames) != MA_SUCCESS || total_frames == 0) {
+            ma_decoder_uninit(&decoder);
+            return 0;
+        }
+
+        ma_uint64 frames_per_point = total_frames / num_points;
+        if (frames_per_point == 0) frames_per_point = 1;
+
+        auto lpAlpha = [](float cutoffHz) {
+            float rc = 1.0f / (2.0f * (float)M_PI * cutoffHz);
+            float dt = 1.0f / (float)SAMPLE_RATE;
+            return dt / (rc + dt);
+        };
+        const float alphaLow  = lpAlpha(300.0f);
+        const float alphaHigh = lpAlpha(4000.0f);
+
+        // Persist across the whole decode (not just one point's worth of
+        // frames) so the filters don't reset/click at every point boundary.
+        float lpLowState  = 0.0f;
+        float lpHighState = 0.0f;
+
+        std::vector<float> temp_buf(4096);
+
+        for (int i = 0; i < num_points; ++i) {
+            // RMS per band, not peak — see the matching comment in
+            // generate_waveform above; same reasoning, just split 3 ways.
+            double sumSqLow = 0.0, sumSqMid = 0.0, sumSqHigh = 0.0;
+            ma_uint64 total_samples_read = 0;
+            ma_uint64 frames_to_read = frames_per_point;
+
+            while (frames_to_read > 0) {
+                ma_uint64 read_chunk = std::min((ma_uint64)4096, frames_to_read);
+                ma_uint64 frames_read = 0;
+                ma_decoder_read_pcm_frames(&decoder, temp_buf.data(), read_chunk, &frames_read);
+                if (frames_read == 0) break;
+
+                for (ma_uint64 j = 0; j < frames_read; ++j) {
+                    float x = temp_buf[j];
+                    lpLowState += alphaLow * (x - lpLowState);
+                    lpHighState += alphaHigh * (x - lpHighState); // low-pass at the high cutoff...
+                    float lowSample  = lpLowState;
+                    float highSample = x - lpHighState;           // ...then high-pass = original minus its own LPF
+                    float midSample  = x - lowSample - highSample;
+
+                    sumSqLow  += static_cast<double>(lowSample)  * lowSample;
+                    sumSqMid  += static_cast<double>(midSample)  * midSample;
+                    sumSqHigh += static_cast<double>(highSample) * highSample;
+                }
+
+                total_samples_read += frames_read;
+                frames_to_read -= frames_read;
+            }
+
+            low_buf[i]  = (total_samples_read > 0) ? (float)std::sqrt(sumSqLow  / total_samples_read) : 0.0f;
+            mid_buf[i]  = (total_samples_read > 0) ? (float)std::sqrt(sumSqMid  / total_samples_read) : 0.0f;
+            high_buf[i] = (total_samples_read > 0) ? (float)std::sqrt(sumSqHigh / total_samples_read) : 0.0f;
+        }
+
+        ma_decoder_uninit(&decoder);
+        return (int)((total_frames * 1000) / SAMPLE_RATE);
     }
 
     EXPORT void stream_start() {
@@ -959,7 +1082,24 @@ extern "C" {
         if (pos < 0) pos = 0;
         return (pos * 1000) / SAMPLE_RATE;
     }
-    
+
+    // anchorMsOut: the latency-compensated position (same value get_position()
+    // would return) at the instant anchorTimestampNsOut was captured (the top
+    // of the audio callback that last advanced current_frame — see
+    // current_frame_timestamp_ns above). Callers project the position forward
+    // by adding wall-clock-elapsed-since-anchorTimestampNsOut, instead of
+    // waiting for current_frame to jump again — current_frame only moves once
+    // per audio buffer, which can be far coarser than the display's refresh
+    // rate. Mirrors Mixxx's VisualPlayPosition::getAtNextVSync (mixxxdj/mixxx
+    // src/waveform/visualplayposition.cpp), simplified: no playRate term
+    // since this engine has no time-stretch/pitch-bend playback rate.
+    EXPORT void get_position_anchor(long long* anchorMsOut, long long* anchorTimestampNsOut) {
+        long long pos = engine.current_frame - engine.output_latency_frames;
+        if (pos < 0) pos = 0;
+        *anchorMsOut = (pos * 1000) / SAMPLE_RATE;
+        *anchorTimestampNsOut = engine.current_frame_timestamp_ns.load(std::memory_order_relaxed);
+    }
+
     EXPORT long long get_duration() { return (engine.total_frames * 1000) / SAMPLE_RATE; }
     
     EXPORT void get_vis_data(float* output) {
@@ -1022,25 +1162,36 @@ extern "C" {
         std::vector<float> temp_buf(4096);
         
         for (int i = 0; i < num_points; ++i) {
-            double sum_abs = 0.0;
+            // RMS (sqrt of mean square), not plain mean-abs and not pure
+            // peak. Mean-abs crushed brief transients surrounded by quiet
+            // samples toward zero (quiet-but-peaky passages looked nearly
+            // invisible). Pure peak overcorrected: on a modern, heavily-
+            // limited master almost every ~20ms bucket's literal sample peak
+            // sits near 0dBFS, so the whole waveform pegs near max with no
+            // visible shape. RMS tracks a bucket's actual energy/loudness —
+            // a single hot sample can't dominate it the way it dominates a
+            // max() — while still responding far more to genuine loudness
+            // than a flat abs-average does. Standard professional waveform
+            // display technique (Audacity, etc.).
+            double sumSq = 0.0;
             ma_uint64 total_samples_read = 0;
             ma_uint64 frames_to_read = frames_per_point;
-            
+
             while (frames_to_read > 0) {
                 ma_uint64 read_chunk = std::min((ma_uint64)4096, frames_to_read);
                 ma_uint64 frames_read = 0;
                 ma_decoder_read_pcm_frames(&decoder, temp_buf.data(), read_chunk, &frames_read);
-                
-                if (frames_read == 0) break; 
-                
+
+                if (frames_read == 0) break;
+
                 for (ma_uint64 j = 0; j < frames_read; ++j) {
-                    sum_abs += std::abs(temp_buf[j]);
+                    sumSq += static_cast<double>(temp_buf[j]) * temp_buf[j];
                 }
-                
+
                 total_samples_read += frames_read;
                 frames_to_read -= frames_read;
             }
-            out_buffer[i] = (total_samples_read > 0) ? (float)(sum_abs / total_samples_read) : 0.0f; 
+            out_buffer[i] = (total_samples_read > 0) ? (float)std::sqrt(sumSq / total_samples_read) : 0.0f;
         }
         
         ma_decoder_uninit(&decoder);

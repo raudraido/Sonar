@@ -72,6 +72,15 @@ class FooterPanel(QWidget):
         # gets pulled on demand via the bridge's getSamples() for the
         # bars/minimal display modes, which render in QML/JS directly.
         self._samples = [0.0] * 5000
+        # Per-band envelopes for scratch-mode's Mixxx-style coloring (low/mid/
+        # high split, see generate_waveform_bands in audio_core.cpp) — empty
+        # until set_real_band_samples() arrives; the native renderer falls
+        # back to single-hue coloring when these don't match _samples' length.
+        self._samples_low = []
+        self._samples_mid = []
+        self._samples_high = []
+        self._beatgrid_bpm = 0.0
+        self._beatgrid_anchor_ms = 0.0
         self._has_real_data = False
         self._display_mode = 2
         try:
@@ -241,11 +250,22 @@ class FooterPanel(QWidget):
     def has_real_data(self):
         return self._has_real_data
 
+    @property
+    def has_real_band_data(self):
+        return bool(self._samples_low)
+
     def reset_waveform(self):
         self._has_real_data = False
         self._samples = [0.0] * 5000
+        self._samples_low = []
+        self._samples_mid = []
+        self._samples_high = []
+        self._beatgrid_bpm = 0.0
+        self._beatgrid_anchor_ms = 0.0
         self._bridge.hasRealDataChanged.emit(False)
         self._bridge.samplesChanged.emit()
+        self._bridge.bandSamplesChanged.emit()
+        self._bridge.beatGridChanged.emit(0.0, 0.0)
 
     def set_real_samples(self, new_samples):
         if not new_samples:
@@ -254,6 +274,19 @@ class FooterPanel(QWidget):
         self._samples = new_samples
         self._bridge.hasRealDataChanged.emit(True)
         self._bridge.samplesChanged.emit()
+
+    def set_real_band_samples(self, low, mid, high):
+        if not low or not mid or not high:
+            return
+        self._samples_low = low
+        self._samples_mid = mid
+        self._samples_high = high
+        self._bridge.bandSamplesChanged.emit()
+
+    def set_beatgrid(self, bpm, anchor_ms):
+        self._beatgrid_bpm = float(bpm or 0.0)
+        self._beatgrid_anchor_ms = float(anchor_ms or 0.0)
+        self._bridge.beatGridChanged.emit(self._beatgrid_bpm, self._beatgrid_anchor_ms)
 
     def _on_mode_toggled(self, mode):
         self._display_mode = int(mode)

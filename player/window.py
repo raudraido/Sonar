@@ -504,6 +504,7 @@ class SonarPlayer(
         QApplication.instance().installEventFilter(self._tooltip_filter)
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
+        self.beatgrid_cache = self.load_beatgrid_cache()
         self.setAcceptDrops(True)
         self.last_gapless_time = 0
       
@@ -1261,6 +1262,7 @@ class SonarPlayer(
         self.tracks_browser.switch_to_artist_tab.connect(lambda name: self.navigate_to_artist(name))
         self.tracks_browser.switch_to_album_tab.connect(lambda data: self.navigate_to_album(data))
         self.audio_engine.waveform_generated.connect(self._footer_panel.set_real_samples)
+        self.audio_engine.waveform_bands_generated.connect(self._footer_panel.set_real_band_samples)
 
         # Overlay drag handles — transparent, sit at panel borders
         self._left_handle = _ResizeHandle(

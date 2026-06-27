@@ -551,13 +551,22 @@ class VisualsMixin:
         track_id = str(track.get('id') or track.get('path', 'unknown'))
 
         # BPM analysis — runs here so rapid skipping never piles up workers.
-        if not (hasattr(self, 'bpm_cache') and track_id in self.bpm_cache):
+        # Also re-runs once per track if bpm_cache has it but beatgrid_cache
+        # doesn't — true for every track played before the beat-grid feature
+        # existed, since bpm_cache persists across restarts on its own
+        # (see load_bpm_cache) and was never going to retroactively gain an
+        # anchor otherwise.
+        if not (hasattr(self, 'bpm_cache') and track_id in self.bpm_cache
+                and hasattr(self, 'beatgrid_cache') and track_id in self.beatgrid_cache):
             if hasattr(self, 'bpm_worker') and self.bpm_worker.isRunning():
                 try: self.bpm_worker.bpm_ready.disconnect()
+                except Exception: pass
+                try: self.bpm_worker.beatgrid_ready.disconnect()
                 except Exception: pass
                 self._safe_discard_worker(self.bpm_worker)
             self.bpm_worker = BPMWorker(self.audio_engine, track)
             self.bpm_worker.bpm_ready.connect(self._on_bpm_calculated)
+            self.bpm_worker.beatgrid_ready.connect(self._on_beatgrid_calculated)
             self.bpm_worker.start()
 
         cid = track.get('cover_id') or track.get('coverArt') or track.get('albumId')
@@ -1174,6 +1183,8 @@ class VisualsMixin:
                 bpm = self.bpm_cache[track_id]
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
                 self._footer_panel.set_bpm(bpm)
+                if hasattr(self, 'beatgrid_cache') and track_id in self.beatgrid_cache:
+                    self._footer_panel.set_beatgrid(bpm, self.beatgrid_cache[track_id])
             else:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
                 self._footer_panel.set_bpm(None)

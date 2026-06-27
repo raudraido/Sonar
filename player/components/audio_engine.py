@@ -13,6 +13,7 @@ class AudioEngine(QObject):
     positionChanged     = pyqtSignal(int)   # continuous polled position — may jitter by a few ms
     positionJumped      = pyqtSignal(int)   # discontinuous jump (seek/track-start/stop/loop) — exact
     waveform_generated  = pyqtSignal(list)
+    waveform_bands_generated = pyqtSignal(list, list, list)  # low, mid, high envelopes
     durationChanged     = pyqtSignal(int)
     endOfMedia          = pyqtSignal()
     mediaSwitched       = pyqtSignal()
@@ -61,6 +62,9 @@ class AudioEngine(QObject):
         self.lib.seek.argtypes         = [ctypes.c_longlong]
         self.lib.seek.restype          = None
         self.lib.get_position.restype  = ctypes.c_longlong
+        self.lib.get_position_anchor.argtypes = [
+            ctypes.POINTER(ctypes.c_longlong), ctypes.POINTER(ctypes.c_longlong)]
+        self.lib.get_position_anchor.restype = None
         self.lib.get_duration.restype  = ctypes.c_longlong
         self.lib.set_duration.argtypes = [ctypes.c_longlong]
         self.lib.set_duration.restype  = None
@@ -93,12 +97,29 @@ class AudioEngine(QObject):
         self.lib.get_file_bpm.argtypes = [ctypes.c_char_p]
         self.lib.get_file_bpm.restype  = ctypes.c_float
 
+        self.lib.generate_waveform_bands.argtypes = [
+            ctypes.c_char_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int,
+        ]
+        self.lib.generate_waveform_bands.restype = ctypes.c_int
+
+        self.lib.get_file_beatgrid.argtypes = [
+            ctypes.c_char_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+        ]
+        self.lib.get_file_beatgrid.restype = ctypes.c_int
+
         # ------------------------------------------------------------------
         # Initialise engine and polling timer
         # ------------------------------------------------------------------
         self.lib.audio_init()
 
         self.is_playing             = False
+        self._is_scratching         = False
         self.total_ms               = 0
         self.current_buffer         = None
         self.ignore_end_checks_until = 0.0
@@ -120,6 +141,20 @@ class AudioEngine(QObject):
         if not self.lib:
             return 0.0
         return round(self.lib.get_file_bpm(path.encode('utf-8')), 2)
+
+    def analyze_beatgrid(self, path: str):
+        """Returns (bpm, anchor_ms) for beat-grid line placement, or None if
+        no coherent tempo could be detected. anchor_ms is the position of
+        the first beat in the const-tempo region the BPM came from — grid
+        lines are anchor_ms + n * (60000 / bpm)."""
+        if not self.lib:
+            return None
+        bpm_out = ctypes.c_float(0.0)
+        anchor_out = ctypes.c_float(0.0)
+        ok = self.lib.get_file_beatgrid(path.encode('utf-8'), ctypes.byref(bpm_out), ctypes.byref(anchor_out))
+        if not ok:
+            return None
+        return (round(bpm_out.value, 2), round(anchor_out.value, 1))
 
     # ------------------------------------------------------------------
     # Waveform generation
@@ -170,6 +205,65 @@ class AudioEngine(QObject):
 
         threading.Thread(target=task, daemon=True).start()
 
+    def request_waveform_bands(self, path: str, num_points: int = 3000):
+        """Like request_waveform, but emits per-band (low/mid/high) envelopes
+        for scratch-mode's Mixxx-style coloring — see generate_waveform_bands
+        in audio_core.cpp. Uses its own token counter, NOT request_waveform's
+        — on_play_started calls both back-to-back in scratch mode, and
+        sharing one counter meant this call's increment invalidated
+        request_waveform's in-flight token, silently killing its thread
+        before it could ever emit waveform_generated (hasRealData stuck
+        False forever, permanently showing "ANALYZING WAVEFORM...")."""
+        self._waveform_bands_token = getattr(self, '_waveform_bands_token', 0) + 1
+        token = self._waveform_bands_token
+
+        def task():
+            if not self.lib:
+                return
+            target_path = path
+            is_temp     = False
+            if path.startswith('http://') or path.startswith('https://'):
+                try:
+                    response = requests.get(path, stream=True)
+                    fd, target_path = tempfile.mkstemp(suffix=".media")
+                    with os.fdopen(fd, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if token != self._waveform_bands_token:
+                                break
+                            f.write(chunk)
+                    is_temp = True
+                except Exception as e:
+                    print(f"[AudioEngine] Band-waveform download failed: {e}")
+                    return
+            if token != self._waveform_bands_token:
+                if is_temp:
+                    try: os.remove(target_path)
+                    except OSError: pass
+                return
+            low_array  = (ctypes.c_float * num_points)()
+            mid_array  = (ctypes.c_float * num_points)()
+            high_array = (ctypes.c_float * num_points)()
+            ok = self.lib.generate_waveform_bands(
+                target_path.encode('utf-8'), low_array, mid_array, high_array, num_points)
+            if is_temp:
+                try:
+                    os.remove(target_path)
+                except OSError:
+                    pass
+            if token != self._waveform_bands_token or not ok:
+                return
+            low_data  = list(low_array)
+            mid_data  = list(mid_array)
+            high_data = list(high_array)
+            max_val = max(max(low_data, default=0), max(mid_data, default=0), max(high_data, default=0))
+            max_val = max_val if max_val > 0 else 1.0
+            self.waveform_bands_generated.emit(
+                [x / max_val for x in low_data],
+                [x / max_val for x in mid_data],
+                [x / max_val for x in high_data])
+
+        threading.Thread(target=task, daemon=True).start()
+
     # ------------------------------------------------------------------
     # Local file loading
     # ------------------------------------------------------------------
@@ -192,9 +286,29 @@ class AudioEngine(QObject):
     # ------------------------------------------------------------------
     # Qt polling timer (~62 fps while playing)
     # ------------------------------------------------------------------
+    def _get_precise_position_ms(self):
+        """Projects the latency-compensated position forward from the audio
+        callback's own timestamp anchor (see get_position_anchor in
+        audio_core.cpp) using wall-clock elapsed time, instead of returning
+        whatever current_frame last jumped to — current_frame only advances
+        once per audio buffer, which can be coarser than this poll's ~62Hz
+        rate. Mirrors Mixxx's VisualPlayPosition::getAtNextVSync technique,
+        simplified for a fixed (non-time-stretched) playback rate. Falls
+        back to the plain counter while scratching (the anchor timestamp
+        isn't updated during scratch — see data_callback) or paused (no
+        forward motion to project)."""
+        anchor_ms = ctypes.c_longlong(0)
+        anchor_ns = ctypes.c_longlong(0)
+        self.lib.get_position_anchor(ctypes.byref(anchor_ms), ctypes.byref(anchor_ns))
+        if not self.is_playing or self._is_scratching or anchor_ns.value == 0:
+            return anchor_ms.value
+        elapsed_ms = (time.monotonic_ns() - anchor_ns.value) / 1e6
+        projected = anchor_ms.value + elapsed_ms
+        return max(0, min(int(round(projected)), self.total_ms if self.total_ms > 0 else projected))
+
     def _poll_status(self):
         try:
-            pos = self.lib.get_position()
+            pos = self._get_precise_position_ms()
 
             if self.lib.check_track_switch() == 1:
                 self.total_ms = self.lib.get_duration()
@@ -268,6 +382,7 @@ class AudioEngine(QObject):
     # Scratch / turntable
     # ------------------------------------------------------------------
     def set_scratch_mode(self, active: bool):
+        self._is_scratching = bool(active)
         if self.lib:
             self.lib.set_scratch_mode(ctypes.c_int(1 if active else 0))
 

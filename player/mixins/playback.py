@@ -456,7 +456,9 @@ class PlaybackMixin:
         target_path = track_data.get('stream_url') or track_data.get('path')
         if target_path and self._footer_panel.display_mode in (0, 2):
             self.audio_engine.request_waveform(target_path, num_points=10000)
-            
+            if self._footer_panel.display_mode == 0:
+                self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+
         self.sync_playlist_duration()
         self.preload_next()
         self.refresh_ui_styles(scroll_to_current=False)
@@ -530,6 +532,8 @@ class PlaybackMixin:
             if target_path and self._footer_panel.display_mode in (0, 2):
                 self._footer_panel.reset_waveform()
                 self.audio_engine.request_waveform(target_path, num_points=10000)
+                if self._footer_panel.display_mode == 0:
+                    self.audio_engine.request_waveform_bands(target_path, num_points=10000)
 
             self.visual_update_timer.start(350)
             self.preload_next()
@@ -716,6 +720,22 @@ class PlaybackMixin:
                 if target_path:
                     self._footer_panel.reset_waveform()
                     self.audio_engine.request_waveform(target_path, num_points=10000)
+                    if mode_int == 0:
+                        self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+                    return
+
+        # Independent of the overall-waveform gate above: scratch mode's
+        # band coloring needs samplesLow/Mid/High, which the overall-samples
+        # fetch above never requests by itself — without this, switching
+        # into scratch mode after the track's bars/minimal waveform already
+        # loaded (the common case, since has_real_data above is already
+        # true) would silently never fetch band data at all.
+        if mode_int == 0 and not self._footer_panel.has_real_band_data:
+            if 0 <= self.current_index < len(self.playlist_data):
+                track = self.playlist_data[self.current_index]
+                target_path = track.get('stream_url') or track.get('path')
+                if target_path:
+                    self.audio_engine.request_waveform_bands(target_path, num_points=10000)
     
     def load_bpm_cache(self):
         """Loads the saved BPM dictionary from the app_data folder."""
@@ -745,6 +765,34 @@ class PlaybackMixin:
             except Exception:
                 return {}
         return {}
+
+    def load_beatgrid_cache(self):
+        """Loads the saved beat-grid anchor dictionary (track_id -> anchor_ms)
+        from the app_data folder. Kept separate from bpm_cache so existing
+        cached BPMs (from before the beat-grid feature existed) don't need
+        their format migrated — see _perform_heavy_visual_update's gating,
+        which re-runs BPMWorker once per track until both caches have it."""
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cache_dir = os.path.join(base_dir, "app_data")
+        os.makedirs(cache_dir, exist_ok=True)
+        self.beatgrid_cache_file = os.path.join(cache_dir, "beatgrid_cache.json")
+        if os.path.exists(self.beatgrid_cache_file):
+            try:
+                with open(self.beatgrid_cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def save_beatgrid_cache(self):
+        try:
+            with open(self.beatgrid_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.beatgrid_cache, f)
+        except Exception as e:
+            print(f"Could not save beat-grid cache: {e}")
 
     def save_bpm_cache(self):
         """Saves the current dictionary to disk."""
@@ -790,7 +838,21 @@ class PlaybackMixin:
                 self._footer_panel.set_bpm(bpm)
         else:
             self.file_type_label.setText(self.current_file_type_text)
-    
+
+    def _on_beatgrid_calculated(self, bpm, anchor_ms, track_id):
+        """Caches the beat-grid anchor (first-beat position, see
+        get_file_beatgrid in audio_core.cpp) and pushes it to the footer's
+        waveform if it's still for the track currently playing — a worker
+        for a since-skipped track can finish after the fact."""
+        if not hasattr(self, 'beatgrid_cache'):
+            self.beatgrid_cache = {}
+        self.beatgrid_cache[track_id] = anchor_ms
+        self.save_beatgrid_cache()
+
+        current_track_id = str(self.playlist_data[self.current_index].get('id') or self.playlist_data[self.current_index].get('path'))
+        if track_id == current_track_id:
+            self._footer_panel.set_beatgrid(bpm, anchor_ms)
+
     def import_music(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Open Music Files", "", "Audio Files (*.mp3 *.flac *.wav *.ogg *.m4a)")
         if files:

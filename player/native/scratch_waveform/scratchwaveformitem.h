@@ -24,16 +24,29 @@ class ScratchWaveformItem : public QQuickItem {
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(QVariantList samples READ samples WRITE setSamples NOTIFY samplesChanged)
+    Q_PROPERTY(QVariantList samplesLow READ samplesLow WRITE setSamplesLow NOTIFY samplesLowChanged)
+    Q_PROPERTY(QVariantList samplesMid READ samplesMid WRITE setSamplesMid NOTIFY samplesMidChanged)
+    Q_PROPERTY(QVariantList samplesHigh READ samplesHigh WRITE setSamplesHigh NOTIFY samplesHighChanged)
     Q_PROPERTY(bool hasRealData READ hasRealData WRITE setHasRealData NOTIFY hasRealDataChanged)
     Q_PROPERTY(double currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(double pixelsPerSample READ pixelsPerSample WRITE setPixelsPerSample NOTIFY pixelsPerSampleChanged)
     Q_PROPERTY(double hue READ hue WRITE setHue NOTIFY hueChanged)
+    Q_PROPERTY(double durationMs READ durationMs WRITE setDurationMs NOTIFY durationMsChanged)
+    Q_PROPERTY(double beatGridBpm READ beatGridBpm WRITE setBeatGridBpm NOTIFY beatGridBpmChanged)
+    Q_PROPERTY(double beatGridAnchorMs READ beatGridAnchorMs WRITE setBeatGridAnchorMs NOTIFY beatGridAnchorMsChanged)
 
 public:
     explicit ScratchWaveformItem(QQuickItem *parent = nullptr);
 
     QVariantList samples() const { return m_samplesVariant; }
     void setSamples(const QVariantList &v);
+
+    QVariantList samplesLow() const { return m_samplesLowVariant; }
+    void setSamplesLow(const QVariantList &v);
+    QVariantList samplesMid() const { return m_samplesMidVariant; }
+    void setSamplesMid(const QVariantList &v);
+    QVariantList samplesHigh() const { return m_samplesHighVariant; }
+    void setSamplesHigh(const QVariantList &v);
 
     bool hasRealData() const { return m_hasRealData; }
     void setHasRealData(bool v);
@@ -47,12 +60,27 @@ public:
     double hue() const { return m_hue; }
     void setHue(double v);
 
+    double durationMs() const { return m_durationMs; }
+    void setDurationMs(double v);
+
+    double beatGridBpm() const { return m_beatGridBpm; }
+    void setBeatGridBpm(double v);
+
+    double beatGridAnchorMs() const { return m_beatGridAnchorMs; }
+    void setBeatGridAnchorMs(double v);
+
 signals:
     void samplesChanged();
+    void samplesLowChanged();
+    void samplesMidChanged();
+    void samplesHighChanged();
     void hasRealDataChanged();
     void currentIndexChanged();
     void pixelsPerSampleChanged();
     void hueChanged();
+    void durationMsChanged();
+    void beatGridBpmChanged();
+    void beatGridAnchorMsChanged();
 
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -60,8 +88,13 @@ protected:
 private:
     QVariantList m_samplesVariant;
     QVector<double> m_samples;
+    QVariantList m_samplesLowVariant, m_samplesMidVariant, m_samplesHighVariant;
+    QVector<double> m_samplesLow, m_samplesMid, m_samplesHigh;
     bool m_hasRealData = false;
     double m_currentIndex = 0.0;
     double m_pixelsPerSample = 1.5;
     double m_hue = -1.0;
+    double m_durationMs = 1.0;
+    double m_beatGridBpm = 0.0;
+    double m_beatGridAnchorMs = 0.0;
 };

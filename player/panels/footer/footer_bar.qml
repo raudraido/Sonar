@@ -57,6 +57,11 @@ Rectangle {
     property bool showRemainingTime:  false   // totalTimeLbl: total vs. countdown-to-end
     property bool hasRealData:        false
     property var  samples:            []
+    property var  samplesLow:         []
+    property var  samplesMid:         []
+    property var  samplesHigh:        []
+    property real beatGridBpm:        0
+    property real beatGridAnchorMs:   0
 
     // ── Track info ───────────────────────────────────────────────────────────
     property string trackTitle:   ""
@@ -138,18 +143,17 @@ Rectangle {
             if (p) root.enginePositionAtMs = Date.now()
         }
         function onPositionMsChanged(v, hard) {
-            // Python polls the native decoder at 62Hz, but on Linux the
-            // decoder's own position counter only advances once per audio
-            // callback (ma_performance_profile_conservative uses much larger
-            // buffer periods than the default, to avoid underruns — see
-            // audio_core.cpp) — likely ~6-10 times/sec, not continuously. So
-            // most of these 62Hz signals carry the exact same v as last time.
-            // Resetting enginePositionAtMs to "now" on every signal (even
-            // when v hasn't changed) made the extrapolation below freeze at
-            // whatever it last reached instead of smoothly interpolating
-            // across the real gap until the next genuine position change —
-            // only rebase the anchor when v actually moved (or it's a hard
-            // jump), so extrapolation keeps counting from the last real fact.
+            // v arrives already wall-clock-projected from the audio
+            // callback's own timestamp anchor (AudioEngine._get_precise_position_ms
+            // in audio_engine.py, reading get_position_anchor from
+            // audio_core.cpp — mirrors Mixxx's VisualPlayPosition technique),
+            // so unlike the old raw decoder-counter reads this changes on
+            // essentially every ~62Hz poll instead of jumping in big steps.
+            // Still only rebase the anchor on real movement (or a hard
+            // jump) rather than unconditionally, so a value that happens to
+            // repeat (paused, or two polls landing in the same audio buffer)
+            // doesn't reset enginePositionAtMs and stall the extrapolation
+            // below.
             if (hard || v !== root.enginePositionMs) {
                 root.enginePositionMs = v
                 root.enginePositionAtMs = Date.now()
@@ -169,6 +173,16 @@ Rectangle {
         function onSamplesChanged() {
             root.samples = footerBridge.getSamples()
             waveformCanvas.barPathDirty = true
+            waveformCanvas.requestPaint()
+        }
+        function onBandSamplesChanged() {
+            root.samplesLow = footerBridge.getLowSamples()
+            root.samplesMid = footerBridge.getMidSamples()
+            root.samplesHigh = footerBridge.getHighSamples()
+        }
+        function onBeatGridChanged(bpm, anchorMs) {
+            root.beatGridBpm = bpm
+            root.beatGridAnchorMs = anchorMs
             waveformCanvas.requestPaint()
         }
 
@@ -708,6 +722,36 @@ Rectangle {
                             }
                             ctx.stroke()
                             ctx.restore()
+
+                            paintBeatGrid(ctx)
+                        }
+
+                        // Same beat-grid concept as ScratchWaveformItem's
+                        // (player/native/scratch_waveform/scratchwaveformitem.cpp)
+                        // — anchorMs + n*(60000/bpm) — but mapped across the
+                        // whole track's width here instead of zoomed
+                        // sample-index space, since bar mode always shows
+                        // the full track.
+                        function paintBeatGrid(ctx) {
+                            if (root.beatGridBpm <= 0 || root.durationMs <= 0) return
+                            var intervalMs = 60000.0 / root.beatGridBpm
+                            var pxPerMs = width / root.durationMs
+
+                            ctx.strokeStyle = "rgba(255,255,255,0.32)"
+                            ctx.lineWidth = 1
+                            ctx.beginPath()
+                            var beatMs = root.beatGridAnchorMs
+                            // Walk backward from the anchor too, so beats
+                            // before it (anchor is just one coherent
+                            // region's first beat, not necessarily the
+                            // track's first beat) still get drawn.
+                            while (beatMs > 0) beatMs -= intervalMs
+                            for (; beatMs <= root.durationMs; beatMs += intervalMs) {
+                                if (beatMs < 0) continue
+                                var x = Math.round(beatMs * pxPerMs) + 0.5
+                                ctx.moveTo(x, 0); ctx.lineTo(x, height)
+                            }
+                            ctx.stroke()
                         }
 
                         function paintMinimal(ctx) {
@@ -797,10 +841,16 @@ Rectangle {
                         anchors.fill: parent
                         visible: root.displayMode === 0
                         samples: root.samples
+                        samplesLow: root.samplesLow
+                        samplesMid: root.samplesMid
+                        samplesHigh: root.samplesHigh
                         hasRealData: root.hasRealData
                         currentIndex: scratchArea.scratchCurrentIndex
                         pixelsPerSample: scratchArea.pixelsPerSample
                         hue: root.accentQColor.hsvHue
+                        durationMs: root.durationMs
+                        beatGridBpm: root.beatGridBpm
+                        beatGridAnchorMs: root.beatGridAnchorMs
 
                         // Center scratch-cursor line — always drawn in scratch
                         // mode regardless of data availability, mirroring the

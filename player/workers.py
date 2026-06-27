@@ -26,8 +26,13 @@ _COVER_WORKERS = min(6, (os.cpu_count() or 2) + 2)
 
 class BPMWorker(QThread):
     # --- Signal now sends (bpm_value, track_id)
-    bpm_ready = pyqtSignal(float, str) 
-    
+    bpm_ready = pyqtSignal(float, str)
+    # Beat-grid anchor for scratch-mode's grid lines — (bpm, anchor_ms, track_id).
+    # Derived from the same decode as bpm_ready (get_file_beatgrid does both
+    # in one pass), so this costs nothing extra over the old analyze_bpm-only
+    # path; only emitted when bpm_ready also fires with bpm > 0.
+    beatgrid_ready = pyqtSignal(float, float, str)
+
     def __init__(self, audio_engine, track_data):
         super().__init__()
         self.audio_engine = audio_engine
@@ -59,8 +64,11 @@ class BPMWorker(QThread):
                 self.bpm_ready.emit(0.0, track_id)
                 return
 
-            bpm = self.audio_engine.analyze_bpm(analyze_path)
+            grid = self.audio_engine.analyze_beatgrid(analyze_path)
+            bpm = grid[0] if grid else 0.0
             self.bpm_ready.emit(bpm, track_id)
+            if grid:
+                self.beatgrid_ready.emit(grid[0], grid[1], track_id)
             
         except Exception as e:
             print(f"[BPM] ❌ Analyzer Error: {e}")

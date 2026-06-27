@@ -57,6 +57,8 @@ class FooterBridge(QObject):
     showRemainingChanged       = pyqtSignal(bool)
     samplesChanged             = pyqtSignal()
     hasRealDataChanged         = pyqtSignal(bool)
+    bandSamplesChanged         = pyqtSignal()
+    beatGridChanged            = pyqtSignal(float, float)   # bpm, anchorMs
 
     coverVersionChanged        = pyqtSignal(int)
     trackInfoChanged           = pyqtSignal(str, str, str)   # title, artist, album
@@ -72,6 +74,18 @@ class FooterBridge(QObject):
     @pyqtSlot(result=list)
     def getSamples(self):
         return list(self._panel._samples)
+
+    @pyqtSlot(result=list)
+    def getLowSamples(self):
+        return list(self._panel._samples_low)
+
+    @pyqtSlot(result=list)
+    def getMidSamples(self):
+        return list(self._panel._samples_mid)
+
+    @pyqtSlot(result=list)
+    def getHighSamples(self):
+        return list(self._panel._samples_high)
 
     # ── Slots: QML -> Python ─────────────────────────────────────────────
     @pyqtSlot()
