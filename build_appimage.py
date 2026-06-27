@@ -16,6 +16,7 @@ import subprocess
 from build_exe import (
     resolve_and_install_dependencies,
     bundle_linux_qt_platform_plugins,
+    bundle_scratch_waveform_plugin,
     find_audio_binary,
     _SEP,
 )
@@ -109,6 +110,9 @@ def collect_assets():
         print(f"  Bundled: {binary}")
     else:
         print("  WARNING: audio_core.so not found — run build.py first.")
+
+    print("\n--- Detecting Scratch-Waveform QML Plugin ---")
+    bundle_scratch_waveform_plugin(added)
 
     return added
 

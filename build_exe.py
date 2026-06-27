@@ -224,6 +224,27 @@ def find_audio_binary():
     return None
 
 
+def bundle_scratch_waveform_plugin(added_data):
+    """Bundles the compiled scratch-waveform QML module (player/native/
+    scratch_waveform/build/qml/FooterNativeWaveform/ — plugin .so, qmldir,
+    .qmltypes) into the packaged app at the same relative path footer_bar.qml's
+    `import FooterNativeWaveform 1.0` expects (see resource_path() +
+    engine.addImportPath() in player/panels/footer/__init__.py). That import
+    is unconditional — if the module can't resolve at runtime, the whole
+    footer_bar.qml fails to load and the footer panel renders completely
+    empty, which is exactly what happened before this was bundled at all.
+    No-op (with a warning) if build.py's CMake step wasn't run."""
+    module_dir = os.path.join("player", "native", "scratch_waveform", "build", "qml", "FooterNativeWaveform")
+    if not os.path.isdir(module_dir):
+        print("  WARNING: scratch-waveform QML plugin not found — run build.py first")
+        print(f"           (expected {module_dir}). Scratch mode's waveform view")
+        print("           will fail to load in the packaged app without it.")
+        return
+    dest = os.path.join("player", "native", "scratch_waveform", "build", "qml", "FooterNativeWaveform")
+    added_data.append(f"--add-data={module_dir}{_SEP}{dest}")
+    print(f"  Bundled: {module_dir}")
+
+
 def generate_ico():
     """Convert the existing icon.png to a perfectly square icon.ico for the Windows build."""
     ico_path = os.path.join('img', 'icon.ico')
@@ -343,6 +364,13 @@ def build():
                     print(f"  Added DLL: {dll}")
         else:
             print("  WARNING: player/components/libs/ folder not found — audio_core.dll dependencies may be missing.")
+
+    # 6b. Bundle the scratch-waveform QML plugin (separate CMake/Qt6 build —
+    # see build.py's build_scratch_waveform_plugin) — footer_bar.qml's
+    # `import FooterNativeWaveform 1.0` is unconditional, so without this
+    # the entire footer panel fails to load in the packaged app.
+    print("\n--- Detecting Scratch-Waveform QML Plugin ---")
+    bundle_scratch_waveform_plugin(added_data)
 
     # 7. PyInstaller arguments
     args = [
