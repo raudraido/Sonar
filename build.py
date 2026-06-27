@@ -93,6 +93,34 @@ def bundle_runtime_dlls(dll_name, bin_dir, libs_dir):
                 queue.append(dest)
 
 
+def _find_qt6_cmake_prefix():
+    """Best-effort Qt6 CMake prefix detection for environments where it
+    isn't already on CMAKE_PREFIX_PATH by default — mainly Windows, where
+    neither MSYS2's mingw64 Qt6 package nor the official Qt installer
+    register themselves globally, and a CI runner's PATH ordering between
+    a pre-installed system cmake.exe and MSYS2's isn't reliable enough to
+    depend on. Returns None (and cmake falls back to its own default
+    search, which already works fine on Linux/apt and macOS/Homebrew) if
+    nothing is found here."""
+    current_os = platform.system()
+    if current_os == "Windows":
+        candidates = [r"C:\msys64\mingw64"]
+        qt_root = r"C:\Qt"
+        if os.path.isdir(qt_root):
+            # Official Qt installer layout: C:\Qt\6.x.x\mingw_64 — try newest first.
+            for entry in sorted(os.listdir(qt_root), reverse=True):
+                candidates.append(os.path.join(qt_root, entry, "mingw_64"))
+        for base in candidates:
+            if os.path.exists(os.path.join(base, "lib", "cmake", "Qt6", "Qt6Config.cmake")):
+                return base
+    elif current_os == "Darwin":
+        for base in ("/opt/homebrew/opt/qt6", "/usr/local/opt/qt6",
+                      "/opt/homebrew/opt/qt", "/usr/local/opt/qt"):
+            if os.path.exists(os.path.join(base, "lib", "cmake", "Qt6", "Qt6Config.cmake")):
+                return base
+    return None
+
+
 def build_scratch_waveform_plugin():
     """Builds the native QML scratch-waveform plugin (player/native/scratch_waveform/)
     via CMake — a separate Qt6 Quick module, not part of audio_core's plain-
@@ -118,6 +146,10 @@ def build_scratch_waveform_plugin():
 
     build_dir = os.path.join(plugin_dir, "build")
     configure_cmd = ["cmake", "-S", plugin_dir, "-B", build_dir]
+    qt_prefix = _find_qt6_cmake_prefix()
+    if qt_prefix:
+        configure_cmd.append(f"-DCMAKE_PREFIX_PATH={qt_prefix}")
+        print(f"  Qt6 found at: {qt_prefix}")
     sys.stdout.flush()
     result = subprocess.run(configure_cmd)
     if result.returncode != 0:
