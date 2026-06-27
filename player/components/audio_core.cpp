@@ -241,7 +241,25 @@ struct AudioEngine {
     double scratch_pd_filtered_rate = 0.0;
     std::atomic<bool> vis_active{true};
 
-    float vis_left_buf[65536] = {}; 
+    // ── Metronome (tick/tock debug aid) ─────────────────────────────────
+    // Mirrors Ableton's tick/tock metronome — alternates a higher-pitched
+    // "tick" every 4th beat (assumed downbeat; we have no real bar/phase
+    // detection, just beat positions, so 4/4 is the working assumption)
+    // and a lower "tock" on the others. Mixed directly into the real-time
+    // audio callback at the exact sample position rather than driven by a
+    // Python/Qt timer, so it's actually useful for judging whether the
+    // detected beat grid is truly aligned with the audible transient — a
+    // GUI-thread-driven click would have enough scheduling jitter to make
+    // that judgment call meaningless. metronome_beats is read every
+    // callback but only ever written rarely (track load, BPM correction),
+    // so a try_lock in the audio callback (skip this callback's clicks
+    // rather than block) is safe and avoids any real-time priority
+    // inversion risk.
+    std::mutex metronome_mutex;
+    std::vector<long long> metronome_beats;  // absolute frame positions, sorted ascending
+    std::atomic<bool> metronome_enabled{false};
+
+    float vis_left_buf[65536] = {};
     float vis_right_buf[65536] = {};
     int   vis_write = 0;
     float vis_snapshot[4096] = {};  
@@ -495,7 +513,49 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         size_t samples = frameCount * CHANNELS;
         for (size_t i = 0; i < samples; ++i) out[i] *= vol;
     }
-    
+
+    // Metronome (tick/tock debug aid) — see AudioEngine's comment above for
+    // the full rationale. engine.current_frame still holds *this* callback's
+    // starting frame here (it isn't advanced until the Track timing logic
+    // block below), so it's the correct base for "which beats fall within
+    // this buffer". try_lock rather than lock: metronome_beats is only ever
+    // written rarely (track load, BPM correction) from a non-realtime
+    // thread, so on the rare occasion it's contended, just skip this
+    // callback's clicks rather than risk blocking the audio thread.
+    if (!scratching && engine.metronome_enabled.load(std::memory_order_relaxed)) {
+        std::unique_lock<std::mutex> mlock(engine.metronome_mutex, std::try_to_lock);
+        if (mlock.owns_lock() && !engine.metronome_beats.empty()) {
+            const long long callbackStartFrame = engine.current_frame;
+            const long long callbackEndFrame = callbackStartFrame + (long long)frameCount;
+
+            auto beginIt = std::lower_bound(engine.metronome_beats.begin(), engine.metronome_beats.end(), callbackStartFrame);
+            auto endIt   = std::lower_bound(engine.metronome_beats.begin(), engine.metronome_beats.end(), callbackEndFrame);
+
+            constexpr int kClickFrames = (int)(0.02 * SAMPLE_RATE);  // 20ms
+            for (auto it = beginIt; it != endIt; ++it) {
+                const long long beatFrame = *it;
+                const size_t beatIndex = (size_t)(it - engine.metronome_beats.begin());
+                // Every 4th beat is the "tick" (assumed downbeat — we have
+                // no real bar/phase detection, just beat positions, so 4/4
+                // is the working assumption, same as Ableton's tick/tock).
+                const bool isTick = (beatIndex % 4) == 0;
+                const float freq = isTick ? 1500.0f : 900.0f;
+                const long long startOffset = beatFrame - callbackStartFrame;
+
+                for (int j = 0; j < kClickFrames; j++) {
+                    const long long outIdx = startOffset + j;
+                    if (outIdx < 0) continue;
+                    if (outIdx >= (long long)frameCount) break;
+                    const float t = (float)j / SAMPLE_RATE;
+                    const float envelope = std::exp(-t * 60.0f);  // quick percussive decay
+                    const float sample = 0.35f * envelope * std::sin(2.0f * (float)M_PI * freq * t);
+                    out[outIdx * 2]     = std::clamp(out[outIdx * 2]     + sample, -1.0f, 1.0f);
+                    out[outIdx * 2 + 1] = std::clamp(out[outIdx * 2 + 1] + sample, -1.0f, 1.0f);
+                }
+            }
+        }
+    }
+
     // Track timing logic
     if (!scratching) {
         long long frames_left = engine.frames_until_switch;
@@ -503,7 +563,16 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
             if (frames_left <= frameCount) {
                 engine.total_frames = engine.pending_total_frames.load();
                 long long new_frames = frameCount - frames_left;
-                engine.current_frame = new_frames;
+                // current_frame always carries +output_latency_frames on top
+                // of the true musical position (see seek()'s identical
+                // `target + output_latency_frames`, and get_position()'s
+                // `current_frame - output_latency_frames`) — must stay
+                // consistent here too, or anything that compares a known
+                // musical position directly against current_frame's raw
+                // value (e.g. the metronome) drifts by output_latency_frames
+                // worth of time until the next seek happens to "fix" it by
+                // re-establishing the convention.
+                engine.current_frame = new_frames + engine.output_latency_frames.load();
                 engine.frames_until_switch = -1;
                 engine.track_switched_flag = true;
             } else {
@@ -1201,9 +1270,11 @@ extern "C" {
             if (ma_decoder_get_length_in_pcm_frames(&engine.decoder, &len) == MA_SUCCESS) {
                 engine.total_frames = len;
             } else {
-                engine.total_frames = 0; 
+                engine.total_frames = 0;
             }
-            engine.current_frame = 0;
+            // current_frame always carries +output_latency_frames on top of
+            // the true musical position — see seek()'s identical convention.
+            engine.current_frame = engine.output_latency_frames.load();
             engine.buffer.clear();
             return 1;
         }
@@ -1247,7 +1318,9 @@ extern "C" {
                     engine.total_frames = len;
                 } else { engine.total_frames = 0; }
             }
-            engine.current_frame = 0;
+            // current_frame always carries +output_latency_frames on top of
+            // the true musical position — see seek()'s identical convention.
+            engine.current_frame = engine.output_latency_frames.load();
             engine.buffer.clear();
             return 1;
         }
@@ -1284,7 +1357,10 @@ extern "C" {
         ma_uint64 len;
         ma_decoder_get_length_in_pcm_frames(&engine.decoder, &len);
         engine.total_frames = len;
-        engine.current_frame = 0;
+        // current_frame always carries +output_latency_frames on top of the
+        // true musical position — see seek()'s identical convention and the
+        // comment on the gapless-switch case above in data_callback.
+        engine.current_frame = engine.output_latency_frames.load();
         engine.buffer.clear();
         float temp_buf[CHUNK_SIZE * CHANNELS];
         for(int i=0; i<4; i++) {
@@ -1321,12 +1397,14 @@ extern "C" {
     
     EXPORT void audio_pause() { engine.playing = false; }
     
-    EXPORT void stop() { 
+    EXPORT void stop() {
         std::lock_guard<std::mutex> lock(engine.decode_mutex);
-        engine.playing = false; 
-        engine.current_frame = 0; 
-        engine.buffer.clear(); 
-        if (engine.decoder_loaded) ma_decoder_seek_to_pcm_frame(&engine.decoder, 0); 
+        engine.playing = false;
+        // current_frame always carries +output_latency_frames on top of the
+        // true musical position — see seek()'s identical convention.
+        engine.current_frame = engine.output_latency_frames.load();
+        engine.buffer.clear();
+        if (engine.decoder_loaded) ma_decoder_seek_to_pcm_frame(&engine.decoder, 0);
     }
     
     EXPORT void seek(long long ms) { 
@@ -1496,6 +1574,28 @@ extern "C" {
 
     EXPORT void set_vis_active(int active) {
         engine.vis_active.store(active != 0, std::memory_order_relaxed);
+    }
+
+    EXPORT void set_metronome_enabled(int enabled) {
+        engine.metronome_enabled.store(enabled != 0, std::memory_order_relaxed);
+    }
+
+    // beat_ms: beat positions in ms, same latency-subtracted convention
+    // get_position()/get_scratch_position_ms() use — converted here to the
+    // RAW frame numbering engine.current_frame uses internally (which
+    // includes output_latency_frames, same as seek()'s
+    // `target + output_latency_frames` in producer_loop) so data_callback
+    // can compare them directly against engine.current_frame.
+    EXPORT void set_metronome_beats(const double* beat_ms, int count) {
+        std::vector<long long> frames;
+        frames.reserve(count > 0 ? count : 0);
+        long long latencyFrames = engine.output_latency_frames.load();
+        for (int i = 0; i < count; i++) {
+            long long f = (long long)std::llround(beat_ms[i] * SAMPLE_RATE / 1000.0) + latencyFrames;
+            frames.push_back(f);
+        }
+        std::lock_guard<std::mutex> lock(engine.metronome_mutex);
+        engine.metronome_beats = std::move(frames);
     }
 
     EXPORT void cleanup() { 

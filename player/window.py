@@ -544,6 +544,8 @@ class SonarPlayer(
         self._seek_settle_until = 0.0
 
         self.audio_engine = AudioEngine()
+        self.audio_engine.set_metronome_enabled(
+            bool(int(self.settings.value('metronome_tick_debug', 0) or 0)))
         self.audio_engine.positionChanged.connect(self.update_ui_state)
         self.audio_engine.positionJumped.connect(self.on_engine_position_jump)
         self.audio_engine.durationChanged.connect(self.handle_duration_change)

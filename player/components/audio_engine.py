@@ -93,6 +93,11 @@ class AudioEngine(QObject):
         self.lib.set_vis_active.argtypes = [ctypes.c_int]
         self.lib.set_vis_active.restype  = None
 
+        self.lib.set_metronome_enabled.argtypes = [ctypes.c_int]
+        self.lib.set_metronome_enabled.restype  = None
+        self.lib.set_metronome_beats.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int]
+        self.lib.set_metronome_beats.restype  = None
+
         self.lib.generate_waveform.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
         self.lib.generate_waveform.restype  = ctypes.c_int
 
@@ -445,6 +450,26 @@ class AudioEngine(QObject):
             return None
         ms = self.lib.get_scratch_position_ms()
         return ms if ms >= 0 else None
+
+    # ------------------------------------------------------------------
+    # Metronome (tick/tock debug aid)
+    # ------------------------------------------------------------------
+    def set_metronome_enabled(self, enabled: bool):
+        if self.lib:
+            self.lib.set_metronome_enabled(1 if enabled else 0)
+
+    def set_metronome_beats(self, beat_positions_ms):
+        """beat_positions_ms: the same real detected (or BPM-corrected)
+        beat positions driving the visual grid — see get_file_beat_grid in
+        audio_core.cpp. Mixed into the real-time audio callback at the
+        exact sample position (not driven by a Python/Qt timer), so the
+        click is actually trustworthy for judging beat-grid alignment by
+        ear, which is the whole point of a debug aid like this."""
+        if not self.lib:
+            return
+        positions = beat_positions_ms or []
+        arr = (ctypes.c_double * len(positions))(*positions)
+        self.lib.set_metronome_beats(arr, len(positions))
 
     # ------------------------------------------------------------------
     # State queries

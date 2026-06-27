@@ -519,6 +519,22 @@ class SettingsWindow(QDialog):
             layout.addWidget(cb)
             self._lyrics_source_checks[src] = cb
 
+        sep_metronome = QFrame()
+        sep_metronome.setFrameShape(QFrame.Shape.HLine)
+        sep_metronome.setStyleSheet(f"color: {bc};")
+        self._seps.append(sep_metronome)
+        layout.addWidget(sep_metronome)
+
+        self._metronome_label = QLabel("Debug")
+        self._metronome_label.setStyleSheet(f"color: {fc2}; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(self._metronome_label)
+
+        self._metronome_check = QCheckBox("Metronome tick/tock (beat-grid debug)")
+        self._metronome_check.setStyleSheet(f"color: {fc1}; background: transparent;")
+        self._metronome_check.setChecked(bool(int(_s.value('metronome_tick_debug', 0) or 0)))
+        self._metronome_check.stateChanged.connect(self._save_metronome_debug)
+        layout.addWidget(self._metronome_check)
+
         layout.addStretch()
 
         # ── Right column: hotkeys + logout ────────────────────────────────
@@ -743,6 +759,13 @@ class SettingsWindow(QDialog):
         from player.panels.right.lyrics_panel import SOURCES as _LYRIC_SOURCES, SETTINGS_KEY as _LYRIC_KEY
         enabled = [src for src, cb in self._lyrics_source_checks.items() if cb.isChecked()]
         QSettings('Icosahedron', 'Icosahedron').setValue(_LYRIC_KEY, enabled)
+
+    def _save_metronome_debug(self):
+        enabled = self._metronome_check.isChecked()
+        QSettings('Icosahedron', 'Icosahedron').setValue('metronome_tick_debug', int(enabled))
+        engine = getattr(self.parent, 'audio_engine', None)
+        if engine:
+            engine.set_metronome_enabled(enabled)
 
     def _apply_menu_hover_palette(self):
         from player.mixins.visuals import resolve_menu_hover

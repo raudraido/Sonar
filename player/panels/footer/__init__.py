@@ -268,6 +268,9 @@ class FooterPanel(QWidget):
         self._bridge.samplesChanged.emit()
         self._bridge.bandSamplesChanged.emit()
         self._bridge.beatGridChanged.emit(0.0)
+        engine = getattr(self._window, 'audio_engine', None)
+        if engine:
+            engine.set_metronome_beats([])
 
     def set_real_samples(self, new_samples):
         if not new_samples:
@@ -293,6 +296,14 @@ class FooterPanel(QWidget):
         # argument; QML pulls it via footerBridge.getBeatPositions() once
         # notified.
         self._bridge.beatGridChanged.emit(self._beatgrid_bpm)
+        # Metronome (tick/tock debug aid) follows the exact same positions —
+        # every path that updates the visual grid (real detection, manual
+        # BPM correction, stale-grid auto-fix) funnels through here, so the
+        # click automatically stays in sync without separate wiring at each
+        # call site.
+        engine = getattr(self._window, 'audio_engine', None)
+        if engine:
+            engine.set_metronome_beats(self._beatgrid_positions)
 
     def _on_mode_toggled(self, mode):
         self._display_mode = int(mode)
