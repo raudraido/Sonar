@@ -1367,6 +1367,23 @@ class SonarPlayer(
         if hasattr(self, 'tracks_browser') and track_id:
             self.tracks_browser.refresh_track_bpm(track_id, rounded)
 
+    @staticmethod
+    def _beatgrid_matches_bpm(positions, bpm, tolerance=0.1):
+        """True if the average spacing in `positions` (ms) is consistent
+        with `bpm` within `tolerance` (10% — generous enough for genuine
+        detected-beat jitter, but well under the 33%+ gap between any two
+        BPM-adjust menu ratios). Used to catch a beat grid left stale from
+        before this check existed — e.g. BPM manually corrected from 87 to
+        174 back when only the displayed number updated, leaving a half-
+        density grid behind despite the cached BPM already being right."""
+        if not positions or len(positions) < 2 or bpm <= 0:
+            return False
+        avg_interval = (positions[-1] - positions[0]) / (len(positions) - 1)
+        if avg_interval <= 0:
+            return False
+        implied_bpm = 60000.0 / avg_interval
+        return abs(implied_bpm - bpm) / bpm <= tolerance
+
     def _regenerate_beatgrid_for_bpm(self, track_id, new_bpm):
         """Manually correcting the BPM (Half/2/3/3/4/4/3/3/2/Double menu —
         the QM tempo tracker's classic failure mode is locking onto half the

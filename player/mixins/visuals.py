@@ -1184,7 +1184,14 @@ class VisualsMixin:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
                 self._footer_panel.set_bpm(bpm)
                 if hasattr(self, 'beatgrid_cache') and track_id in self.beatgrid_cache:
-                    self._footer_panel.set_beatgrid(bpm, self.beatgrid_cache[track_id])
+                    positions = self.beatgrid_cache[track_id]
+                    if self._beatgrid_matches_bpm(positions, bpm):
+                        self._footer_panel.set_beatgrid(bpm, positions)
+                    else:
+                        # Stale grid left over from a BPM correction made
+                        # before this consistency check existed — silently
+                        # regenerate it to match the cached (correct) BPM.
+                        self._regenerate_beatgrid_for_bpm(track_id, bpm)
             else:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
                 self._footer_panel.set_bpm(None)
