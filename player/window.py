@@ -1359,12 +1359,49 @@ class SonarPlayer(
         if track_id and hasattr(self, 'bpm_cache'):
             self.bpm_cache[track_id] = rounded
             self.save_bpm_cache()
+        self._regenerate_beatgrid_for_bpm(track_id, rounded)
         self._footer_panel.set_bpm(rounded)
         self.file_type_label.setText(
             f"{getattr(self, 'current_file_type_text', '')}   •   {rounded:.1f} BPM"
         )
         if hasattr(self, 'tracks_browser') and track_id:
             self.tracks_browser.refresh_track_bpm(track_id, rounded)
+
+    def _regenerate_beatgrid_for_bpm(self, track_id, new_bpm):
+        """Manually correcting the BPM (Half/2/3/3/4/4/3/3/2/Double menu —
+        the QM tempo tracker's classic failure mode is locking onto half the
+        real tempo, especially on DnB/breakbeat tracks) means the grid built
+        from the originally *detected* beat positions is now wrong too —
+        those real onsets were only ever every-other (or every-third, etc.)
+        true beat. Once the user tells us the real tempo, trust it
+        completely: regenerate an evenly-spaced grid at the new BPM,
+        anchored at the first originally-detected beat (still a real onset,
+        just at the "wrong" multiple of the true tempo) instead of trying to
+        algorithmically interpolate/decimate the existing list for an
+        arbitrary ratio (2/3, 4/3, etc. don't decimate cleanly)."""
+        if not track_id or new_bpm <= 0:
+            return
+        old_positions = getattr(self, 'beatgrid_cache', {}).get(track_id)
+        if not old_positions:
+            return
+        anchor_ms = old_positions[0]
+        duration_ms = self._footer_panel.duration_ms
+        if duration_ms <= 1:
+            return
+        interval_ms = 60000.0 / new_bpm
+
+        new_positions = []
+        beat_ms = anchor_ms
+        while beat_ms > 0:
+            beat_ms -= interval_ms
+        while beat_ms <= duration_ms:
+            if beat_ms >= 0:
+                new_positions.append(round(beat_ms, 1))
+            beat_ms += interval_ms
+
+        self.beatgrid_cache[track_id] = new_positions
+        self.save_beatgrid_cache()
+        self._footer_panel.set_beatgrid(new_bpm, new_positions)
 
     def _toggle_tetris(self):
         from player.components.tetris_easter_egg import TetrisWidget
