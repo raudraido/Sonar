@@ -10,6 +10,9 @@ is the public API surface other code talks to — callers use
 directly (mirrors player/panels/right/queue_panel.py's QueueBridge pattern).
 """
 
+import os
+import sys
+
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -140,9 +143,28 @@ class FooterPanel(QWidget):
         # — a custom QSGGeometryNode-based QQuickItem, built with CMake/Qt6
         # dev tools (not part of build.py's plain-ctypes audio_core.cpp
         # pipeline). footer_bar.qml's `import FooterNativeWaveform 1.0`
-        # resolves via this path. NOTE: build_exe.py/build_appimage.py don't
-        # yet bundle this plugin directory for distribution — dev-mode only
-        # until that's wired up.
+        # resolves via this path (bundled for distribution by build_exe.py/
+        # build_appimage.py's bundle_scratch_waveform_plugin()).
+        plugin_dir = resource_path("player/native/scratch_waveform/build/qml/FooterNativeWaveform")
+        if sys.platform == "win32" and os.path.isdir(plugin_dir):
+            # The actual QML plugin DLL (scratch_waveform_pluginplugin.dll)
+            # imports its sibling scratch_waveform_plugin.dll (the qmltypes-
+            # registration lib qt_add_qml_module generates as a separate
+            # target). Qt's own LoadLibraryEx call for the plugin doesn't
+            # pass any search-path flags, so on Windows it never looks in
+            # the plugin's own directory, AddDllDirectory-registered dirs,
+            # or even PATH for that immediate dependency — only Windows'
+            # "already loaded module of this name" reuse saves it. So we
+            # preload the sibling explicitly (with LOAD_WITH_ALTERED_SEARCH_
+            # PATH, which *does* search its own directory) before Qt ever
+            # tries to import FooterNativeWaveform; without this the import
+            # fails with a generic "module could not be found" and the
+            # entire footer_bar.qml fails to load.
+            import ctypes
+            sibling = os.path.join(plugin_dir, "scratch_waveform_plugin.dll")
+            if os.path.isfile(sibling):
+                LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008
+                ctypes.windll.kernel32.LoadLibraryExW(sibling, None, LOAD_WITH_ALTERED_SEARCH_PATH)
         engine.addImportPath(resource_path("player/native/scratch_waveform/build/qml"))
 
         ctx = self._qml.rootContext()

@@ -93,6 +93,20 @@ def bundle_runtime_dlls(dll_name, bin_dir, libs_dir):
                 queue.append(dest)
 
 
+def _pyqt6_qt_version():
+    """Returns PyQt6-Qt6's installed version string (e.g. "6.10.2"), or None.
+    The native plugin must match this build exactly — PyQt6 on Windows bundles
+    an MSVC-built Qt6 (msvcp140.dll/vcruntime140.dll ship alongside it), so a
+    MinGW-built plugin can never load into it regardless of version, and even
+    an MSVC-built plugin against the wrong minor/patch version gets rejected
+    by Qt's plugin loader with "uses incompatible Qt library"."""
+    try:
+        from importlib.metadata import version
+        return version("PyQt6-Qt6")
+    except Exception:
+        return None
+
+
 def _find_qt6_cmake_prefix():
     """Best-effort Qt6 CMake prefix detection for environments where it
     isn't already on CMAKE_PREFIX_PATH by default — mainly Windows, where
@@ -101,24 +115,46 @@ def _find_qt6_cmake_prefix():
     a pre-installed system cmake.exe and MSYS2's isn't reliable enough to
     depend on. Returns None (and cmake falls back to its own default
     search, which already works fine on Linux/apt and macOS/Homebrew) if
-    nothing is found here."""
+    nothing is found here.
+
+    On Windows this must resolve to an MSVC-built Qt6 kit (see
+    _pyqt6_qt_version's docstring) — MinGW kits (MSYS2's qt6-declarative,
+    or the official installer's mingw_64 component) are only considered as
+    a last-resort fallback that will compile but fail to load at runtime."""
     current_os = platform.system()
     if current_os == "Windows":
-        candidates = [r"C:\msys64\mingw64"]
+        target_version = _pyqt6_qt_version()
         qt_root = r"C:\Qt"
+        msvc_candidates = []
+        mingw_candidates = [r"C:\msys64\mingw64"]
         if os.path.isdir(qt_root):
-            # Official Qt installer layout: C:\Qt\6.x.x\mingw_64 — try newest first.
             for entry in sorted(os.listdir(qt_root), reverse=True):
-                candidates.append(os.path.join(qt_root, entry, "mingw_64"))
-        for base in candidates:
+                entry_dir = os.path.join(qt_root, entry)
+                if not os.path.isdir(entry_dir):
+                    continue
+                for kit in os.listdir(entry_dir):
+                    if kit.startswith("msvc"):
+                        # Exact version match (entry == target_version) sorts
+                        # first since we want the closest possible ABI match.
+                        msvc_candidates.append((entry != target_version, os.path.join(entry_dir, kit)))
+                    elif kit.startswith("mingw"):
+                        mingw_candidates.append(os.path.join(entry_dir, kit))
+        msvc_candidates.sort(key=lambda pair: pair[0])
+        for _, base in msvc_candidates:
             if os.path.exists(os.path.join(base, "lib", "cmake", "Qt6", "Qt6Config.cmake")):
-                return base
+                return base, "msvc"
+        for base in mingw_candidates:
+            if os.path.exists(os.path.join(base, "lib", "cmake", "Qt6", "Qt6Config.cmake")):
+                print(f"  WARNING: only found a MinGW Qt6 kit ({base}) — PyQt6 on Windows")
+                print(f"           uses an MSVC-built Qt6, so this plugin won't load at")
+                print(f"           runtime. Install a matching msvc2022_64 kit instead.")
+                return base, "mingw"
     elif current_os == "Darwin":
         for base in ("/opt/homebrew/opt/qt6", "/usr/local/opt/qt6",
                       "/opt/homebrew/opt/qt", "/usr/local/opt/qt"):
             if os.path.exists(os.path.join(base, "lib", "cmake", "Qt6", "Qt6Config.cmake")):
-                return base
-    return None
+                return base, None
+    return None, None
 
 
 def build_scratch_waveform_plugin():
@@ -146,10 +182,26 @@ def build_scratch_waveform_plugin():
 
     build_dir = os.path.join(plugin_dir, "build")
     configure_cmd = ["cmake", "-S", plugin_dir, "-B", build_dir]
-    qt_prefix = _find_qt6_cmake_prefix()
+    qt_prefix, qt_kit_type = _find_qt6_cmake_prefix()
     if qt_prefix:
         configure_cmd.append(f"-DCMAKE_PREFIX_PATH={qt_prefix}")
         print(f"  Qt6 found at: {qt_prefix}")
+    # Generator must match the located Qt6 kit's compiler ABI: PyQt6 bundles
+    # an MSVC-built Qt6 on Windows, so an MSVC kit needs MSVC (cl.exe) — the
+    # default VS generator auto-detects cl.exe reliably even when MinGW's
+    # g++ is also on PATH (unlike the Ninja generator, which just picks
+    # whichever compiler comes first in PATH and silently produces a MinGW-
+    # linked plugin that fails with unresolved __imp_* symbols against
+    # MSVC-built Qt import libs). A MinGW kit (fallback only — see
+    # _find_qt6_cmake_prefix) needs MinGW Makefiles explicitly, or cmake
+    # defaults to VS/MSVC against MinGW Qt headers/libs, which fails to
+    # compile at all (ABI mismatch — the literal symptom is an MSVC
+    # /Zc:__cplusplus error from qcompilerdetection.h). CMakeLists.txt
+    # itself forces flat (non-per-config) output dirs so the VS generator's
+    # multi-config Debug/Release subfolders don't break the plugin's
+    # expected runtime path.
+    if qt_kit_type == "mingw":
+        configure_cmd += ["-G", "MinGW Makefiles"]
     sys.stdout.flush()
     result = subprocess.run(configure_cmd)
     if result.returncode != 0:
@@ -158,7 +210,14 @@ def build_scratch_waveform_plugin():
         return
 
     sys.stdout.flush()
-    result = subprocess.run(["cmake", "--build", build_dir])
+    build_cmd = ["cmake", "--build", build_dir]
+    if qt_kit_type == "msvc":
+        # PyQt6 bundles a Release Qt6 build; the VS generator defaults to
+        # Debug if --config isn't given. Qt's plugin loader rejects a Debug-
+        # built plugin against a Release runtime ("Cannot mix debug and
+        # release libraries"), same as the version/ABI checks above.
+        build_cmd += ["--config", "Release"]
+    result = subprocess.run(build_cmd)
     if result.returncode == 0:
         print("SUCCESS: Built the scratch-waveform QML plugin.")
     else:

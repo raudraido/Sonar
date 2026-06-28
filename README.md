@@ -63,15 +63,37 @@ one is optional — the app runs fine without it, you just won't get the
 scratch-mode waveform — so `build.py` skips it with a warning if CMake/Qt6
 aren't found instead of failing the whole build.
 
-**Windows — install MSYS2 (recommended)**
+**Windows — install MSYS2 (recommended) + a matching MSVC Qt6 kit**
 
-1. Download and install [MSYS2](https://www.msys2.org/)
-2. Open the **MSYS2 MinGW64** terminal and run:
+The audio engine (`audio_core.cpp`) and the scratch-waveform QML plugin are
+two separate native builds with different requirements: the former is a
+plain g++/libcurl build, the latter must be compiled against an **MSVC**-built
+Qt6 at the *exact* version pinned in `requirements.txt` (`PyQt6-Qt6`). PyQt6
+on Windows bundles its own private MSVC-built Qt6 — Qt's QML plugin loader
+rejects any version or compiler-ABI (MinGW vs MSVC) mismatch outright, so a
+MinGW-built plugin, or one built against a different Qt6 patch version, will
+compile fine but silently fail at runtime (the whole footer panel fails to
+load, since `footer_bar.qml`'s `import FooterNativeWaveform 1.0` is
+unconditional).
+
+1. Download and install [MSYS2](https://www.msys2.org/) — provides g++/curl/cmake
+   for the audio engine only:
    ```bash
-   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-curl mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6-declarative
+   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-curl mingw-w64-x86_64-cmake
    ```
-3. Add `C:\msys64\mingw64\bin` to your Windows PATH  
+   Add `C:\msys64\mingw64\bin` to your Windows PATH
    *(Search "Edit the system environment variables" → Environment Variables → Path → New)*
+2. Install the matching MSVC Qt6 kit via [aqtinstall](https://github.com/miurahr/aqtinstall)
+   (the official Qt binaries, fetched without the GUI installer) — keep the
+   version in sync with `requirements.txt`'s `PyQt6-Qt6` pin:
+   ```bash
+   pip install aqtinstall
+   aqt install-qt windows desktop 6.10.2 win64_msvc2022_64 -O C:\Qt
+   ```
+   `build.py` auto-detects this kit under `C:\Qt\<version>\msvc*` and picks
+   it over any MinGW Qt6 kit it finds (preferring an exact version match to
+   `PyQt6-Qt6`). If you ever bump `PyQt6`/`PyQt6-Qt6` in `requirements.txt`,
+   reinstall this kit at the new version too.
 
 **Linux (Debian/Ubuntu)**
 
@@ -116,7 +138,11 @@ the required runtime DLLs into `libs/` automatically.
 It then builds the scratch-mode waveform QML plugin via CMake (into
 `player/native/scratch_waveform/build/`). If CMake or Qt6 aren't installed,
 this step is skipped with a warning — the rest of the app still works, just
-without the scratch-mode waveform view.
+without the scratch-mode waveform view. On Windows, `build.py` looks under
+`C:\Qt\` for an MSVC kit matching `PyQt6-Qt6`'s version and builds against
+that in `Release` config (see the install step above for why); it falls back
+to a MinGW kit with a warning if no MSVC kit is found, but that fallback
+plugin won't actually load at runtime.
 
 ### 5. Run
 

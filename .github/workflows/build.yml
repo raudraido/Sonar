@@ -16,8 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install libcurl + CMake + Qt6 (MSYS2 MinGW64)
-        run: C:\msys64\usr\bin\pacman -S --noconfirm mingw-w64-x86_64-curl mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6-declarative
+      - name: Install libcurl + CMake (MSYS2 MinGW64)
+        # MinGW64 g++/curl is only for audio_core.cpp's plain-ctypes build
+        # (player/components/audio_core.dll) — a separate, simpler build
+        # from the scratch-waveform QML plugin below, with no Qt6 ABI
+        # concerns since it's loaded via ctypes, not QPluginLoader.
+        run: C:\msys64\usr\bin\pacman -S --noconfirm mingw-w64-x86_64-curl mingw-w64-x86_64-cmake
         shell: cmd
 
       - name: Add MinGW64 to PATH
@@ -29,12 +33,34 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt pyinstaller
+        run: pip install -r requirements.txt pyinstaller aqtinstall
+
+      - name: Install Qt6 (MSVC, matching PyQt6-Qt6's pinned version)
+        # The scratch-waveform QML plugin must be built against an MSVC-built
+        # Qt6 kit at the *same* version as PyQt6-Qt6 (requirements.txt) — Qt's
+        # plugin loader rejects any version or ABI (MinGW vs MSVC) mismatch
+        # outright. MSYS2's qt6-declarative package is MinGW-only, so it can't
+        # satisfy this; aqtinstall fetches the official MSVC kit instead.
+        # build.py's _find_qt6_cmake_prefix() picks this up automatically.
+        run: aqt install-qt windows desktop 6.10.2 win64_msvc2022_64 -O C:\Qt
 
       - name: Build audio_core.dll
         run: python build.py
         env:
           CURL_DIR: C:\msys64\mingw64
+          PYTHONIOENCODING: utf-8
+
+      - name: Verify scratch-waveform plugin was built
+        # build.py treats a failed CMake/Qt6 build as non-fatal (so devs
+        # without Qt6 dev tools installed can still build everything else),
+        # so a broken plugin build wouldn't otherwise fail this job — it'd
+        # silently ship an exe whose footer panel fails to load at runtime
+        # (footer_bar.qml's `import FooterNativeWaveform 1.0` is unconditional).
+        run: |
+          if (-not (Test-Path "player/native/scratch_waveform/build/qml/FooterNativeWaveform/qmldir")) {
+            Write-Error "scratch-waveform QML plugin was not built — see the build.py output above."
+            exit 1
+          }
 
       - name: Build Icosahedron.exe
         run: python build_exe.py
@@ -80,6 +106,9 @@ jobs:
 
       - name: Build audio_core.so
         run: python build.py
+
+      - name: Verify scratch-waveform plugin was built
+        run: test -f player/native/scratch_waveform/build/qml/FooterNativeWaveform/qmldir
 
       - name: Build Icosahedron Linux binary
         run: python build_appimage.py

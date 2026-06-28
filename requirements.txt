@@ -1,5 +1,12 @@
 # Core UI framework
-PyQt6>=6.4.0
+# Pinned exactly (not >=): the native scratch-waveform QML plugin
+# (player/native/scratch_waveform/) is built against a Qt6 dev kit chosen to
+# match PyQt6-Qt6's bundled Qt build (build.py's _find_qt6_cmake_prefix/
+# _pyqt6_qt_version) — Qt's QML plugin loader rejects any version mismatch
+# outright ("uses incompatible Qt library"), so an unpinned PyQt6 upgrade
+# silently breaks the footer panel until the matching Qt6 kit is reinstalled.
+PyQt6==6.10.2
+PyQt6-Qt6==6.10.2
 
 # Audio metadata (tags, duration, bitrate)
 mutagen>=1.46.0
