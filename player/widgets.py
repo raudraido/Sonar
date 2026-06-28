@@ -1024,12 +1024,12 @@ class ShadowContextMenu(QFrame):
 
     def add_stepper_row(self, value: float, callback, step: float = 0.1,
                          decimals: int = 1, minimum: float = 0.0,
-                         maximum: float = 999.0, suffix: str = '', width: int = 72):
+                         maximum: float = 999.0, suffix: str = '', width: int = 90):
         """Embed a pre-filled, step-only numeric field (e.g. 'Custom BPM')
         instead of a click action. Text entry is disabled — value only moves
-        via the Up/Down arrow keys or the spin buttons, in `step` increments.
-        Each step calls callback(value) immediately; the menu stays open so
-        repeated stepping doesn't require reopening it."""
+        via the Up/Down arrow keys or the custom chevron buttons, in `step`
+        increments. Each step calls callback(value) immediately; the menu
+        stays open so repeated stepping doesn't require reopening it."""
         from PyQt6.QtWidgets import QDoubleSpinBox, QAbstractSpinBox
         row = QWidget()
         row.setStyleSheet('background: transparent;')
@@ -1042,7 +1042,7 @@ class ShadowContextMenu(QFrame):
         spin.setSingleStep(step)
         spin.setRange(minimum, maximum)
         spin.setValue(value)
-        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)  # replaced by custom chevrons below
         spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         spin.setFixedWidth(width)
         spin.setFixedHeight(28)
@@ -1052,18 +1052,56 @@ class ShadowContextMenu(QFrame):
         # just the inner QLineEdit blocks typing while leaving keyboard
         # arrow-key stepping intact.
         spin.lineEdit().setReadOnly(True)
+        # QAbstractSpinBox selects all text on focus-in and after every step
+        # by default (native-spinbox convention) — deselect right after both,
+        # since the user only ever steps/reads this value, never retypes it.
+        spin.lineEdit().deselect()
+
+        def _deselect():
+            spin.lineEdit().deselect()
+        spin.valueChanged.connect(lambda _v: QTimer.singleShot(0, _deselect))
+
         # Same recipe as SearchBar.qml's inputBox (album grid search field) —
         # 4px radius, 1px border, 28px height, 13px text — but using this
         # menu's own theme colors (self._bg/_fg/_bc), the same way
         # SearchBar.qml's panelBgColor/textPrimary/borderColor are bound from
-        # the host theme rather than hardcoded. Spin buttons are left at
-        # their native style (unstyled), matching theme_builder.py's
-        # `_add_spin_row` QSpinBox.
+        # the host theme rather than hardcoded.
+        # Extra right padding reserves room for the embedded chevron buttons
+        # (below) so digits never render underneath them.
         spin.setStyleSheet(
             f'QDoubleSpinBox {{ color: {self._fg}; font-size: 13px; '
             f'background: {self._bg.name()}; border: 1px solid {self._bc.name()}; '
-            f'border-radius: 4px; padding: 0 4px 0 8px; }}')
+            f'border-radius: 4px; padding: 0 30px 0 8px; }}'
+            f'QDoubleSpinBox:focus {{ selection-background-color: transparent; }}')
         lo.addWidget(spin)
+
+        # Custom flat chevron stepper buttons, side by side, embedded inside
+        # the box's right edge (like a search field's inline clear button)
+        # rather than sitting next to it — replaces the native OS spin arrows.
+        chevrons = QWidget(spin)
+        chevrons.setFixedSize(28, 20)
+        ch = QHBoxLayout(chevrons)
+        ch.setContentsMargins(0, 0, 0, 0)
+        ch.setSpacing(1)
+        btn_css = (
+            f'QPushButton {{ border: none; background: transparent; '
+            f'color: {self._fg2}; font-size: 9px; padding: 0; }}'
+            f'QPushButton:hover {{ background: {self._hov}; border-radius: 2px; color: {self._fg}; }}'
+            f'QPushButton:pressed {{ color: {self._accent}; }}')
+        down_btn = QPushButton('▼')
+        up_btn = QPushButton('▲')
+        for b in (down_btn, up_btn):
+            b.setFixedSize(13, 20)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(btn_css)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        up_btn.clicked.connect(spin.stepUp)
+        down_btn.clicked.connect(spin.stepDown)
+        ch.addWidget(down_btn)
+        ch.addWidget(up_btn)
+        chevrons.move(spin.width() - chevrons.width() - 4,
+                       (spin.height() - chevrons.height()) // 2)
+
         if suffix:
             sl = QLabel(suffix)
             sl.setStyleSheet(f'color: {self._fg2}; font-size: {self._px}px; background: transparent;')
@@ -1128,7 +1166,9 @@ class ShadowContextMenu(QFrame):
         self.move(QPoint(x, y)); self.show()
         fi = getattr(self, '_first_input', None)
         if fi:
-            fi.setFocus(); fi.selectAll()
+            fi.setFocus()
+            le = fi.lineEdit() if hasattr(fi, 'lineEdit') else fi
+            QTimer.singleShot(0, le.deselect)
 
     def hideEvent(self, ev): self._close_open_sub(); super().hideEvent(ev)
     def closeEvent(self, ev): self._close_open_sub(); super().closeEvent(ev)

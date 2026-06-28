@@ -24,6 +24,7 @@ Rectangle {
     property string cardBgColor:     "#1e1e1e"
     property string cardBorderColor: "#2a2a2a"
     property string panelBgColor:    "#0e0e0e"
+    property bool isScrollActive: false
 
     // ── Artist state ─────────────────────────────────────────────────────────
     property string artistName:    "Artist Name"
@@ -99,6 +100,9 @@ Rectangle {
         cacheBuffer: 600
         model: sectionsModel
 
+        Timer { id: scrollHideTimer; interval: 600; onTriggered: root.isScrollActive = false }
+        onContentYChanged: { root.isScrollActive = true; scrollHideTimer.restart() }
+
         MomentumScroll {
             id: pageScroll
             target: pageList
@@ -117,7 +121,7 @@ Rectangle {
             Item {
                 id: headerCardItem
                 x: 12
-                width: parent.width - 12 - 6
+                width: parent.width - 12 - 12
                 height: Math.max(photoItem.artSize, metaCol.implicitHeight) + 56
 
                 Rectangle {
@@ -381,7 +385,7 @@ Rectangle {
             Item {
                 id: aboutCardItem
                 x: 12
-                width: parent.width - 12 - 6
+                width: parent.width - 12 - 12
                 visible: root.bioText !== ""
                 height: visible ? (24 + aboutCol.implicitHeight + 24) : 0
 
@@ -454,7 +458,7 @@ Rectangle {
             Item {
                 id: popularItem
                 x: 12
-                width: parent.width - 12 - 6
+                width: parent.width - 12 - 12
                 visible: popularList.count > 0
                 height: visible ? (popularTitle.height + popularTitle.anchors.topMargin + popularList.height) : 0
 
@@ -636,7 +640,7 @@ Rectangle {
             Item {
                 id: titleRow
                 x: 12
-                width: parent.width - 12 - 6
+                width: parent.width - 12 - 12
                 height: sectionTitle !== "" ? 50 : 0
                 visible: sectionTitle !== ""
 
@@ -922,7 +926,7 @@ Rectangle {
                 id: relatedTitleRow
                 x: 12
                 anchors.top: parent.top
-                width: parent.width - 12 - 6
+                width: parent.width - 12 - 12
                 height: 50
 
                 Row {
@@ -1204,4 +1208,38 @@ Rectangle {
             }
         }
     }
+
+    ScrollBar {
+        id: vbar
+        anchors.right:  parent.right
+        anchors.top:    parent.top
+        anchors.bottom: parent.bottom
+        active: true
+        width: 10
+
+        property real fixedLength: 50
+        size: height > 0 ? (fixedLength / height) : 0
+        opacity: pageList.contentHeight > pageList.height ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: 250 } }
+
+        position: (pageList.contentHeight > pageList.height)
+                  ? (pageList.contentY / (pageList.contentHeight - pageList.height)) * (1.0 - size)
+                  : 0
+
+        onPositionChanged: {
+            if (pressed) {
+                var pct = position / (1.0 - size)
+                pageList.contentY = pct * (pageList.contentHeight - pageList.height)
+            }
+        }
+
+        contentItem: Rectangle {
+            radius: 3
+            color: root.accentColor
+            opacity: (vbar.pressed || vbar.hovered || root.isScrollActive) ? 1.0 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+        }
+
+        background: Rectangle { color: "transparent" }
+    } // <-- End of ScrollBar
 }
