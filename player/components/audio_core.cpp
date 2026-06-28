@@ -258,6 +258,13 @@ struct AudioEngine {
     std::mutex metronome_mutex;
     std::vector<long long> metronome_beats;  // absolute frame positions, sorted ascending
     std::atomic<bool> metronome_enabled{false};
+    // Which beat (0-3) within the assumed 4/4 bar gets the "tick" instead
+    // of "tock" — see set_metronome_downbeat_offset. Doesn't change any
+    // beat's actual timing, only which one is treated as the downbeat: the
+    // detector's anchor can land on a noise transient instead of the real
+    // first beat of a bar, throwing off which detected beat *should* be
+    // the tick even though the grid's timing itself is now correct.
+    std::atomic<int> metronome_downbeat_offset{0};
 
     float vis_left_buf[65536] = {};
     float vis_right_buf[65536] = {};
@@ -538,7 +545,11 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
                 // Every 4th beat is the "tick" (assumed downbeat — we have
                 // no real bar/phase detection, just beat positions, so 4/4
                 // is the working assumption, same as Ableton's tick/tock).
-                const bool isTick = (beatIndex % 4) == 0;
+                // metronome_downbeat_offset shifts *which* beat that is
+                // within the bar (0-3), without touching any beat's actual
+                // timing — see set_metronome_downbeat_offset.
+                const int offset = engine.metronome_downbeat_offset.load(std::memory_order_relaxed);
+                const bool isTick = ((long long)(beatIndex % 4) - offset + 4) % 4 == 0;
                 const float freq = isTick ? 1500.0f : 900.0f;
                 const long long startOffset = beatFrame - callbackStartFrame;
 
@@ -1342,6 +1353,25 @@ extern "C" {
         if (engine.next_decoder_loaded) { ma_decoder_uninit(&engine.next_decoder); engine.next_decoder_loaded = false; }
         engine.next_file_data.clear();
 
+        // Streamed playback never populates engine.file_data itself (the
+        // decoder reads through stream_ctx's growing buffer via
+        // MyReadCallback/MySeekCallback instead) — but set_scratch_mode's
+        // streaming fallback opportunistically snapshots stream_ctx.buffer
+        // INTO engine.file_data the first time a streamed track is
+        // scratched, and nothing was clearing that snapshot on the NEXT
+        // track. Since that fallback only triggers "if file_data is
+        // empty", a stale snapshot from a previous streamed track silently
+        // looked valid forever after, and any scratch on a later track
+        // played that old track's audio instead. Must clear here so the
+        // next scratch attempt re-snapshots fresh from the new track's
+        // stream_ctx.buffer instead of reusing leftover stale bytes.
+        engine.file_data.clear();
+        if (engine.scratch_decoder_loaded) {
+            engine.is_scratching.store(false);
+            ma_decoder_uninit(&engine.scratch_decoder);
+            engine.scratch_decoder_loaded = false;
+        }
+
         std::thread(live_stream_thread, std::string(url), my_session).detach();
         ma_decoder_config config = ma_decoder_config_init(ma_format_f32, CHANNELS, SAMPLE_RATE);
         ma_result result = ma_decoder_init(MyReadCallback, MySeekCallback, NULL, &config, &engine.decoder);
@@ -1621,6 +1651,18 @@ extern "C" {
 
     EXPORT void set_metronome_enabled(int enabled) {
         engine.metronome_enabled.store(enabled != 0, std::memory_order_relaxed);
+    }
+
+    // Shifts which beat (0-3) within the assumed 4/4 bar is treated as the
+    // tick/downbeat — fixes the case where the beat grid's timing is
+    // correct but the detector's anchor landed on a noise transient (or
+    // similar) instead of the real first beat of a bar, so "beat 0" of the
+    // tick/tock alternation doesn't actually correspond to the perceived
+    // downbeat. Does not change any beat's timing at all, only the tick-
+    // vs-tock label applied to each. Wraps mod 4 — offsets 0-3 cover every
+    // possible phase within one bar.
+    EXPORT void set_metronome_downbeat_offset(int offset) {
+        engine.metronome_downbeat_offset.store(((offset % 4) + 4) % 4, std::memory_order_relaxed);
     }
 
     // beat_ms: beat positions in ms, same latency-subtracted convention
