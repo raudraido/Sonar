@@ -200,10 +200,23 @@ def build_scratch_waveform_plugin():
     # itself forces flat (non-per-config) output dirs so the VS generator's
     # multi-config Debug/Release subfolders don't break the plugin's
     # expected runtime path.
+    configure_env = os.environ.copy()
     if qt_kit_type == "mingw":
         configure_cmd += ["-G", "MinGW Makefiles"]
+    elif qt_kit_type == "msvc":
+        # GitHub's hosted Windows runners set CMAKE_GENERATOR=Ninja by
+        # default. That env var silently wins over cmake's own VS-detection
+        # logic when no -G is passed, and Ninja just grabs whichever
+        # compiler is first on PATH — on those runners that's a MinGW
+        # toolchain at C:\mingw64, not cl.exe — producing the exact same
+        # MinGW-against-MSVC-Qt link failure this function exists to avoid.
+        # Clearing it (rather than hardcoding a -G "Visual Studio ..." string,
+        # which would break on whatever VS version happens to be installed,
+        # local preview toolsets included) lets cmake fall back to its own
+        # default-VS-generator detection, which reliably finds cl.exe.
+        configure_env.pop("CMAKE_GENERATOR", None)
     sys.stdout.flush()
-    result = subprocess.run(configure_cmd)
+    result = subprocess.run(configure_cmd, env=configure_env)
     if result.returncode != 0:
         print("SKIPPED: cmake configure failed (likely Qt6 not found) — scratch mode's")
         print("  waveform view won't be available. See the cmake output above for details.")
