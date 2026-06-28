@@ -157,6 +157,56 @@ def _find_qt6_cmake_prefix():
     return None, None
 
 
+def _msvc_dev_environment():
+    """Locate the installed MSVC toolchain via vswhere + vcvarsall.bat and
+    return the resulting environment dict (cl.exe/link.exe on PATH, INCLUDE/
+    LIB set), or None if no VS installation with the C++ workload is found.
+
+    Needed because cmake's generator auto-detection is unreliable here: the
+    VS generator requires guessing an exact version string ("Visual Studio
+    17 2022") that varies by machine/runner and isn't always registered for
+    cmake even when installed (confirmed failing on GitHub's windows-latest
+    despite docs saying it ships VS2022), while the Ninja generator doesn't
+    do VS auto-detection at all and just grabs whatever C++ compiler is
+    first on PATH — a MinGW g++ on this machine and on GitHub's runners
+    alike, which silently produces a plugin that fails to link/load against
+    the MSVC-built Qt6 kit. Loading vcvarsall's environment ourselves and
+    building with Ninja sidesteps both problems, identically locally and
+    in CI, regardless of which VS edition/version/preview is installed."""
+    vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if not os.path.exists(vswhere):
+        return None
+    try:
+        vs_path = subprocess.check_output(
+            [vswhere, "-latest", "-prerelease", "-products", "*",
+             "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+             "-property", "installationPath"],
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    if not vs_path:
+        return None
+
+    vcvarsall = os.path.join(vs_path, "VC", "Auxiliary", "Build", "vcvarsall.bat")
+    if not os.path.exists(vcvarsall):
+        return None
+
+    try:
+        out = subprocess.check_output(
+            f'"{vcvarsall}" x64 && set', shell=True, text=True, stderr=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError:
+        return None
+
+    env = {}
+    for line in out.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            env[key] = value
+    return env if "INCLUDE" in env else None
+
+
 def build_scratch_waveform_plugin():
     """Builds the native QML scratch-waveform plugin (player/native/scratch_waveform/)
     via CMake — a separate Qt6 Quick module, not part of audio_core's plain-
@@ -186,38 +236,36 @@ def build_scratch_waveform_plugin():
     if qt_prefix:
         configure_cmd.append(f"-DCMAKE_PREFIX_PATH={qt_prefix}")
         print(f"  Qt6 found at: {qt_prefix}")
-    # Generator must match the located Qt6 kit's compiler ABI: PyQt6 bundles
-    # an MSVC-built Qt6 on Windows, so an MSVC kit needs MSVC (cl.exe) — the
-    # default VS generator auto-detects cl.exe reliably even when MinGW's
-    # g++ is also on PATH (unlike the Ninja generator, which just picks
-    # whichever compiler comes first in PATH and silently produces a MinGW-
-    # linked plugin that fails with unresolved __imp_* symbols against
-    # MSVC-built Qt import libs). A MinGW kit (fallback only — see
+    # Generator/compiler must match the located Qt6 kit's ABI: PyQt6 bundles
+    # an MSVC-built Qt6 on Windows, so an MSVC kit needs MSVC (cl.exe), not
+    # whichever MinGW g++ happens to be first on PATH — which is what both
+    # cmake's Ninja generator (no VS auto-detection at all) and even its VS
+    # generator (when the exact installed version/edition can't be guessed
+    # or isn't registered for cmake) can end up doing. Loading vcvarsall's
+    # environment ourselves and building with Ninja sidesteps guessing a
+    # generator version entirely. A MinGW kit (fallback only — see
     # _find_qt6_cmake_prefix) needs MinGW Makefiles explicitly, or cmake
-    # defaults to VS/MSVC against MinGW Qt headers/libs, which fails to
+    # defaults to MSVC against MinGW Qt headers/libs, which fails to
     # compile at all (ABI mismatch — the literal symptom is an MSVC
-    # /Zc:__cplusplus error from qcompilerdetection.h). CMakeLists.txt
-    # itself forces flat (non-per-config) output dirs so the VS generator's
-    # multi-config Debug/Release subfolders don't break the plugin's
-    # expected runtime path.
+    # /Zc:__cplusplus error from qcompilerdetection.h).
     configure_env = os.environ.copy()
     if qt_kit_type == "mingw":
         configure_cmd += ["-G", "MinGW Makefiles"]
     elif qt_kit_type == "msvc":
-        configure_env.pop("CMAKE_GENERATOR", None)
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            # On GitHub's hosted Windows runners, Ninja is on PATH and gets
-            # auto-selected over the VS generator when no -G is passed —
-            # but unlike the VS generator, Ninja doesn't run vcvarsall-style
-            # MSVC auto-detection, so it just grabs whichever compiler is
-            # first on PATH (the runner's own C:\mingw64 g++), producing the
-            # exact MinGW-against-MSVC-Qt link failure this function exists
-            # to avoid. windows-latest is documented to ship VS2022 Build
-            # Tools, so force that generator explicitly here — this can't be
-            # the unconditional default since local dev machines may have
-            # any VS version installed (cmake's own auto-detection handles
-            # that fine once Ninja isn't in the way).
-            configure_cmd += ["-G", "Visual Studio 17 2022"]
+        msvc_env = _msvc_dev_environment()
+        if msvc_env:
+            configure_env = msvc_env
+            configure_cmd += ["-G", "Ninja"]
+            # Ninja is single-config (unlike the VS generator) — PyQt6
+            # bundles a Release Qt6 build, and Qt's plugin loader rejects a
+            # Debug-built plugin against a Release runtime ("Cannot mix
+            # debug and release libraries"), same as the version/ABI checks
+            # this whole function exists for.
+            configure_cmd.append("-DCMAKE_BUILD_TYPE=Release")
+        else:
+            print("  WARNING: could not locate a Visual Studio C++ toolchain via vswhere —")
+            print("  falling back to cmake's own generator detection, which may pick the")
+            print("  wrong compiler. Install the \"Desktop development with C++\" workload.")
     sys.stdout.flush()
     result = subprocess.run(configure_cmd, env=configure_env)
     if result.returncode != 0:
@@ -226,14 +274,7 @@ def build_scratch_waveform_plugin():
         return
 
     sys.stdout.flush()
-    build_cmd = ["cmake", "--build", build_dir]
-    if qt_kit_type == "msvc":
-        # PyQt6 bundles a Release Qt6 build; the VS generator defaults to
-        # Debug if --config isn't given. Qt's plugin loader rejects a Debug-
-        # built plugin against a Release runtime ("Cannot mix debug and
-        # release libraries"), same as the version/ABI checks above.
-        build_cmd += ["--config", "Release"]
-    result = subprocess.run(build_cmd)
+    result = subprocess.run(["cmake", "--build", build_dir], env=configure_env)
     if result.returncode == 0:
         print("SUCCESS: Built the scratch-waveform QML plugin.")
     else:
