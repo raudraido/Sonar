@@ -776,14 +776,24 @@ class PlaybackMixin:
         this cache stored a single scalar anchor_ms per track instead of the
         full beat-position list; those stale entries are dropped here so
         they're treated as a cache miss and recomputed in the new format,
-        rather than crashing downstream code expecting a list."""
+        rather than crashing downstream code expecting a list.
+
+        File name bumped to _v2 — get_file_beat_grid switched from raw
+        per-beat onset positions (later, a "snap to grid" hybrid) to a pure
+        constant-tempo grid (matching Mixxx's actual default behavior).
+        Both old formats are structurally identical (a list of floats), so
+        there's no way to detect staleness from the data alone the way the
+        scalar-vs-list check above can — a noisy old per-beat list's average
+        interval can easily still fall within tolerance of the cached BPM.
+        A clean file-name break forces every track to recompute once under
+        the new algorithm, with no risk of silently keeping stale data."""
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cache_dir = os.path.join(base_dir, "app_data")
         os.makedirs(cache_dir, exist_ok=True)
-        self.beatgrid_cache_file = os.path.join(cache_dir, "beatgrid_cache.json")
+        self.beatgrid_cache_file = os.path.join(cache_dir, "beatgrid_cache_v2.json")
         if os.path.exists(self.beatgrid_cache_file):
             try:
                 with open(self.beatgrid_cache_file, 'r', encoding='utf-8') as f:

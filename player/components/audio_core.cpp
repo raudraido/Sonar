@@ -1036,18 +1036,17 @@ extern "C" {
     static float make_const_bpm(const std::vector<ConstRegion>& regions) {
         return make_const_bpm_ex(regions, nullptr);
     }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     // Shared by get_file_bpm/get_file_beat_grid — decodes once and runs the
     // QM tempo tracker, returning the actual per-beat onset positions (in
-    // audio frames). Callers either collapse these into one constant-tempo
-    // bpm+region (make_const_bpm_ex, for the BPM display text) or use them
-    // directly as beat-grid line positions — the latter is what actually
-    // lands on each real transient, unlike extrapolating evenly-spaced
-    // lines from a single anchor+bpm, which silently assumes the track is
-    // perfectly constant-tempo from that one point and is vulnerable to the
-    // tracker's own octave (half/double-tempo) errors compounding into a
-    // visibly wrong grid.
+    // audio frames). get_file_beat_grid collapses these into one constant-
+    // tempo bpm+anchor (make_const_bpm_ex) and draws a pure evenly-spaced
+    // grid from that — matching Mixxx's own default behavior (see
+    // get_file_beat_grid's comment) — rather than using these raw positions
+    // directly as grid lines, which wandered audibly during quiet passages
+    // where the detector has much weaker transient signal to work with.
     static bool analyze_beat_frames(const char* path, std::vector<double>* outBeatFrames) {
         // Decode to mono — the QM detection function operates on mono frames
         ma_decoder decoder;
@@ -1150,19 +1149,63 @@ extern "C" {
     // one. outBeatMsBuffer[i] is the real onset position (ms) of beat i;
     // unlike the old anchor+interval extrapolation, drawing a line at each
     // of these always lands on an actual detected transient.
+    // Pure constant-tempo grid — matches Mixxx's actual default behavior
+    // (BeatFactory::makePreferredBeats with the default fixedTempo=true
+    // preference, src/track/beatfactory.cpp upstream: Beats::fromConstTempo,
+    // just bpm + one anchor frame, no per-beat positions at all). Trusting
+    // raw per-beat onset detections — including the "snap to grid, fall
+    // back to extrapolation" middle ground tried here previously — chases
+    // the wrong layer of the problem: a correct constant bpm + anchor
+    // already produces a grid that lands on real transients wherever the
+    // track actually has a steady beat, with zero per-beat noise to wander
+    // during quiet sections, since there's no per-beat data to wander in
+    // the first place. The earlier "doesn't land on the kick" complaint
+    // this was meant to fix was a wrong-BPM (octave detection) problem, not
+    // a wrong-grid-shape problem — Mixxx handles that case the same way
+    // this app does: the user manually corrects the BPM.
     EXPORT int get_file_beat_grid(const char* path, float* bpmOut, float* outBeatMsBuffer, int maxBeats) {
         std::vector<double> beatFrames;
         if (!analyze_beat_frames(path, &beatFrames) || beatFrames.empty()) return -1;
 
-        if (bpmOut) {
-            auto regions = retrieve_const_regions(beatFrames);
-            *bpmOut = make_const_bpm_ex(regions, nullptr);
+        auto regions = retrieve_const_regions(beatFrames);
+        double anchorFrame = 0.0;
+        float bpm = make_const_bpm_ex(regions, &anchorFrame);
+        if (bpm <= 0.0f) return -1;
+        if (bpmOut) *bpmOut = bpm;
+
+        ma_decoder lenDecoder;
+        ma_decoder_config lenConfig = ma_decoder_config_init(ma_format_f32, 1, SAMPLE_RATE);
+        long long totalFrames = 0;
+        if (ma_decoder_init_file(path, &lenConfig, &lenDecoder) == MA_SUCCESS) {
+            ma_uint64 len = 0;
+            ma_decoder_get_length_in_pcm_frames(&lenDecoder, &len);
+            ma_decoder_uninit(&lenDecoder);
+            totalFrames = (long long)len;
         }
+        if (totalFrames <= 0) totalFrames = (long long)beatFrames.back();
+
+        const double beatLength = 60.0 * SAMPLE_RATE / (double)bpm;
+
+        // Don't extrapolate the grid backward past the earliest real
+        // detected onset — the onset detector only produces a beat
+        // candidate where there's actual transient energy, so
+        // beatFrames.front() already naturally marks "where the music
+        // starts," skipping any leading silence/intro. Walking the grid
+        // all the way back toward frame 0 regardless (as this used to)
+        // placed synthetic beat-grid lines — and metronome clicks — inside
+        // silence the detector never even saw a transient in. Mixxx's own
+        // grid has this same property for the same reason (its anchor
+        // comes from a real detected beat, never further extrapolated
+        // backward past it).
+        const double earliestRealBeat = beatFrames.front();
+        double slot = anchorFrame;
+        while (slot - beatLength >= earliestRealBeat) slot -= beatLength;
 
         int count = 0;
-        for (double f : beatFrames) {
+        for (; slot <= (double)totalFrames; slot += beatLength) {
+            if (slot < 0) continue;
             if (count >= maxBeats) break;
-            outBeatMsBuffer[count++] = (float)(f * 1000.0 / SAMPLE_RATE);
+            outBeatMsBuffer[count++] = (float)(slot * 1000.0 / SAMPLE_RATE);
         }
         return count;
     }
