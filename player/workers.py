@@ -52,8 +52,21 @@ class BPMWorker(QThread):
                 analyze_path = target_path
             elif stream_url:
                 temp_dir = tempfile.gettempdir()
-                # Create a secure temp file in the Windows %TEMP% folder
-                temp_file_path = os.path.join(temp_dir, f"icosahedron_bpm_{track_id}.mp3")
+                # .media, not a hardcoded .mp3 — miniaudio's decoder
+                # selection is extension-sensitive (tries the extension-
+                # hinted decoder first and doesn't fall back to others on
+                # failure), so a server streaming anything other than MP3
+                # (WAV in particular — often kept passthrough/untranscoded
+                # since transcoding a lossless format doesn't make sense)
+                # into a file literally named ".mp3" made ma_decoder_init_file
+                # fail outright, silently breaking BPM/beat-grid detection
+                # for that file. A neutral extension makes miniaudio
+                # content-sniff the real format instead — verified directly:
+                # the same WAV bytes decode fine renamed to .media or with
+                # no extension at all, but fail renamed to .mp3. Matches the
+                # same .media convention audio_engine.py already uses for
+                # its own stream-download temp files, for the same reason.
+                temp_file_path = os.path.join(temp_dir, f"icosahedron_bpm_{track_id}.media")
                 
                 response = requests.get(stream_url, stream=True, timeout=10)
                 response.raise_for_status()
