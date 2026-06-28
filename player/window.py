@@ -781,11 +781,25 @@ class SonarPlayer(
             if getattr(self, 'visualizer', None):
                 self.visualizer.visualizer_enabled = vis_active
 
-            # No explicit pause needed for the footer's position/waveform
-            # rendering — it's driven entirely by a QML FrameAnimation tied
-            # to the QQuickWindow's render loop, which Qt already
-            # stops/resumes automatically when the window is
-            # minimized/restored.
+            # The footer's QML view is a QQuickView embedded via
+            # createWindowContainer (for real-refresh-rate rendering — see
+            # QMLGridWrapper in widgets.py), which is its own native child
+            # window with its own render loop driven by its own expose/
+            # obscure events. Those don't always perfectly mirror this
+            # (parent) widget's minimize/restore state on every platform —
+            # specifically: stop, minimize, restore, then play could leave
+            # the child window's render loop never re-exposed, so the
+            # FrameAnimation driving the waveform/position display stays
+            # paused even though the window is visually back on screen
+            # (only a manual repaint — e.g. dragging the scratch waveform,
+            # which calls requestPaint() directly — un-sticks it). Nudge
+            # the embedded QQuickView with an explicit update() on restore
+            # so its render loop reliably resumes regardless of whether the
+            # platform delivered a fresh expose event for it.
+            if not minimized and hasattr(self, '_footer_panel'):
+                qml = getattr(self._footer_panel, '_qml', None)
+                if qml is not None and hasattr(qml, 'quickWindow'):
+                    qml.quickWindow().update()
 
             if hasattr(self, 'playing_movie'):
                 if minimized:
