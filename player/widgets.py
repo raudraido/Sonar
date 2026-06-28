@@ -1022,6 +1022,59 @@ class ShadowContextMenu(QFrame):
             row.mousePressEvent = _press
         self._lo.addWidget(row); return row
 
+    def add_stepper_row(self, value: float, callback, step: float = 0.1,
+                         decimals: int = 1, minimum: float = 0.0,
+                         maximum: float = 999.0, suffix: str = '', width: int = 72):
+        """Embed a pre-filled, step-only numeric field (e.g. 'Custom BPM')
+        instead of a click action. Text entry is disabled — value only moves
+        via the Up/Down arrow keys or the spin buttons, in `step` increments.
+        Each step calls callback(value) immediately; the menu stays open so
+        repeated stepping doesn't require reopening it."""
+        from PyQt6.QtWidgets import QDoubleSpinBox, QAbstractSpinBox
+        row = QWidget()
+        row.setStyleSheet('background: transparent;')
+        lo = QHBoxLayout(row)
+        lo.setContentsMargins(12, 5, 20, 5)
+        lo.setSpacing(8)
+        lo.addSpacing(22)
+        spin = QDoubleSpinBox()
+        spin.setDecimals(decimals)
+        spin.setSingleStep(step)
+        spin.setRange(minimum, maximum)
+        spin.setValue(value)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+        spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        spin.setFixedWidth(width)
+        spin.setFixedHeight(28)
+        # setReadOnly(True) at the QAbstractSpinBox level also disables the
+        # Up/Down *keyboard* stepping (keyPressEvent gates that on
+        # !isReadOnly()) — only the spin buttons would still work. Locking
+        # just the inner QLineEdit blocks typing while leaving keyboard
+        # arrow-key stepping intact.
+        spin.lineEdit().setReadOnly(True)
+        # Same recipe as SearchBar.qml's inputBox (album grid search field) —
+        # 4px radius, 1px border, 28px height, 13px text — but using this
+        # menu's own theme colors (self._bg/_fg/_bc), the same way
+        # SearchBar.qml's panelBgColor/textPrimary/borderColor are bound from
+        # the host theme rather than hardcoded. Spin buttons are left at
+        # their native style (unstyled), matching theme_builder.py's
+        # `_add_spin_row` QSpinBox.
+        spin.setStyleSheet(
+            f'QDoubleSpinBox {{ color: {self._fg}; font-size: 13px; '
+            f'background: {self._bg.name()}; border: 1px solid {self._bc.name()}; '
+            f'border-radius: 4px; padding: 0 4px 0 8px; }}')
+        lo.addWidget(spin)
+        if suffix:
+            sl = QLabel(suffix)
+            sl.setStyleSheet(f'color: {self._fg2}; font-size: {self._px}px; background: transparent;')
+            lo.addWidget(sl)
+        lo.addStretch()
+
+        spin.valueChanged.connect(callback)
+        self._lo.addWidget(row)
+        self._first_input = getattr(self, '_first_input', None) or spin
+        return row
+
     def add_submenu(self, text: str, items: list, icon_path: str = ''):
         trigger = self._row(f'{text}  ›', icon_path=icon_path)
         self._lo.addWidget(trigger)
@@ -1073,6 +1126,9 @@ class ShadowContextMenu(QFrame):
             x = max(x, wr.left()   - self._PAD)
             y = max(y, wr.top()    - self._PAD)
         self.move(QPoint(x, y)); self.show()
+        fi = getattr(self, '_first_input', None)
+        if fi:
+            fi.setFocus(); fi.selectAll()
 
     def hideEvent(self, ev): self._close_open_sub(); super().hideEvent(ev)
     def closeEvent(self, ev): self._close_open_sub(); super().closeEvent(ev)

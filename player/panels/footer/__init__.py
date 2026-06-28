@@ -395,6 +395,8 @@ class FooterPanel(QWidget):
         theme = getattr(self._window, 'theme', None)
         bg   = getattr(theme, 'main_panel_bg',      '14,14,14')
         bc   = getattr(theme, 'border_color',        '#444444')
+        if not getattr(theme, 'auto_border_from_accent', True):
+            bc = getattr(theme, 'manual_border_color', bc)
         fg   = getattr(theme, 'font_color_primary',  '#dddddd')
         fg2  = getattr(theme, 'font_color_secondary', '#555555')
         hov  = resolve_menu_hover(theme)
@@ -408,6 +410,8 @@ class FooterPanel(QWidget):
             new_val = self._current_bpm * mult
             menu.add_action(f"{label}  |  {_fmt(new_val)}",
                             callback=lambda v=new_val: self.bpm_adjusted.emit(v))
+        menu.add_stepper_row(self._current_bpm, self.bpm_adjusted.emit,
+                              step=0.1, minimum=20.0, maximum=400.0, suffix="BPM")
         menu.exec_at(QCursor.pos(), window=self._window)
 
     # ── Theming ──────────────────────────────────────────────────────────────

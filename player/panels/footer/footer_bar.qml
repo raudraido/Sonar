@@ -722,31 +722,6 @@ Rectangle {
                             }
                             ctx.stroke()
                             ctx.restore()
-
-                            paintBeatGrid(ctx)
-                        }
-
-                        // Draws a line at each *actually detected* beat
-                        // position (root.beatPositionsMs, from
-                        // get_file_beat_grid in audio_core.cpp) instead of
-                        // extrapolating evenly-spaced lines from a single
-                        // anchor+bpm — so it always lands on a real
-                        // transient instead of drifting off due to the
-                        // track not being perfectly constant-tempo, or an
-                        // octave (half/double-tempo) detection error.
-                        function paintBeatGrid(ctx) {
-                            var positions = root.beatPositionsMs
-                            if (!positions || positions.length === 0 || root.durationMs <= 0) return
-                            var pxPerMs = width / root.durationMs
-
-                            ctx.strokeStyle = "rgba(255,255,255,0.32)"
-                            ctx.lineWidth = 1
-                            ctx.beginPath()
-                            for (var i = 0; i < positions.length; i++) {
-                                var x = Math.round(positions[i] * pxPerMs) + 0.5
-                                ctx.moveTo(x, 0); ctx.lineTo(x, height)
-                            }
-                            ctx.stroke()
                         }
 
                         function paintMinimal(ctx) {
