@@ -204,17 +204,20 @@ def build_scratch_waveform_plugin():
     if qt_kit_type == "mingw":
         configure_cmd += ["-G", "MinGW Makefiles"]
     elif qt_kit_type == "msvc":
-        # GitHub's hosted Windows runners set CMAKE_GENERATOR=Ninja by
-        # default. That env var silently wins over cmake's own VS-detection
-        # logic when no -G is passed, and Ninja just grabs whichever
-        # compiler is first on PATH — on those runners that's a MinGW
-        # toolchain at C:\mingw64, not cl.exe — producing the exact same
-        # MinGW-against-MSVC-Qt link failure this function exists to avoid.
-        # Clearing it (rather than hardcoding a -G "Visual Studio ..." string,
-        # which would break on whatever VS version happens to be installed,
-        # local preview toolsets included) lets cmake fall back to its own
-        # default-VS-generator detection, which reliably finds cl.exe.
         configure_env.pop("CMAKE_GENERATOR", None)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            # On GitHub's hosted Windows runners, Ninja is on PATH and gets
+            # auto-selected over the VS generator when no -G is passed —
+            # but unlike the VS generator, Ninja doesn't run vcvarsall-style
+            # MSVC auto-detection, so it just grabs whichever compiler is
+            # first on PATH (the runner's own C:\mingw64 g++), producing the
+            # exact MinGW-against-MSVC-Qt link failure this function exists
+            # to avoid. windows-latest is documented to ship VS2022 Build
+            # Tools, so force that generator explicitly here — this can't be
+            # the unconditional default since local dev machines may have
+            # any VS version installed (cmake's own auto-detection handles
+            # that fine once Ninja isn't in the way).
+            configure_cmd += ["-G", "Visual Studio 17 2022"]
     sys.stdout.flush()
     result = subprocess.run(configure_cmd, env=configure_env)
     if result.returncode != 0:
