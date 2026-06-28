@@ -97,6 +97,8 @@ class AudioEngine(QObject):
         self.lib.set_metronome_enabled.restype  = None
         self.lib.set_metronome_beats.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int]
         self.lib.set_metronome_beats.restype  = None
+        self.lib.set_metronome_downbeat_offset.argtypes = [ctypes.c_int]
+        self.lib.set_metronome_downbeat_offset.restype  = None
 
         self.lib.generate_waveform.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
         self.lib.generate_waveform.restype  = ctypes.c_int
@@ -470,6 +472,15 @@ class AudioEngine(QObject):
         positions = beat_positions_ms or []
         arr = (ctypes.c_double * len(positions))(*positions)
         self.lib.set_metronome_beats(arr, len(positions))
+
+    def set_metronome_downbeat_offset(self, offset: int):
+        """Shifts which beat (0-3) within the assumed 4/4 bar is treated as
+        the tick/downbeat — fixes a correctly-timed grid whose anchor still
+        landed on a noise transient instead of the real first beat of a
+        bar, so the tick/tock alternation is musically out of phase even
+        though the grid timing itself is right. Doesn't move any beat."""
+        if self.lib:
+            self.lib.set_metronome_downbeat_offset(int(offset))
 
     # ------------------------------------------------------------------
     # State queries

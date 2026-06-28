@@ -535,6 +535,21 @@ class SettingsWindow(QDialog):
         self._metronome_check.stateChanged.connect(self._save_metronome_debug)
         layout.addWidget(self._metronome_check)
 
+        # Shifts which beat (0-3) of the assumed 4/4 bar is the tick —
+        # doesn't move the grid's timing at all, just fixes cases where the
+        # detector's anchor landed on a noise transient instead of the real
+        # first beat of a bar, so the tick/tock alternation reads out of
+        # phase with the actual downbeat even though the grid is correct.
+        downbeat_row = QHBoxLayout()
+        self._downbeat_offset = int(_s.value('metronome_downbeat_offset', 0) or 0) % 4
+        self._downbeat_shift_btn = QPushButton(f"Shift downbeat ({self._downbeat_offset + 1}/4)")
+        self._downbeat_shift_btn.setStyleSheet(
+            f"color: {fc1}; background: transparent; border: 1px solid {bc}; padding: 3px 8px;")
+        self._downbeat_shift_btn.clicked.connect(self._shift_metronome_downbeat)
+        downbeat_row.addWidget(self._downbeat_shift_btn)
+        downbeat_row.addStretch()
+        layout.addLayout(downbeat_row)
+
         layout.addStretch()
 
         # ── Right column: hotkeys + logout ────────────────────────────────
@@ -766,6 +781,14 @@ class SettingsWindow(QDialog):
         engine = getattr(self.parent, 'audio_engine', None)
         if engine:
             engine.set_metronome_enabled(enabled)
+
+    def _shift_metronome_downbeat(self):
+        self._downbeat_offset = (self._downbeat_offset + 1) % 4
+        self._downbeat_shift_btn.setText(f"Shift downbeat ({self._downbeat_offset + 1}/4)")
+        QSettings('Icosahedron', 'Icosahedron').setValue('metronome_downbeat_offset', self._downbeat_offset)
+        engine = getattr(self.parent, 'audio_engine', None)
+        if engine:
+            engine.set_metronome_downbeat_offset(self._downbeat_offset)
 
     def _apply_menu_hover_palette(self):
         from player.mixins.visuals import resolve_menu_hover

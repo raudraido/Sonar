@@ -546,6 +546,8 @@ class SonarPlayer(
         self.audio_engine = AudioEngine()
         self.audio_engine.set_metronome_enabled(
             bool(int(self.settings.value('metronome_tick_debug', 0) or 0)))
+        self.audio_engine.set_metronome_downbeat_offset(
+            int(self.settings.value('metronome_downbeat_offset', 0) or 0))
         self.audio_engine.positionChanged.connect(self.update_ui_state)
         self.audio_engine.positionJumped.connect(self.on_engine_position_jump)
         self.audio_engine.durationChanged.connect(self.handle_duration_change)
