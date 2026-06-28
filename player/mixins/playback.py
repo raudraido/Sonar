@@ -305,7 +305,21 @@ class PlaybackMixin:
             
             self.current_index = idx
             track = self.playlist_data[idx]
-            self.queued_next_index = -1  
+            self.queued_next_index = -1
+
+            # Reset Seek Bar
+            self._footer_panel.set_position_ms(0, hard=True)
+
+            # Reset waveform to loading state so "ANALYZING WAVEFORM..." is
+            # shown while the C++ engine generates data for the new track.
+            # Must run BEFORE load_current_track_metadata_text_only() below
+            # — that call restores a cached bpm/beat-grid immediately if
+            # this track was already played before, and reset_waveform()
+            # unconditionally clears the grid/metronome; the wrong order
+            # here meant a cache-hit restore got immediately wiped out by
+            # this reset running right after it, so returning to an
+            # already-played track silently lost its grid every time.
+            self._footer_panel.reset_waveform()
 
             # UI Updates — update_indicator debounced so rapid clicking only runs once
             self.load_current_track_metadata_text_only()
@@ -313,13 +327,6 @@ class PlaybackMixin:
             self.update_window_title()
 
             print(f"[TIMING] +{time.time() - t0:.3f}s | UI Text Updated")
-
-            # Reset Seek Bar
-            self._footer_panel.set_position_ms(0, hard=True)
-
-            # Reset waveform to loading state so "ANALYZING WAVEFORM..." is shown
-            # while the C++ engine generates data for the new track.
-            self._footer_panel.reset_waveform()
 
             # Stop Preloads
             self.preload_timer.stop() 
@@ -520,17 +527,26 @@ class PlaybackMixin:
 
             self.current_index = new_index
 
+            # Pull the track from the playlist and use the 'track' variable
+            track = self.playlist_data[self.current_index]
+            target_path = track.get('stream_url') or track.get('path')
+            needs_waveform = target_path and self._footer_panel.display_mode in (0, 2)
+
+            # Reset BEFORE restoring cached bpm/beat-grid below — same
+            # ordering fix as play_song(): reset_waveform() unconditionally
+            # clears grid/metronome, so running it after the cache-hit
+            # restore in load_current_track_metadata_text_only() silently
+            # wiped that restore out whenever a gapless transition landed
+            # on an already-played track.
+            if needs_waveform:
+                self._footer_panel.reset_waveform()
+
             # UI Updates
             self.load_current_track_metadata_text_only()
             self.update_indicator()
             self.update_window_title()
 
-            # Pull the track from the playlist and use the 'track' variable
-            track = self.playlist_data[self.current_index]
-            target_path = track.get('stream_url') or track.get('path')
-
-            if target_path and self._footer_panel.display_mode in (0, 2):
-                self._footer_panel.reset_waveform()
+            if needs_waveform:
                 self.audio_engine.request_waveform(target_path, num_points=10000)
                 if self._footer_panel.display_mode == 0:
                     self.audio_engine.request_waveform_bands(target_path, num_points=10000)
