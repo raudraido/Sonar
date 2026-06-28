@@ -810,6 +810,37 @@ class PlaybackMixin:
         except Exception as e:
             print(f"Could not save beat-grid cache: {e}")
 
+    def load_metronome_downbeat_cache(self):
+        """Loads the saved per-track metronome downbeat-offset dictionary
+        (track_id -> int 0-3) from the app_data folder. Per-track because
+        the underlying problem it corrects — the beat detector's anchor
+        landing on a noise transient instead of the real first beat of a
+        bar — varies independently per track, same reasoning as
+        beatgrid_cache/bpm_cache being per-track rather than a single
+        global value."""
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cache_dir = os.path.join(base_dir, "app_data")
+        os.makedirs(cache_dir, exist_ok=True)
+        self.metronome_downbeat_cache_file = os.path.join(cache_dir, "metronome_downbeat_cache.json")
+        if os.path.exists(self.metronome_downbeat_cache_file):
+            try:
+                with open(self.metronome_downbeat_cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return {k: int(v) % 4 for k, v in data.items() if isinstance(v, (int, float))}
+            except Exception:
+                return {}
+        return {}
+
+    def save_metronome_downbeat_cache(self):
+        try:
+            with open(self.metronome_downbeat_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.metronome_downbeat_cache, f)
+        except Exception as e:
+            print(f"Could not save metronome downbeat cache: {e}")
+
     def save_bpm_cache(self):
         """Saves the current dictionary to disk."""
         try:

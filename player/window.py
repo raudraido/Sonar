@@ -505,6 +505,7 @@ class SonarPlayer(
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
         self.beatgrid_cache = self.load_beatgrid_cache()
+        self.metronome_downbeat_cache = self.load_metronome_downbeat_cache()
         self.setAcceptDrops(True)
         self.last_gapless_time = 0
       
@@ -546,8 +547,9 @@ class SonarPlayer(
         self.audio_engine = AudioEngine()
         self.audio_engine.set_metronome_enabled(
             bool(int(self.settings.value('metronome_tick_debug', 0) or 0)))
-        self.audio_engine.set_metronome_downbeat_offset(
-            int(self.settings.value('metronome_downbeat_offset', 0) or 0))
+        # Downbeat offset is per-track now (metronome_downbeat_cache), not a
+        # single global value — applied whenever a track's beat grid is set
+        # (FooterPanel.set_beatgrid), not once here at startup.
         self.audio_engine.positionChanged.connect(self.update_ui_state)
         self.audio_engine.positionJumped.connect(self.on_engine_position_jump)
         self.audio_engine.durationChanged.connect(self.handle_duration_change)
@@ -1423,6 +1425,54 @@ class SonarPlayer(
         self.beatgrid_cache[track_id] = new_positions
         self.save_beatgrid_cache()
         self._footer_panel.set_beatgrid(new_bpm, new_positions)
+
+    def nudge_current_beatgrid(self, delta_ms):
+        """Shifts the *current* track's whole beat grid earlier/later by a
+        small fixed step, independent of tempo — mirrors Mixxx's "Translate
+        Beatgrid Earlier/Later". Fixes a different problem than the
+        BPM-adjust menu or the metronome downbeat-shift: the grid's tempo
+        can be exactly right and every beat still land a consistent few ms
+        off the real transient, because the anchor itself was a few ms off
+        — shifting every cached position by the same delta corrects that
+        without needing a full re-analysis, since the grid is already just
+        an evenly-spaced list at this point."""
+        if not (0 <= self.current_index < len(self.playlist_data)):
+            return
+        track = self.playlist_data[self.current_index]
+        track_id = str(track.get('id') or track.get('path', ''))
+        positions = getattr(self, 'beatgrid_cache', {}).get(track_id)
+        if not positions:
+            return
+        new_positions = [round(p + delta_ms, 1) for p in positions]
+        self.beatgrid_cache[track_id] = new_positions
+        self.save_beatgrid_cache()
+        bpm = getattr(self, 'bpm_cache', {}).get(track_id, 0.0)
+        self._footer_panel.set_beatgrid(bpm, new_positions)
+
+    def current_track_id(self):
+        if not (0 <= self.current_index < len(self.playlist_data)):
+            return None
+        track = self.playlist_data[self.current_index]
+        return str(track.get('id') or track.get('path', ''))
+
+    def shift_current_track_downbeat(self):
+        """Advances the *current* track's metronome downbeat offset by one
+        beat (0-3, wraps). Per-track (metronome_downbeat_cache), not a
+        single global value — the underlying problem (the beat detector's
+        anchor landing on a noise transient instead of the real first beat
+        of a bar) varies independently per track, same reasoning as
+        beatgrid_cache/bpm_cache. Returns the new offset, so the caller
+        (SettingsWindow) can update its displayed label."""
+        track_id = self.current_track_id()
+        if not track_id:
+            return 0
+        if not hasattr(self, 'metronome_downbeat_cache'):
+            self.metronome_downbeat_cache = {}
+        new_offset = (self.metronome_downbeat_cache.get(track_id, 0) + 1) % 4
+        self.metronome_downbeat_cache[track_id] = new_offset
+        self.save_metronome_downbeat_cache()
+        self.audio_engine.set_metronome_downbeat_offset(new_offset)
+        return new_offset
 
     def _toggle_tetris(self):
         from player.components.tetris_easter_egg import TetrisWidget

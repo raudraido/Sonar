@@ -540,15 +540,38 @@ class SettingsWindow(QDialog):
         # detector's anchor landed on a noise transient instead of the real
         # first beat of a bar, so the tick/tock alternation reads out of
         # phase with the actual downbeat even though the grid is correct.
+        # Per-track (metronome_downbeat_cache on the main window) — the
+        # underlying problem varies independently per track, so a single
+        # global value would silently misapply one track's fix to another.
         downbeat_row = QHBoxLayout()
-        self._downbeat_offset = int(_s.value('metronome_downbeat_offset', 0) or 0) % 4
-        self._downbeat_shift_btn = QPushButton(f"Shift downbeat ({self._downbeat_offset + 1}/4)")
+        _current_track_id = self.parent.current_track_id() if hasattr(self.parent, 'current_track_id') else None
+        _current_offset = getattr(self.parent, 'metronome_downbeat_cache', {}).get(_current_track_id, 0) if _current_track_id else 0
+        self._downbeat_shift_btn = QPushButton(f"Shift downbeat ({_current_offset + 1}/4)")
         self._downbeat_shift_btn.setStyleSheet(
             f"color: {fc1}; background: transparent; border: 1px solid {bc}; padding: 3px 8px;")
         self._downbeat_shift_btn.clicked.connect(self._shift_metronome_downbeat)
         downbeat_row.addWidget(self._downbeat_shift_btn)
         downbeat_row.addStretch()
         layout.addLayout(downbeat_row)
+
+        # Shifts the *current* track's whole beat grid earlier/later by a
+        # small fixed step, independent of tempo — for when the grid's
+        # spacing/bpm is already correct but every line still lands a
+        # consistent few ms off the real transient (the anchor itself was
+        # a few ms off), which neither the BPM menu nor the downbeat-shift
+        # above can fix. Mirrors Mixxx's "Translate Beatgrid Earlier/Later".
+        nudge_row = QHBoxLayout()
+        nudge_btn_style = f"color: {fc1}; background: transparent; border: 1px solid {bc}; padding: 3px 8px;"
+        self._nudge_earlier_btn = QPushButton("◂ Nudge grid earlier")
+        self._nudge_earlier_btn.setStyleSheet(nudge_btn_style)
+        self._nudge_earlier_btn.clicked.connect(lambda: self._nudge_beatgrid(-10))
+        self._nudge_later_btn = QPushButton("Nudge grid later ▸")
+        self._nudge_later_btn.setStyleSheet(nudge_btn_style)
+        self._nudge_later_btn.clicked.connect(lambda: self._nudge_beatgrid(10))
+        nudge_row.addWidget(self._nudge_earlier_btn)
+        nudge_row.addWidget(self._nudge_later_btn)
+        nudge_row.addStretch()
+        layout.addLayout(nudge_row)
 
         layout.addStretch()
 
@@ -783,12 +806,14 @@ class SettingsWindow(QDialog):
             engine.set_metronome_enabled(enabled)
 
     def _shift_metronome_downbeat(self):
-        self._downbeat_offset = (self._downbeat_offset + 1) % 4
-        self._downbeat_shift_btn.setText(f"Shift downbeat ({self._downbeat_offset + 1}/4)")
-        QSettings('Icosahedron', 'Icosahedron').setValue('metronome_downbeat_offset', self._downbeat_offset)
-        engine = getattr(self.parent, 'audio_engine', None)
-        if engine:
-            engine.set_metronome_downbeat_offset(self._downbeat_offset)
+        if not hasattr(self.parent, 'shift_current_track_downbeat'):
+            return
+        new_offset = self.parent.shift_current_track_downbeat()
+        self._downbeat_shift_btn.setText(f"Shift downbeat ({new_offset + 1}/4)")
+
+    def _nudge_beatgrid(self, delta_ms):
+        if hasattr(self.parent, 'nudge_current_beatgrid'):
+            self.parent.nudge_current_beatgrid(delta_ms)
 
     def _apply_menu_hover_palette(self):
         from player.mixins.visuals import resolve_menu_hover
