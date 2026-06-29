@@ -768,7 +768,12 @@ Rectangle {
 
                         function paintAnalyzing(ctx) {
                             ctx.fillStyle = "#646464"
-                            ctx.font = "bold 11px " + (root.fontFamily.length ? ('"' + root.fontFamily + '"') : "sans-serif")
+                            // Canvas's ctx.font shorthand parser chokes on multi-word
+                            // family names like "Inter Variable Text Medium" — use the
+                            // base variable-font family here instead of root.fontFamily
+                            // (which legitimately needs the weight-suffixed name for
+                            // QML Text's font.family, which isn't shorthand-parsed).
+                            ctx.font = "bold 11px \"Inter Variable\""
                             ctx.textAlign = "center"
                             ctx.textBaseline = "middle"
                             ctx.fillText("ANALYZING WAVEFORM...", width / 2, height / 2)

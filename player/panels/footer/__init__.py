@@ -360,9 +360,25 @@ class FooterPanel(QWidget):
     def set_track_info(self, title, artist, album):
         self._bridge.trackInfoChanged.emit(title or "", artist or "", album or "")
 
+    # 2x the QML art box's 84px display size, for HiDPI sharpness — see
+    # set_cover's comment for why rounding needs this crop step at all.
+    _ART_DISPLAY_SIZE = 168
+
     def set_cover(self, pixmap):
         if pixmap and not pixmap.isNull():
-            self._art_provider.set_pixmap(_round_pixmap(pixmap, radius=6))
+            # Crop to a square matching the QML Image's PreserveAspectCrop
+            # box before rounding. Rounding the raw incoming pixmap (the
+            # ~500px BlurWorker cover, see apply_threaded_art's art_size)
+            # made a radius=6 corner shrink to under a pixel once QML scaled
+            # it down to the 84px display box — i.e. invisible square
+            # corners despite the rounding code running correctly.
+            size = self._ART_DISPLAY_SIZE
+            scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                    Qt.TransformationMode.SmoothTransformation)
+            ox = (scaled.width() - size) // 2
+            oy = (scaled.height() - size) // 2
+            cropped = scaled.copy(ox, oy, size, size)
+            self._art_provider.set_pixmap(_round_pixmap(cropped, radius=12))
         else:
             self._art_provider.set_pixmap(None)
         self._cover_version += 1

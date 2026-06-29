@@ -462,9 +462,10 @@ class PlaybackMixin:
         # Ask C++ to analyze if we are in Mode 0 or Mode 2
         target_path = track_data.get('stream_url') or track_data.get('path')
         if target_path and self._footer_panel.display_mode in (0, 2):
-            self.audio_engine.request_waveform(target_path, num_points=10000)
+            track_id = str(track_data.get('id') or track_data.get('path'))
+            self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
             if self._footer_panel.display_mode == 0:
-                self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+                self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
 
         self.sync_playlist_duration()
         self.preload_next()
@@ -547,9 +548,10 @@ class PlaybackMixin:
             self.update_window_title()
 
             if needs_waveform:
-                self.audio_engine.request_waveform(target_path, num_points=10000)
+                track_id = str(track.get('id') or track.get('path'))
+                self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
                 if self._footer_panel.display_mode == 0:
-                    self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+                    self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
 
             self.visual_update_timer.start(350)
             self.preload_next()
@@ -735,9 +737,10 @@ class PlaybackMixin:
                 target_path = track.get('stream_url') or track.get('path')
                 if target_path:
                     self._footer_panel.reset_waveform()
-                    self.audio_engine.request_waveform(target_path, num_points=10000)
+                    track_id = str(track.get('id') or track.get('path'))
+                    self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
                     if mode_int == 0:
-                        self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+                        self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
                     return
 
         # Independent of the overall-waveform gate above: scratch mode's
@@ -751,7 +754,8 @@ class PlaybackMixin:
                 track = self.playlist_data[self.current_index]
                 target_path = track.get('stream_url') or track.get('path')
                 if target_path:
-                    self.audio_engine.request_waveform_bands(target_path, num_points=10000)
+                    track_id = str(track.get('id') or track.get('path'))
+                    self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
     
     def load_bpm_cache(self):
         """Loads the saved BPM dictionary from the app_data folder."""

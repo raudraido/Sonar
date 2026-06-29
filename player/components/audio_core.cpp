@@ -870,15 +870,17 @@ extern "C" {
         config.playback.channels = CHANNELS;
         config.sampleRate = SAMPLE_RATE;
         config.dataCallback = data_callback;
+        // low_latency forces tiny periods; combined with the visualizer FFT
+        // (and metronome synthesis) running in the callback, that's not
+        // enough headroom on any platform — causes underruns, audible as
+        // glitchy/distorted clicks on transients like the metronome.
+        config.performanceProfile = ma_performance_profile_conservative;
         #ifdef __linux__
-            // low_latency forces tiny periods; combined with FFT in the callback it causes underruns
-            config.performanceProfile = ma_performance_profile_conservative;
             ma_backend backends[] = { ma_backend_pulseaudio };
             if (ma_device_init_ex(backends, 1, NULL, &config, &engine.device) != MA_SUCCESS) {
                 ma_device_init(NULL, &config, &engine.device);
             }
         #else
-            config.performanceProfile = ma_performance_profile_low_latency;
             ma_device_init(NULL, &config, &engine.device);
         #endif
 

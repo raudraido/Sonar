@@ -1,12 +1,130 @@
+import array
 import ctypes
 import os
 import platform
+import re
+import struct
+import sys
 import time
 import tempfile
 import requests
 import threading
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer, QMetaObject, Qt
+
+
+# ----------------------------------------------------------------------------
+# Waveform sample cache — persists the downsampled envelope arrays computed
+# by generate_waveform/generate_waveform_bands so replaying a track skips the
+# full network download + native decode that previously ran every time (see
+# request_waveform/request_waveform_bands below). One binary file per track
+# under app_data/waveform_cache, keyed by track_id — kept separate from
+# bpm_cache/beatgrid_cache.json since these arrays (up to ~400k floats each)
+# would bloat a single JSON file far more than BPM/beat-grid data ever does.
+# ----------------------------------------------------------------------------
+_WFC_MAGIC = b'WFC1'
+_SAFE_ID_RE = re.compile(r'[^A-Za-z0-9_.-]')
+
+
+def _waveform_cache_dir():
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cache_dir = os.path.join(base_dir, "app_data", "waveform_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def _waveform_cache_path(track_id):
+    safe = _SAFE_ID_RE.sub('_', str(track_id))[:200]
+    return os.path.join(_waveform_cache_dir(), f"{safe}.wfc")
+
+
+def _read_waveform_cache_raw(path):
+    """Returns (duration_ms, num_points, overall_or_None, bands_or_None) from
+    a .wfc file, or None if missing/unreadable. bands, if present, is a
+    [low, mid, high] list of float lists."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        if len(data) < 20 or data[:4] != _WFC_MAGIC:
+            return None
+        duration_ms, num_points, flags = struct.unpack_from('<qii', data, 4)
+        offset = 20
+        overall = bands = None
+        if flags & 1:
+            arr = array.array('f')
+            arr.frombytes(data[offset:offset + num_points * 4])
+            offset += num_points * 4
+            overall = list(arr)
+        if flags & 2:
+            bands = []
+            for _ in range(3):
+                arr = array.array('f')
+                arr.frombytes(data[offset:offset + num_points * 4])
+                offset += num_points * 4
+                bands.append(list(arr))
+        return duration_ms, num_points, overall, bands
+    except Exception:
+        return None
+
+
+def _load_waveform_cache(track_id, expected_duration_ms, expected_num_points, need_overall, need_bands):
+    """Returns {'overall': [...]} and/or {'low'/'mid'/'high': [...]} if a
+    valid, matching cache entry exists, else None. A mismatched duration
+    (track's source file changed) or point count (density formula/track
+    length changed) is treated as a miss rather than partially trusted —
+    the whole point is correctness, not just speed."""
+    raw = _read_waveform_cache_raw(_waveform_cache_path(track_id))
+    if not raw:
+        return None
+    duration_ms, num_points, overall, bands = raw
+    if num_points != expected_num_points:
+        return None
+    if expected_duration_ms and abs(duration_ms - expected_duration_ms) > 1000:
+        return None
+    if need_overall and overall is None:
+        return None
+    if need_bands and bands is None:
+        return None
+    result = {}
+    if overall is not None:
+        result['overall'] = overall
+    if bands is not None:
+        result['low'], result['mid'], result['high'] = bands
+    return result
+
+
+def _save_waveform_cache(track_id, duration_ms, num_points, overall=None, bands=None):
+    """Writes (or merges into) the .wfc file for track_id. overall is a flat
+    float list; bands is a [low, mid, high] list of float lists. Merges with
+    whatever's already on disk as long as duration/num_points still match —
+    request_waveform and request_waveform_bands each only have one half of
+    the data, and both get called back-to-back in scratch mode."""
+    path = _waveform_cache_path(track_id)
+    raw = _read_waveform_cache_raw(path)
+    if raw and raw[0] == duration_ms and raw[1] == num_points:
+        if overall is None:
+            overall = raw[2]
+        if bands is None:
+            bands = raw[3]
+    flags = (1 if overall is not None else 0) | (2 if bands is not None else 0)
+    if flags == 0:
+        return
+    try:
+        with open(path, 'wb') as f:
+            f.write(_WFC_MAGIC)
+            f.write(struct.pack('<qii', int(duration_ms), int(num_points), flags))
+            if overall is not None:
+                array.array('f', overall).tofile(f)
+            if bands is not None:
+                for band in bands:
+                    array.array('f', band).tofile(f)
+    except Exception as e:
+        print(f"[AudioEngine] Could not save waveform cache: {e}")
 
 
 class AudioEngine(QObject):
@@ -191,23 +309,47 @@ class AudioEngine(QObject):
     _WAVEFORM_MAX_POINTS = 400000  # ~15 min of audio at full 441/sec density
 
     def _resolve_waveform_point_count(self, target_path: str, fallback: int) -> int:
+        # Prefer the already-known duration of the currently loaded/playing
+        # track over re-probing the file — keeps the point count consistent
+        # with the cache-hit fast path's _points_for_duration(self.total_ms,
+        # ...) call, which never touches the file at all.
+        if self.total_ms > 0:
+            return self._points_for_duration(self.total_ms, fallback)
         try:
             probe_ms = self.lib.get_file_duration_ms(target_path.encode('utf-8'))
         except Exception:
             probe_ms = 0
-        if not probe_ms or probe_ms <= 0:
+        return self._points_for_duration(probe_ms, fallback)
+
+    def _points_for_duration(self, duration_ms, fallback: int) -> int:
+        if not duration_ms or duration_ms <= 0:
             return fallback
-        computed = int((probe_ms / 1000.0) * self._WAVEFORM_DENSITY_PER_SEC)
+        computed = int((duration_ms / 1000.0) * self._WAVEFORM_DENSITY_PER_SEC)
         return max(self._WAVEFORM_MIN_POINTS, min(computed, self._WAVEFORM_MAX_POINTS))
 
-    def request_waveform(self, path: str, num_points: int = 3000):
-        """Generate a waveform array in a background thread. Handles stream URLs via a temp file."""
+    def request_waveform(self, path: str, num_points: int = 3000, track_id=None):
+        """Generate a waveform array in a background thread. Handles stream
+        URLs via a temp file. track_id (if given) enables the on-disk cache
+        — self.total_ms is already set by the time this is called (track
+        load/playback started first), so a cache hit needs neither the
+        network download nor the native decode at all."""
         self._waveform_token = getattr(self, '_waveform_token', 0) + 1
         token = self._waveform_token
 
         def task():
             if not self.lib:
                 return
+            if track_id:
+                expected_points = self._points_for_duration(self.total_ms, num_points)
+                cached = _load_waveform_cache(
+                    track_id, self.total_ms, expected_points, need_overall=True, need_bands=False)
+                if cached is not None:
+                    if token != self._waveform_token:
+                        return
+                    raw_data = cached['overall']
+                    max_val = max(raw_data) if raw_data and max(raw_data) > 0 else 1.0
+                    self.waveform_generated.emit([x / max_val for x in raw_data])
+                    return
             target_path = path
             is_temp     = False
             if path.startswith('http://') or path.startswith('https://'):
@@ -242,12 +384,14 @@ class AudioEngine(QObject):
                 self.total_ms = exact_ms
                 self.durationChanged.emit(exact_ms)
                 raw_data   = list(out_array)
+                if track_id:
+                    _save_waveform_cache(track_id, exact_ms, actual_num_points, overall=raw_data)
                 max_val    = max(raw_data) if max(raw_data) > 0 else 1.0
                 self.waveform_generated.emit([x / max_val for x in raw_data])
 
         threading.Thread(target=task, daemon=True).start()
 
-    def request_waveform_bands(self, path: str, num_points: int = 3000):
+    def request_waveform_bands(self, path: str, num_points: int = 3000, track_id=None):
         """Like request_waveform, but emits per-band (low/mid/high) envelopes
         for scratch-mode's Mixxx-style coloring — see generate_waveform_bands
         in audio_core.cpp. Uses its own token counter, NOT request_waveform's
@@ -262,6 +406,21 @@ class AudioEngine(QObject):
         def task():
             if not self.lib:
                 return
+            if track_id:
+                expected_points = self._points_for_duration(self.total_ms, num_points)
+                cached = _load_waveform_cache(
+                    track_id, self.total_ms, expected_points, need_overall=False, need_bands=True)
+                if cached is not None:
+                    if token != self._waveform_bands_token:
+                        return
+                    low_data, mid_data, high_data = cached['low'], cached['mid'], cached['high']
+                    max_val = max(max(low_data, default=0), max(mid_data, default=0), max(high_data, default=0))
+                    max_val = max_val if max_val > 0 else 1.0
+                    self.waveform_bands_generated.emit(
+                        [x / max_val for x in low_data],
+                        [x / max_val for x in mid_data],
+                        [x / max_val for x in high_data])
+                    return
             target_path = path
             is_temp     = False
             if path.startswith('http://') or path.startswith('https://'):
@@ -298,6 +457,9 @@ class AudioEngine(QObject):
             low_data  = list(low_array)
             mid_data  = list(mid_array)
             high_data = list(high_array)
+            if track_id and self.total_ms > 0:
+                _save_waveform_cache(
+                    track_id, self.total_ms, actual_num_points, bands=[low_data, mid_data, high_data])
             max_val = max(max(low_data, default=0), max(mid_data, default=0), max(high_data, default=0))
             max_val = max_val if max_val > 0 else 1.0
             self.waveform_bands_generated.emit(
