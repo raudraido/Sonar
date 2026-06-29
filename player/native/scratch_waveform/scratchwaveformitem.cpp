@@ -1,5 +1,6 @@
 #include "scratchwaveformitem.h"
 
+#include <QQuickWindow>
 #include <QSGGeometryNode>
 #include <QSGGeometry>
 #include <QSGVertexColorMaterial>
@@ -153,23 +154,29 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
     const double centerY0 = h / 2.0;
     const double maxBarH0 = (h / 2.0) * 0.90;
     const double baseHue = m_hue >= 0 ? m_hue * 360.0 : 150.0;
-    const double cx = centerX0;
 
-    // Per-band (low/mid/high) coloring — mirrors Mixxx's HSV/RGB waveform
-    // renderers (src/waveform/renderers/allshader/waveformrendererhsv.cpp,
-    // waveformrendererrgb.cpp upstream): each band gets its own hue, mixed
-    // by its share of the column's total energy. Hues are derived from the
-    // app's accent color (baseHue) rather than fixed green/blue/magenta, so
-    // the waveform follows the user's theme — bass/kicks read as the accent
-    // color itself, mid/high are hue-shifted ±40° from it. Only used once
+    // Per-band (low/mid/high) coloring — mirrors Mixxx's actual "RGB"
+    // overview renderer (allshader/waveformrendererrgb.cpp upstream): each
+    // column's color is its three bands' reference colors mixed by each
+    // band's own max level, then normalized by the largest resulting
+    // component (see the hasBands branch below) so whichever band
+    // dominates a column reads as a clearly distinct, fully saturated
+    // color rather than a blended pastel. That only reads as "RGB" if the
+    // three reference colors are actually far apart — a ±40° spread (this
+    // renderer's original HSV-blend palette, kept for the non-banded
+    // fallback look) leaves too little hue separation for normalize-by-max
+    // to visibly distinguish bands. Spaced a full 120° apart (an even
+    // three-way split of the hue wheel, like real RGB primaries) instead,
+    // still anchored to the app's accent color rather than fixed red/
+    // green/blue so it follows the user's theme. Only used once
     // generate_waveform_bands' arrays have landed and line up sample-for-
     // sample with m_samples; otherwise this falls back to the original
     // single-hue-shift-by-amplitude coloring.
     const bool hasBands = m_samplesLow.size() == total &&
             m_samplesMid.size() == total && m_samplesHigh.size() == total;
-    const Rgb kLowColor  = hsvToRgb(baseHue, 215.0, 255.0);
-    const Rgb kMidColor  = hsvToRgb(std::fmod(baseHue + 40.0, 360.0), 215.0, 255.0);
-    const Rgb kHighColor = hsvToRgb(std::fmod(baseHue + 320.0, 360.0), 215.0, 255.0);
+    const Rgb kLowColor  = hsvToRgb(baseHue, 255.0, 255.0);
+    const Rgb kMidColor  = hsvToRgb(std::fmod(baseHue + 120.0, 360.0), 255.0, 255.0);
+    const Rgb kHighColor = hsvToRgb(std::fmod(baseHue + 240.0, 360.0), 255.0, 255.0);
 
     // Math mirrors the old per-pixel JS/numpy renderer exactly (its
     // user_picked flag was always false in practice, so that branch is
@@ -182,25 +189,65 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
         const double exactIndex = m_currentIndex + (x - centerX0) / m_pixelsPerSample;
         if (exactIndex < 0 || exactIndex >= total - 1) continue;
 
-        const double fade = cx > 0
-                ? std::max(0.0, 1.0 - std::pow(std::abs(x - cx) / cx, 1.6))
-                : 0.0;
-        const bool isLeft = x < centerX0;
-        const double alpha = isLeft ? fade : fade * (180.0 / 255.0);
-        if (alpha < (1.0 / 255.0)) continue;
-
         const qsizetype idx1 = std::clamp<qsizetype>(
                 static_cast<qsizetype>(std::floor(exactIndex)), 0, total - 2);
         const double frac = exactIndex - static_cast<double>(idx1);
-        const double rawVal = m_samples[idx1] + (m_samples[idx1 + 1] - m_samples[idx1]) * frac;
 
-        // No neighbor smoothing — m_samples is already RMS-per-bucket (see
-        // generate_waveform in audio_core.cpp), which never truly collapses
-        // to 0 between hits the way the old peak/mean-abs data could.
-        // Averaging neighboring buckets together on top of that just blurs
-        // each kick's actual attack/decay shape into a soft blob instead of
-        // the sharp "shark-tooth" silhouette real transients have — exactly
-        // the flattened, undersized look that didn't match Mixxx's render.
+        // indexSpan is how many sample buckets this one screen pixel
+        // actually covers. Zoomed in (indexSpan <= 1, one bucket spans many
+        // pixels), the plain two-point interpolation below is exact. Zoomed
+        // out far enough that many buckets land on a single pixel, point-
+        // sampling just two of them was the actual cause of the "flickering
+        // waveform" bug: as m_currentIndex advances continuously during
+        // playback, *which* two buckets a given pixel happens to land on
+        // changes constantly, and in busy passages (lots of tiny bars —
+        // high bucket-to-bucket variance) that means the rendered height
+        // pops between a peak and a neighboring quiet bucket from one frame
+        // to the next even though the underlying signal is only sliding by
+        // a fraction of a pixel. Dragging never showed it because the user
+        // is watching the motion, not staring at a near-static frame the
+        // way slow playback scroll invites. Taking the max bucket value
+        // actually spanned by the pixel instead makes the rendered value a
+        // continuous function of scroll position — exactly how every real
+        // waveform/DAW view downsamples for display (peak-per-pixel), and
+        // it never has more than one bucket's worth of values to skip
+        // between adjacent pixels regardless of zoom.
+        const double indexSpan = 1.0 / m_pixelsPerSample;
+        qsizetype idxHi = idx1 + 1;
+        if (indexSpan > 1.0) {
+            idxHi = std::clamp<qsizetype>(
+                    static_cast<qsizetype>(std::ceil(exactIndex + indexSpan)), idx1 + 1, total - 1);
+        }
+
+        double rawVal;
+        double lowV = 0.0, midV = 0.0, highV = 0.0;
+        if (idxHi == idx1 + 1) {
+            rawVal = m_samples[idx1] + (m_samples[idx1 + 1] - m_samples[idx1]) * frac;
+            if (hasBands) {
+                lowV  = m_samplesLow[idx1]  + (m_samplesLow[idx1 + 1]  - m_samplesLow[idx1])  * frac;
+                midV  = m_samplesMid[idx1]  + (m_samplesMid[idx1 + 1]  - m_samplesMid[idx1])  * frac;
+                highV = m_samplesHigh[idx1] + (m_samplesHigh[idx1 + 1] - m_samplesHigh[idx1]) * frac;
+            }
+        } else {
+            rawVal = 0.0;
+            for (qsizetype k = idx1; k <= idxHi; ++k) rawVal = std::max(rawVal, m_samples[k]);
+            if (hasBands) {
+                for (qsizetype k = idx1; k <= idxHi; ++k) {
+                    lowV  = std::max(lowV,  m_samplesLow[k]);
+                    midV  = std::max(midV,  m_samplesMid[k]);
+                    highV = std::max(highV, m_samplesHigh[k]);
+                }
+            }
+        }
+
+        // No neighbor smoothing beyond the peak-per-pixel reduction above —
+        // m_samples is already RMS-per-bucket (see generate_waveform in
+        // audio_core.cpp), which never truly collapses to 0 between hits
+        // the way the old peak/mean-abs data could. Averaging neighboring
+        // buckets together on top of that just blurs each kick's actual
+        // attack/decay shape into a soft blob instead of the sharp "shark-
+        // tooth" silhouette real transients have — exactly the flattened,
+        // undersized look that didn't match Mixxx's render.
         const double smoothedVal = rawVal;
 
         // Linear, not squared — Mixxx's own height mapping is pure linear
@@ -214,29 +261,36 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
 
         Rgb rgb;
         if (hasBands) {
-            const double lowV  = m_samplesLow[idx1]  + (m_samplesLow[idx1 + 1]  - m_samplesLow[idx1])  * frac;
-            const double midV  = m_samplesMid[idx1]  + (m_samplesMid[idx1 + 1]  - m_samplesMid[idx1])  * frac;
-            const double highV = m_samplesHigh[idx1] + (m_samplesHigh[idx1 + 1] - m_samplesHigh[idx1]) * frac;
-            const double bandSum = lowV + midV + highV;
-            const double wl = bandSum > 0.0 ? lowV  / bandSum : 1.0 / 3.0;
-            const double wm = bandSum > 0.0 ? midV  / bandSum : 1.0 / 3.0;
-            const double wh = bandSum > 0.0 ? highV / bandSum : 1.0 / 3.0;
-            const double brightnessFactor = isLeft ? (0.47 + 0.53 * fade) : (0.27 + 0.51 * fade);
-            rgb.r = (wl * kLowColor.r + wm * kMidColor.r + wh * kHighColor.r) * brightnessFactor;
-            rgb.g = (wl * kLowColor.g + wm * kMidColor.g + wh * kHighColor.g) * brightnessFactor;
-            rgb.b = (wl * kLowColor.b + wm * kMidColor.b + wh * kHighColor.b) * brightnessFactor;
+            // Mixxx's actual "RGB" overview style (allshader/
+            // waveformrendererrgb.cpp upstream): mix each band's reference
+            // color weighted by that band's own max level, then *normalize*
+            // the result by its largest component instead of averaging —
+            // whichever band dominates a column pushes the color to full,
+            // vivid saturation, instead of the soft blended-pastel look a
+            // weighted average gives. No extra brightness/alpha dimming on
+            // top — Mixxx's own bars are always drawn at full, undimmed
+            // alpha, matching this renderer's bars now too (the past/future
+            // edge fade this used to lean on for dimming has been removed).
+            double red   = lowV * kLowColor.r + midV * kMidColor.r + highV * kHighColor.r;
+            double green = lowV * kLowColor.g + midV * kMidColor.g + highV * kHighColor.g;
+            double blue  = lowV * kLowColor.b + midV * kMidColor.b + highV * kHighColor.b;
+            const double maxComponent = std::max({red, green, blue});
+            if (maxComponent > 0.0) {
+                red /= maxComponent;
+                green /= maxComponent;
+                blue /= maxComponent;
+            }
+            rgb = {red, green, blue};
         } else {
-            const double brightness = std::clamp(
-                    isLeft ? (120.0 + 135.0 * fade) : (70.0 + 130.0 * fade), 0.0, 255.0);
             const double hueShift = std::floor(20.0 * rawVal);
             const double finalHue = std::fmod(std::fmod(baseHue + hueShift, 360.0) + 360.0, 360.0);
             const double saturation = std::clamp(255.0 * std::max(0.3, 1.0 - rawVal * 0.6), 0.0, 255.0);
-            rgb = hsvToRgb(finalHue, saturation, brightness);
+            rgb = hsvToRgb(finalHue, saturation, 255.0);
         }
         const auto R = static_cast<quint8>(std::round(std::clamp(rgb.r, 0.0, 1.0) * 255.0));
         const auto G = static_cast<quint8>(std::round(std::clamp(rgb.g, 0.0, 1.0) * 255.0));
         const auto B = static_cast<quint8>(std::round(std::clamp(rgb.b, 0.0, 1.0) * 255.0));
-        const auto A = static_cast<quint8>(std::round(std::clamp(alpha, 0.0, 1.0) * 255.0));
+        const quint8 A = 255;
 
         const auto top = static_cast<float>(centerY0 - barH);
         const auto bottom = static_cast<float>(centerY0 + barH);
@@ -284,28 +338,50 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
         const auto downbeatR = static_cast<quint8>(std::round(downbeatRgb.r * 255.0));
         const auto downbeatG = static_cast<quint8>(std::round(downbeatRgb.g * 255.0));
         const auto downbeatB = static_cast<quint8>(std::round(downbeatRgb.b * 255.0));
+
+        // Mixxx's own beat-grid renderer (allshader/waveformrenderbeat.cpp,
+        // upstream) doesn't antialias or feather these lines at all — it
+        // snaps each line's x position to the nearest *device* pixel
+        // (xBeatPoint = qRound(xBeatPoint * devicePixelRatio) / devicePixelRatio)
+        // before drawing it at a crisp, fixed device-pixel width. A
+        // continuously-moving subpixel-positioned hard edge is what strobes
+        // as it crosses pixel boundaries (very visible at low zoom, where a
+        // line crawls across the screen slowly enough for the eye to catch
+        // each on/off pop); a line whose edges always land exactly on a
+        // pixel boundary never has partial coverage to begin with, so it has
+        // nothing to alias — it just hops a whole device pixel at a time.
+        const double dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+        const auto hf = static_cast<float>(h);
+        const auto appendSnappedVLine = [&](double xCenter, double widthPx,
+                quint8 R, quint8 G, quint8 B, quint8 A) {
+            const double leftEdge = xCenter - widthPx / 2.0;
+            const double snappedLeft = std::round(leftEdge * dpr) / dpr;
+            const double widthDp = std::max(1.0, std::round(widthPx * dpr));
+            const auto gx0 = static_cast<float>(snappedLeft);
+            const auto gx1 = static_cast<float>(snappedLeft + widthDp / dpr);
+            verts.append({gx0, 0.0f, R, G, B, A});
+            verts.append({gx1, 0.0f, R, G, B, A});
+            verts.append({gx0, hf, R, G, B, A});
+            verts.append({gx1, 0.0f, R, G, B, A});
+            verts.append({gx1, hf, R, G, B, A});
+            verts.append({gx0, hf, R, G, B, A});
+        };
+
         for (auto it = beginIt; it != endIt; ++it) {
             const double beatMs = *it;
             const double beatIndex = beatMs / msPerIndex;
             const double xCenter = centerX0 + (beatIndex - m_currentIndex) * m_pixelsPerSample;
-            if (xCenter < -1.0 || xCenter > w + 1.0) continue;
+            if (xCenter < -3.0 || xCenter > w + 3.0) continue;
 
             const auto rawIndex = static_cast<long long>(it - m_beatPositionsMs.begin());
             const bool isDownbeat = ((rawIndex % 4) - m_downbeatOffset + 4) % 4 == 0;
-            const double halfWidth = isDownbeat ? 1.1 : 0.6;
+            const double widthPx = isDownbeat ? 2.2 : 1.2;
             const quint8 R = isDownbeat ? downbeatR : 255;
             const quint8 G = isDownbeat ? downbeatG : 255;
             const quint8 B = isDownbeat ? downbeatB : 255;
             const quint8 A = isDownbeat ? downbeatA : gridA;
 
-            const auto gx0 = static_cast<float>(xCenter - halfWidth);
-            const auto gx1 = static_cast<float>(xCenter + halfWidth);
-            verts.append({gx0, 0.0f, R, G, B, A});
-            verts.append({gx1, 0.0f, R, G, B, A});
-            verts.append({gx0, static_cast<float>(h), R, G, B, A});
-            verts.append({gx1, 0.0f, R, G, B, A});
-            verts.append({gx1, static_cast<float>(h), R, G, B, A});
-            verts.append({gx0, static_cast<float>(h), R, G, B, A});
+            appendSnappedVLine(xCenter, widthPx, R, G, B, A);
         }
     }
 

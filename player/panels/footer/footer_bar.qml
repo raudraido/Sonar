@@ -32,19 +32,28 @@ Rectangle {
 
     // ── Playback state ───────────────────────────────────────────────────────
     property bool isPlaying:      false
-    // enginePositionMs/enginePositionAtMs are the last raw fact pushed from
-    // Python and when it arrived; displayPositionMs is the only thing any
-    // paint code/label should read. A single FrameAnimation (positionClock,
-    // below) derives displayPositionMs from the other two every frame and
-    // guarantees it never moves backward during playback (Math.max against
-    // its own last value) — the structural fix for the flicker that came
-    // from two independent Python timers fighting over a single positionMs
-    // value (one polling the real decoder, one extrapolating). A `hard`
-    // jump (seek/track-start/stop/loop) snaps displayPositionMs immediately
-    // instead of waiting for the clock to catch up.
-    property int  enginePositionMs:   0
-    property real enginePositionAtMs: 0
-    property real displayPositionMs:  0
+    // enginePositionMs/elapsedSinceAnchorMs are the last raw fact pushed
+    // from Python and how much monotonic frame-clock time has passed since
+    // it arrived; displayPositionMs is the only thing any paint code/label
+    // should read. A single FrameAnimation (positionClock, below) derives
+    // displayPositionMs from the other two every frame and guarantees it
+    // never moves backward during playback (Math.max against its own last
+    // value) — the structural fix for the flicker that came from two
+    // independent Python timers fighting over a single positionMs value
+    // (one polling the real decoder, one extrapolating). elapsedSinceAnchorMs
+    // is deliberately *not* Date.now()-based: Date.now() is quantized to the
+    // OS timer tick (~15ms on Windows), and Python's positionMsChanged fires
+    // on essentially every frame (~62Hz) re-stamping the anchor — reading
+    // Date.now() that often reads the same quantized value for several
+    // frames then jumps, injecting a stair-step error into the drift
+    // correction below. Accumulating positionClock's own frameTime instead
+    // keeps the whole pipeline on one consistent high-resolution monotonic
+    // clock. A `hard` jump (seek/track-start/stop/loop) snaps
+    // displayPositionMs immediately instead of waiting for the clock to
+    // catch up.
+    property int  enginePositionMs:        0
+    property real elapsedSinceAnchorMs:    0
+    property real displayPositionMs:       0
     property int  durationMs:     1
     property bool isShuffle:      false
     property bool isRepeat:       false
@@ -119,7 +128,7 @@ Rectangle {
     function setLocalPosition(ms) {
         root.displayPositionMs = ms
         root.enginePositionMs = ms
-        root.enginePositionAtMs = Date.now()
+        root.elapsedSinceAnchorMs = 0
     }
 
     Connections {
@@ -141,7 +150,7 @@ Rectangle {
             // the elapsed-since-last-update gap includes however long
             // playback was paused, and positionClock's first tick would
             // extrapolate displayPositionMs forward by that whole gap.
-            if (p) root.enginePositionAtMs = Date.now()
+            if (p) root.elapsedSinceAnchorMs = 0
         }
         function onPositionMsChanged(v, hard) {
             // v arrives already wall-clock-projected from the audio
@@ -153,11 +162,11 @@ Rectangle {
             // Still only rebase the anchor on real movement (or a hard
             // jump) rather than unconditionally, so a value that happens to
             // repeat (paused, or two polls landing in the same audio buffer)
-            // doesn't reset enginePositionAtMs and stall the extrapolation
+            // doesn't reset elapsedSinceAnchorMs and stall the extrapolation
             // below.
             if (hard || v !== root.enginePositionMs) {
                 root.enginePositionMs = v
-                root.enginePositionAtMs = Date.now()
+                root.elapsedSinceAnchorMs = 0
             }
             if (hard) root.displayPositionMs = v
         }
@@ -978,24 +987,42 @@ Rectangle {
                         id: positionClock
                         running: root.isPlaying && !scratchArea.isDraggingLocal
 
-                        // 0 is the "needs (re)init" sentinel — real Date.now()
-                        // values are huge, so this can't collide. Reset
-                        // whenever running flips true (resume from pause/
-                        // drag/spin) so the first post-resume tick doesn't see
-                        // a stale lastFrameMs and compute a huge bogus dt.
-                        property real lastFrameMs: 0
-                        onRunningChanged: if (running) lastFrameMs = 0
-
                         onTriggered: {
-                            var now = Date.now()
-                            if (lastFrameMs === 0) lastFrameMs = now
-                            var dt = now - lastFrameMs
-                            lastFrameMs = now
+                            // frameTime is Qt's own high-resolution monotonic
+                            // scenegraph clock, not Date.now() — Date.now()
+                            // is quantized to the OS timer tick (~15ms on
+                            // Windows), so reading it every frame at e.g.
+                            // 144Hz produced a stair-step advance (several
+                            // frames with dt===0, then one jumping ~15ms)
+                            // instead of a smooth one. That stair-step is
+                            // imperceptible zoomed in but reads as a visible
+                            // flicker once zoomed out far enough for a few ms
+                            // of position error to matter — dragging never
+                            // goes through this clock at all (pure mouse-
+                            // delta math), which is why only playback showed it.
+                            var dt = positionClock.frameTime * 1000
+                            // Guard against a stale/huge frameTime right
+                            // after resuming from a pause/drag/spin.
+                            if (dt <= 0 || dt > 250) dt = 1000 / 60
+
+                            // elapsedSinceAnchorMs accumulates the same dt as
+                            // the free-running advance below, reset to 0 by
+                            // onPositionMsChanged/setLocalPosition/resume
+                            // whenever a real position lands — i.e. the same
+                            // monotonic clock measures both legs, instead of
+                            // mixing this frame-driven dt with a separate
+                            // Date.now()-based "time since anchor" reading
+                            // (Date.now() is OS-tick-quantized, and the
+                            // anchor gets re-stamped on essentially every
+                            // ~62Hz Python poll — re-reading Date.now() that
+                            // often produced its own stair-step noise that
+                            // fed straight into the drift correction below).
+                            root.elapsedSinceAnchorMs += dt
 
                             // Free-run forward every frame by real elapsed
                             // wall time — never stalls waiting on Python's
                             // next position update, unlike anchoring directly
-                            // to enginePositionMs/enginePositionAtMs every
+                            // to enginePositionMs/elapsedSinceAnchorMs every
                             // tick (that froze in lockstep with the native
                             // decoder's actual position-update granularity,
                             // ~6-10Hz on Linux due to audio_core.cpp's larger
@@ -1006,7 +1033,7 @@ Rectangle {
                             // snapping, so the correction itself stays
                             // imperceptible at 144Hz.
                             var advanced = root.displayPositionMs + dt
-                            var anchorCandidate = root.enginePositionMs + (now - root.enginePositionAtMs)
+                            var anchorCandidate = root.enginePositionMs + root.elapsedSinceAnchorMs
                             var drift = anchorCandidate - advanced
                             var next = Math.abs(drift) > 60 ? advanced + drift * 0.15 : advanced
                             root.displayPositionMs = Math.min(root.durationMs, Math.max(root.displayPositionMs, next))
