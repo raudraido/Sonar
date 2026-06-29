@@ -318,6 +318,15 @@ class FooterPanel(QWidget):
         # argument; QML pulls it via footerBridge.getBeatPositions() once
         # notified.
         self._bridge.beatGridChanged.emit(self._beatgrid_bpm)
+        # Downbeat offset is per-track (metronome_downbeat_cache), not a
+        # single global value — apply whichever track's grid this is for,
+        # defaulting to 0 (unshifted) if that track was never adjusted. Drives
+        # both the metronome's tick/tock and the scratch-view beat-grid's
+        # every-4th-beat bar-start highlight, so they always agree.
+        get_track_id = getattr(self._window, 'current_track_id', None)
+        track_id = get_track_id() if get_track_id else None
+        offset = getattr(self._window, 'metronome_downbeat_cache', {}).get(track_id, 0) if track_id else 0
+        self._bridge.downbeatOffsetChanged.emit(offset)
         # Metronome (tick/tock debug aid) follows the exact same positions —
         # every path that updates the visual grid (real detection, manual
         # BPM correction, stale-grid auto-fix) funnels through here, so the
@@ -326,12 +335,6 @@ class FooterPanel(QWidget):
         engine = getattr(self._window, 'audio_engine', None)
         if engine:
             engine.set_metronome_beats(self._beatgrid_positions)
-            # Downbeat offset is per-track (metronome_downbeat_cache), not a
-            # single global value — apply whichever track's grid this is for,
-            # defaulting to 0 (unshifted) if that track was never adjusted.
-            get_track_id = getattr(self._window, 'current_track_id', None)
-            track_id = get_track_id() if get_track_id else None
-            offset = getattr(self._window, 'metronome_downbeat_cache', {}).get(track_id, 0) if track_id else 0
             engine.set_metronome_downbeat_offset(offset)
 
     def _on_mode_toggled(self, mode):

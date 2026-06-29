@@ -59,6 +59,7 @@ class FooterBridge(QObject):
     hasRealDataChanged         = pyqtSignal(bool)
     bandSamplesChanged         = pyqtSignal()
     beatGridChanged            = pyqtSignal(float)   # bpm; pull getBeatPositions() for the (large) position list
+    downbeatOffsetChanged      = pyqtSignal(int)      # which beat (0-3) is bar 1 — see set_beatgrid
 
     coverVersionChanged        = pyqtSignal(int)
     trackInfoChanged           = pyqtSignal(str, str, str)   # title, artist, album

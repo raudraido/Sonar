@@ -28,6 +28,47 @@ std::atomic<int> current_preload_session{0};
   #define EXPORT
 #endif
 
+// Nanosecond timestamps exposed to Python (current_frame_timestamp_ns, read
+// via get_position_anchor) must share Python's time.monotonic_ns() clock
+// domain, since _get_precise_position_ms() in audio_engine.py subtracts one
+// from the other directly. std::chrono::steady_clock on this project's
+// MinGW/Windows toolchain does NOT match — it returned a wall-clock-since-
+// 1970-like value (~10^18ns) while Python's monotonic_ns() is system-uptime-
+// based (~10^13ns), making that subtraction wildly negative and permanently
+// floored to 0 by the caller's max(0, ...) clamp: the extrapolated position
+// stuck at 0 (looking "frozen") for as long as it took get_position()'s own
+// raw, non-extrapolated counter to organically pass that floor again — which
+// is exactly the "stays still for a long time after a scratch release"
+// symptom. QueryPerformanceCounter is what CPython's time.monotonic_ns()
+// itself calls into on Windows, so using it here directly guarantees the two
+// sides agree. Linux/macOS's libstdc++/libc++ steady_clock already matches
+// Python's clock_gettime(CLOCK_MONOTONIC)-based monotonic_ns() correctly.
+#ifdef _WIN32
+static long long now_ns() {
+    static LARGE_INTEGER freq = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    // Split into whole seconds + remainder before scaling to ns — multiplying
+    // counter.QuadPart by 1e9 directly overflows int64 once uptime exceeds
+    // ~15 minutes (QuadPart ticks at ~10MHz on typical hardware), silently
+    // wrapping to a garbage timestamp that looked like a much-earlier point
+    // in time — which is exactly what caused the "frozen after scratch"
+    // symptom this function exists to fix in the first place.
+    long long whole = (counter.QuadPart / freq.QuadPart) * 1000000000LL;
+    long long frac  = (counter.QuadPart % freq.QuadPart) * 1000000000LL / freq.QuadPart;
+    return whole + frac;
+}
+#else
+static long long now_ns() {
+    using namespace std::chrono;
+    return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+}
+#endif
+
 #define SAMPLE_RATE 44100
 #define CHANNELS 2
 #define BUFFER_SECONDS 10  // 🟢 10-Second DJ Scratch RAM Buffer
@@ -394,7 +435,7 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         long long targetUpdatedAtNs = engine.scratch_target_updated_at_ns.load(std::memory_order_relaxed);
 
         using namespace std::chrono;
-        long long nowNs = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+        long long nowNs = now_ns();
         double sinceUpdateMs = (double)(nowNs - targetUpdatedAtNs) / 1.0e6;
         double dtSec = (double)frameCount / SAMPLE_RATE;
 
@@ -600,7 +641,7 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         // resolution out of a counter that only moves once per callback.
         using namespace std::chrono;
         engine.current_frame_timestamp_ns.store(
-                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                now_ns(),
                 std::memory_order_relaxed);
     }
 }
@@ -638,7 +679,7 @@ void producer_loop() {
                 {
                     using namespace std::chrono;
                     engine.current_frame_timestamp_ns.store(
-                            duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                            now_ns(),
                             std::memory_order_relaxed);
                 }
                 
@@ -873,8 +914,19 @@ extern "C" {
         // low_latency forces tiny periods; combined with the visualizer FFT
         // (and metronome synthesis) running in the callback, that's not
         // enough headroom on any platform — causes underruns, audible as
-        // glitchy/distorted clicks on transients like the metronome.
-        config.performanceProfile = ma_performance_profile_conservative;
+        // glitchy/distorted clicks on transients like the metronome. But
+        // ma_performance_profile_conservative overcorrects wildly depending
+        // on backend — WASAPI picked 3 periods of 100ms each (300ms total),
+        // which is far more buffered-ahead audio than the FFT/metronome ever
+        // needed headroom for, and made the waveform's position visibly lag
+        // real audio (get_position()'s output_latency_frames compensation
+        // is a static, computed-once estimate — a seek/track-start's first
+        // audible frame doesn't actually move that fast in practice on a
+        // buffer this large). Set the period size explicitly instead: ~23ms
+        // x3 periods (~70ms total) is still many times low_latency's buffer
+        // but a fraction of conservative's, on every backend.
+        config.periodSizeInFrames = 1024;
+        config.periods = 3;
         #ifdef __linux__
             ma_backend backends[] = { ma_backend_pulseaudio };
             if (ma_device_init_ex(backends, 1, NULL, &config, &engine.device) != MA_SUCCESS) {
@@ -1605,7 +1657,7 @@ extern "C" {
         engine.scratch_target_delta.store(0.0, std::memory_order_relaxed);
         using namespace std::chrono;
         engine.scratch_target_updated_at_ns.store(
-                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                now_ns(),
                 std::memory_order_relaxed);
         engine.scratch_pd_last_error = 0.0;
         engine.scratch_pd_filtered_rate = 0.0;
@@ -1643,7 +1695,7 @@ extern "C" {
         using namespace std::chrono;
         engine.scratch_target_delta.store(deltaMs * SAMPLE_RATE / 1000.0, std::memory_order_relaxed);
         engine.scratch_target_updated_at_ns.store(
-                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count(),
+                now_ns(),
                 std::memory_order_relaxed);
     }
 

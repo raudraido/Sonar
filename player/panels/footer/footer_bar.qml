@@ -62,6 +62,7 @@ Rectangle {
     property var  samplesHigh:        []
     property real beatGridBpm:        0
     property var  beatPositionsMs:    []
+    property int  downbeatOffset:     0  // which beat (0-3) starts a bar — see footer/__init__.py's set_beatgrid
 
     // ── Track info ───────────────────────────────────────────────────────────
     property string trackTitle:   ""
@@ -185,6 +186,7 @@ Rectangle {
             root.beatPositionsMs = footerBridge.getBeatPositions()
             waveformCanvas.requestPaint()
         }
+        function onDownbeatOffsetChanged(offset) { root.downbeatOffset = offset }
 
         function onCoverVersionChanged(v) { root.coverVersion = v }
         function onTrackInfoChanged(t, a, al) { root.trackTitle = t; root.trackArtist = a; root.trackAlbum = al }
@@ -825,6 +827,7 @@ Rectangle {
                         hue: root.accentQColor.hsvHue
                         durationMs: root.durationMs
                         beatPositionsMs: root.beatPositionsMs
+                        downbeatOffset: root.downbeatOffset
 
                         // Center scratch-cursor line — always drawn in scratch
                         // mode regardless of data availability, mirroring the

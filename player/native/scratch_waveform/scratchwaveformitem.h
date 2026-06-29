@@ -33,6 +33,7 @@ class ScratchWaveformItem : public QQuickItem {
     Q_PROPERTY(double hue READ hue WRITE setHue NOTIFY hueChanged)
     Q_PROPERTY(double durationMs READ durationMs WRITE setDurationMs NOTIFY durationMsChanged)
     Q_PROPERTY(QVariantList beatPositionsMs READ beatPositionsMs WRITE setBeatPositionsMs NOTIFY beatPositionsMsChanged)
+    Q_PROPERTY(int downbeatOffset READ downbeatOffset WRITE setDownbeatOffset NOTIFY downbeatOffsetChanged)
 
 public:
     explicit ScratchWaveformItem(QQuickItem *parent = nullptr);
@@ -65,6 +66,9 @@ public:
     QVariantList beatPositionsMs() const { return m_beatPositionsVariant; }
     void setBeatPositionsMs(const QVariantList &v);
 
+    int downbeatOffset() const { return m_downbeatOffset; }
+    void setDownbeatOffset(int v);
+
 signals:
     void samplesChanged();
     void samplesLowChanged();
@@ -76,6 +80,7 @@ signals:
     void hueChanged();
     void durationMsChanged();
     void beatPositionsMsChanged();
+    void downbeatOffsetChanged();
 
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -92,4 +97,5 @@ private:
     double m_durationMs = 1.0;
     QVariantList m_beatPositionsVariant;
     QVector<double> m_beatPositionsMs;  // sorted ascending — real detected beat onsets
+    int m_downbeatOffset = 0;  // which beat (0-3) is bar 1 — see audio_core.cpp's metronome_downbeat_offset
 };

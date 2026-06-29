@@ -66,6 +66,14 @@ void ScratchWaveformItem::setBeatPositionsMs(const QVariantList &v) {
     update();
 }
 
+void ScratchWaveformItem::setDownbeatOffset(int v) {
+    v = ((v % 4) + 4) % 4;
+    if (m_downbeatOffset == v) return;
+    m_downbeatOffset = v;
+    emit downbeatOffsetChanged();
+    update();
+}
+
 void ScratchWaveformItem::setHasRealData(bool v) {
     if (m_hasRealData == v) return;
     m_hasRealData = v;
@@ -265,21 +273,39 @@ QSGNode *ScratchWaveformItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeD
         const auto beginIt = std::lower_bound(m_beatPositionsMs.begin(), m_beatPositionsMs.end(), msStart);
         const auto endIt   = std::upper_bound(m_beatPositionsMs.begin(), m_beatPositionsMs.end(), msEnd);
 
+        // Every bar's first beat (m_downbeatOffset gives the 0-3 offset of
+        // bar 1's own first beat, same alignment as the metronome's
+        // tick/tock in audio_core.cpp) is drawn brighter/wider and tinted
+        // with the master accent color (baseHue) so each bar boundary reads
+        // clearly against the plain white regular-beat lines.
         const quint8 gridA = static_cast<quint8>(std::round(0.32 * 255.0));
+        const quint8 downbeatA = static_cast<quint8>(std::round(0.65 * 255.0));
+        const Rgb downbeatRgb = hsvToRgb(baseHue, 200.0, 255.0);
+        const auto downbeatR = static_cast<quint8>(std::round(downbeatRgb.r * 255.0));
+        const auto downbeatG = static_cast<quint8>(std::round(downbeatRgb.g * 255.0));
+        const auto downbeatB = static_cast<quint8>(std::round(downbeatRgb.b * 255.0));
         for (auto it = beginIt; it != endIt; ++it) {
             const double beatMs = *it;
             const double beatIndex = beatMs / msPerIndex;
             const double xCenter = centerX0 + (beatIndex - m_currentIndex) * m_pixelsPerSample;
             if (xCenter < -1.0 || xCenter > w + 1.0) continue;
 
-            const auto gx0 = static_cast<float>(xCenter - 0.6);
-            const auto gx1 = static_cast<float>(xCenter + 0.6);
-            verts.append({gx0, 0.0f, 255, 255, 255, gridA});
-            verts.append({gx1, 0.0f, 255, 255, 255, gridA});
-            verts.append({gx0, static_cast<float>(h), 255, 255, 255, gridA});
-            verts.append({gx1, 0.0f, 255, 255, 255, gridA});
-            verts.append({gx1, static_cast<float>(h), 255, 255, 255, gridA});
-            verts.append({gx0, static_cast<float>(h), 255, 255, 255, gridA});
+            const auto rawIndex = static_cast<long long>(it - m_beatPositionsMs.begin());
+            const bool isDownbeat = ((rawIndex % 4) - m_downbeatOffset + 4) % 4 == 0;
+            const double halfWidth = isDownbeat ? 1.1 : 0.6;
+            const quint8 R = isDownbeat ? downbeatR : 255;
+            const quint8 G = isDownbeat ? downbeatG : 255;
+            const quint8 B = isDownbeat ? downbeatB : 255;
+            const quint8 A = isDownbeat ? downbeatA : gridA;
+
+            const auto gx0 = static_cast<float>(xCenter - halfWidth);
+            const auto gx1 = static_cast<float>(xCenter + halfWidth);
+            verts.append({gx0, 0.0f, R, G, B, A});
+            verts.append({gx1, 0.0f, R, G, B, A});
+            verts.append({gx0, static_cast<float>(h), R, G, B, A});
+            verts.append({gx1, 0.0f, R, G, B, A});
+            verts.append({gx1, static_cast<float>(h), R, G, B, A});
+            verts.append({gx0, static_cast<float>(h), R, G, B, A});
         }
     }
 
