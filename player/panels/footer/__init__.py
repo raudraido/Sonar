@@ -278,17 +278,26 @@ class FooterPanel(QWidget):
     def has_real_band_data(self):
         return bool(self._samples_low)
 
-    def reset_waveform(self):
+    def reset_waveform(self, keep_beatgrid=False):
+        """keep_beatgrid=True is for callers that are only re-fetching the
+        waveform SAMPLE arrays for a display-mode switch on the SAME track
+        (e.g. on_waveform_toggled) — the beat grid/metronome are populated
+        by BPM detection independently of display mode and stay correct
+        regardless of which waveform view is active, so they must survive
+        a switch. The default (False) is for an actual track change, where
+        everything genuinely is stale."""
         self._has_real_data = False
         self._samples = [0.0] * 5000
         self._samples_low = []
         self._samples_mid = []
         self._samples_high = []
-        self._beatgrid_bpm = 0.0
-        self._beatgrid_positions = []
         self._bridge.hasRealDataChanged.emit(False)
         self._bridge.samplesChanged.emit()
         self._bridge.bandSamplesChanged.emit()
+        if keep_beatgrid:
+            return
+        self._beatgrid_bpm = 0.0
+        self._beatgrid_positions = []
         self._bridge.beatGridChanged.emit(0.0)
         engine = getattr(self._window, 'audio_engine', None)
         if engine:

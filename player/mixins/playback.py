@@ -746,7 +746,34 @@ class PlaybackMixin:
                 track = self.playlist_data[self.current_index]
                 target_path = track.get('stream_url') or track.get('path')
                 if target_path:
-                    self._footer_panel.reset_waveform()
+                    # Always wipe waveform SAMPLES here (keep_beatgrid=True
+                    # always, for the reasons below) — this includes the
+                    # light-to-full upgrade case (needs_upgrade_to_full),
+                    # not just the never-loaded case. The native scratch
+                    # item renders at a fixed pixels-PER-SAMPLE-POINT, which
+                    # only makes sense for a consistent point density —
+                    # leaving the stale light-density array (bars/minimal's
+                    # ~2000 points for the whole track) bound and visible
+                    # while the full-density re-fetch is still in flight
+                    # made scratch mode briefly render almost the entire
+                    # track in one screen-width (far more zoomed out than
+                    # the UI's own zoom clamp allows), then visually "snap"
+                    # once the ~50x-denser full data landed. Clearing samples
+                    # here means scratch mode shows its normal loading state
+                    # instead of that stale, wrongly-scaled render.
+                    #
+                    # keep_beatgrid=True always, since this whole function
+                    # only ever runs for a mode switch on the CURRENT track,
+                    # never a track change (that path calls reset_waveform()
+                    # itself, separately, with the default full reset). The
+                    # beat grid/metronome come from BPM detection, independent
+                    # of display mode, and must survive every mode switch —
+                    # including the very first switch into a mode that hadn't
+                    # fetched samples yet (e.g. minimal mode never fetches
+                    # anything, so has_real_data is still False the first
+                    # time you switch out of it, even though the beat grid
+                    # was already correctly populated in the background).
+                    self._footer_panel.reset_waveform(keep_beatgrid=True)
                     track_id = str(track.get('id') or track.get('path'))
                     is_scratch = mode_int == 0
                     self._waveform_data_is_light = not is_scratch
