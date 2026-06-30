@@ -153,6 +153,28 @@ class FooterBridge(QObject):
     def scratchTargetChanged(self, delta_ms):
         self._panel.scratch_target_changed.emit(delta_ms)
 
+    @pyqtSlot(bool)
+    def scratchInertiaChanged(self, enable):
+        """Starts/stops a "throw" release's spinback decay — see
+        set_scratch_inertia in audio_core.cpp. While active, the native
+        engine keeps scratching but decays the released rate back to
+        normal speed instead of chasing the (now-stale) mouse target."""
+        engine = getattr(self._panel._window, 'audio_engine', None)
+        if engine:
+            engine.set_scratch_inertia(enable)
+
+    @pyqtSlot(result=float)
+    def getScratchRate(self):
+        """The live, continuously-decaying rate during a throw release
+        (1.0 == normal forward speed) — see get_scratch_rate in
+        audio_core.cpp. Returns -1.0 when not currently scratching
+        (mirrors getScratchPositionMs's convention)."""
+        engine = getattr(self._panel._window, 'audio_engine', None)
+        if not engine:
+            return -1.0
+        rate = engine.get_scratch_rate()
+        return float(rate) if rate is not None else -1.0
+
     @pyqtSlot(int)
     def positionUpdated(self, ms):
         self._panel.position_updated.emit(ms)

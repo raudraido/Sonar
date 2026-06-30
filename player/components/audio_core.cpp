@@ -237,6 +237,17 @@ struct AudioEngine {
     //      updates) instead of trusting one possibly-noisy instantaneous
     //      velocity sample forever.
     std::atomic<bool> is_scratching{false};
+    // Set true when a scratch release is fast enough to "throw" the platter
+    // (mirrors Mixxx's PositionScratchController inertia/kThrowThreshold)
+    // instead of snapping straight to normal playback. While true,
+    // data_callback keeps using the scratch resampler but decays
+    // scratch_pd_filtered_rate from its released value back toward normal
+    // (1.0) forward speed over kScratchInertiaSeconds, then hands off to
+    // normal buffer playback — the "push hard, spins fast, settles back to
+    // normal speed" behavior of a real turntable's motor torque.
+    std::atomic<bool> scratch_inertia{false};
+    static constexpr double kScratchThrowThreshold = 2.5;  // |rate| above this triggers inertia, mirrors Mixxx's kThrowThreshold
+    static constexpr double kScratchInertiaSeconds = 0.35; // time to settle back to normal speed
 
     ma_decoder scratch_decoder{};
     std::atomic<bool> scratch_decoder_loaded{false};
@@ -465,6 +476,18 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
             } else {
                 rate = rawRate;
             }
+        }
+        bool inertia = engine.scratch_inertia.load(std::memory_order_relaxed);
+        if (inertia) {
+            // Spinback/throw release: ignore the (now stale) mouse target
+            // entirely and decay the released rate back toward normal
+            // forward speed (1.0) — see kScratchInertiaSeconds. The UI
+            // observes this via get_scratch_rate() and finalizes the
+            // release (seek + scratchModeChanged(false)) once it's close
+            // enough to 1.0, exactly mirroring a real turntable's motor
+            // torque pulling the platter back up to speed.
+            double decayAlpha = 1.0 - std::exp(-dtSec / AudioEngine::kScratchInertiaSeconds);
+            rate = engine.scratch_pd_filtered_rate + (1.0 - engine.scratch_pd_filtered_rate) * decayAlpha;
         }
         engine.scratch_pd_last_error = error;
         engine.scratch_pd_filtered_rate = rate;
@@ -1601,6 +1624,7 @@ extern "C" {
         bool active = (mode == 1);
         if (!active) {
             engine.is_scratching.store(false);
+            engine.scratch_inertia.store(false);
             return;
         }
 
@@ -1661,11 +1685,32 @@ extern "C" {
                 std::memory_order_relaxed);
         engine.scratch_pd_last_error = 0.0;
         engine.scratch_pd_filtered_rate = 0.0;
+        engine.scratch_inertia.store(false);
 
         // Set last, once the decoder/window/origin above are all actually
         // ready — the audio callback checks this flag every invocation and
         // must never see it true before its dependencies are prepared.
         engine.is_scratching.store(true);
+    }
+
+    // Called on a fast ("throw") release instead of immediately stopping
+    // scratch mode — see AudioEngine::scratch_inertia's comment. data_callback
+    // then decays the already-released rate (scratch_pd_filtered_rate) back
+    // toward normal forward speed instead of chasing the (now stale) mouse
+    // target. The caller (QML) polls get_scratch_rate() / get_scratch_position_ms()
+    // each frame and calls set_scratch_mode(0) once it's converged to finalize
+    // the release with a normal seek, exactly like a non-throw release.
+    EXPORT void set_scratch_inertia(int enable) {
+        engine.scratch_inertia.store(enable != 0);
+    }
+
+    // The live, continuously-decaying playback rate during a throw/spinback
+    // release (1.0 == normal forward speed) — lets the UI decide when the
+    // platter has settled back to normal speed. Mirrors get_scratch_position_ms's
+    // -1 convention when not scratching.
+    EXPORT double get_scratch_rate() {
+        if (!engine.is_scratching.load()) return -1.0;
+        return engine.scratch_pd_filtered_rate;
     }
 
     // The absolute track position (ms) actually being played during a

@@ -207,6 +207,10 @@ class AudioEngine(QObject):
         self.lib.set_scratch_target_delta_ms.restype  = None
         self.lib.get_scratch_position_ms.argtypes = []
         self.lib.get_scratch_position_ms.restype  = ctypes.c_double
+        self.lib.set_scratch_inertia.argtypes  = [ctypes.c_int]
+        self.lib.set_scratch_inertia.restype   = None
+        self.lib.get_scratch_rate.argtypes     = []
+        self.lib.get_scratch_rate.restype      = ctypes.c_double
 
         self.lib.set_vis_active.argtypes = [ctypes.c_int]
         self.lib.set_vis_active.restype  = None
@@ -614,6 +618,24 @@ class AudioEngine(QObject):
             return None
         ms = self.lib.get_scratch_position_ms()
         return ms if ms >= 0 else None
+
+    def set_scratch_inertia(self, enable: bool):
+        """Starts/stops the "throw"/spinback decay (see set_scratch_inertia
+        in audio_core.cpp) — call with True on a fast release instead of
+        immediately ending scratch mode, so the platter decays back to
+        normal speed instead of snapping straight to it. Still scratching
+        (is_scratching stays true) while this is active."""
+        if self.lib:
+            self.lib.set_scratch_inertia(ctypes.c_int(1 if enable else 0))
+
+    def get_scratch_rate(self):
+        """The live, continuously-decaying playback rate during a throw
+        release (1.0 == normal forward speed) — see get_scratch_rate in
+        audio_core.cpp. Returns None when not currently scratching."""
+        if not self.lib:
+            return None
+        rate = self.lib.get_scratch_rate()
+        return rate if rate > -1.0 else None
 
     # ------------------------------------------------------------------
     # Metronome (tick/tock debug aid)

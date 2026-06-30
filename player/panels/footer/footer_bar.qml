@@ -872,6 +872,27 @@ Rectangle {
                         property real basePixelsPerSample: 1.5
                         property real zoomLevel: 1.0
 
+                        // Throw/spinback release — mirrors Mixxx's
+                        // PositionScratchController inertia mode (kThrowThreshold).
+                        // A fast-enough release keeps the native scratch engine
+                        // running for a short decay instead of snapping straight
+                        // to normal speed, matching a real turntable's motor
+                        // torque pulling the platter back up to speed.
+                        property bool inertiaActive: false
+                        readonly property real throwThreshold: 2.5     // |rate| above this triggers a spinback, matches audio_core.cpp's kScratchThrowThreshold
+                        readonly property real inertiaMaxMs: 350       // safety cap — matches kScratchInertiaSeconds
+                        // Decaying peak of |scratch rate| seen during this drag,
+                        // not just the instantaneous value at the literal mouseup
+                        // event — a real "throw" gesture almost always decelerates
+                        // for its last couple of mouse-move samples before the
+                        // button physically lifts (more pronounced on backward
+                        // swipes, which are more awkward ergonomically), so reading
+                        // only the release-instant rate under-detects fast throws.
+                        // Reset on press, updated every move, used (not the
+                        // instantaneous rate) to decide whether to start inertia.
+                        property real recentPeakAbsRate: 0
+                        property real lastMoveTimestampMs: 0   // Date.now() at the previous move event — for the local instantaneous-rate calc feeding recentPeakAbsRate
+
                         // scratchImg (the native ScratchWaveformItem sibling
                         // above) has its currentIndex/pixelsPerSample properties
                         // bound directly to scratchCurrentIndex/pixelsPerSample,
@@ -893,6 +914,8 @@ Rectangle {
                             cursorShape = Qt.ClosedHandCursor
                             dragStartMouseX = mouse.x
                             lastMouseX = mouse.x
+                            lastMoveTimestampMs = Date.now()
+                            recentPeakAbsRate = 0
                             footerBridge.scratchModeChanged(true)
                             footerBridge.scratchTargetChanged(0.0)
                         }
@@ -925,6 +948,24 @@ Rectangle {
                             var targetDeltaMs = -((totalDeltaX / totalPixels) * root.durationMs)
                             footerBridge.scratchTargetChanged(targetDeltaMs)
 
+                            // Local instantaneous "rate" (1.0 == normal forward
+                            // speed) from this single move event's track-time
+                            // delta over real elapsed time — independent of the
+                            // native PD controller's smoothing/convergence lag,
+                            // so it reflects the actual hand motion immediately.
+                            // Folded into a decaying peak (not overwritten) so a
+                            // throw is still detected even if the last sample or
+                            // two before mouseup happens to be slower.
+                            var nowMs = Date.now()
+                            var dtMs = nowMs - lastMoveTimestampMs
+                            if (dtMs > 0 && dtMs < 200) {
+                                var deltaXPx = mouse.x - lastMouseX
+                                var deltaTrackMs = (deltaXPx / totalPixels) * root.durationMs
+                                var instRate = deltaTrackMs / dtMs
+                                recentPeakAbsRate = Math.max(Math.abs(instRate), recentPeakAbsRate * 0.8)
+                            }
+                            lastMoveTimestampMs = nowMs
+
                             // Visual feedback only, per-event incremental —
                             // independent of the native controller, purely
                             // for immediate responsiveness while dragging.
@@ -939,26 +980,51 @@ Rectangle {
                             requestScratchFrame()
                         }
 
+                        // Reads the scratch engine's ground-truth position and
+                        // finalizes the release with a normal seek — shared by
+                        // both the immediate (slow-release) and inertia
+                        // (fast-release, after spinback settles) paths.
+                        function finalizeScratchRelease() {
+                            var releaseMs = footerBridge.getScratchPositionMs()
+                            if (releaseMs >= 0) root.setLocalPosition(releaseMs)
+                            var target = Math.max(0, Math.round(root.displayPositionMs))
+                            footerBridge.seekRequested(target)
+                            footerBridge.scratchModeChanged(false)
+                            isDraggingLocal = false
+                        }
+
                         onReleased: (mouse) => {
                             if (!isDraggingLocal) return
-                            isDraggingLocal = false
                             if (root.displayMode !== 0) {
+                                isDraggingLocal = false
                                 var target = Math.max(0, Math.round(root.displayPositionMs))
                                 footerBridge.seekRequested(target)
                                 footerBridge.scratchModeChanged(false)
                                 return
                             }
                             cursorShape = Qt.OpenHandCursor
-                            // Always resume right where you let go — no
-                            // momentum/spin-up (matches Mixxx: release just
-                            // continues normal playback from the release
-                            // point). One native read for the exact ground-
-                            // truth position before computing the seek target.
-                            var releaseMs = footerBridge.getScratchPositionMs()
-                            if (releaseMs >= 0) root.setLocalPosition(releaseMs)
-                            var target2 = Math.max(0, Math.round(root.displayPositionMs))
-                            footerBridge.seekRequested(target2)
-                            footerBridge.scratchModeChanged(false)
+
+                            // A fast/hard release ("throw") spins the platter
+                            // up and lets the motor pull it back to normal
+                            // speed instead of snapping straight there — see
+                            // inertiaClock below. A slow release (or one
+                            // already near normal speed) resumes immediately,
+                            // same as before. Uses the decaying peak rate from
+                            // the drag (recentPeakAbsRate), not the literal
+                            // mouseup-instant rate — see its declaration above
+                            // for why (release gestures naturally decelerate
+                            // for their last sample or two, especially on
+                            // backward swipes, which under-detected throws
+                            // when only the instantaneous rate was checked).
+                            if (recentPeakAbsRate > throwThreshold) {
+                                footerBridge.scratchInertiaChanged(true)
+                                inertiaActive = true
+                                inertiaClock.elapsedMs = 0
+                                // isDraggingLocal stays true — keeps positionClock
+                                // off while inertiaClock drives the waveform.
+                                return
+                            }
+                            finalizeScratchRelease()
                         }
 
                         onWheel: (wheel) => {
@@ -971,6 +1037,43 @@ Rectangle {
                             zoomLevel = Math.max(0.1, Math.min(zoomLevel, 5.0))
                             pixelsPerSample = basePixelsPerSample * zoomLevel
                             requestScratchFrame()
+                        }
+                    }
+
+                    // Drives the waveform during a throw/spinback release —
+                    // polls the native engine's continuously-decaying scratch
+                    // position every frame (same source of truth onPositionChanged
+                    // uses while actively dragging) until the rate has settled
+                    // back to normal speed or inertiaMaxMs elapses, then hands
+                    // off to a normal release (finalizeScratchRelease).
+                    FrameAnimation {
+                        id: inertiaClock
+                        running: scratchArea.inertiaActive
+                        property real elapsedMs: 0
+
+                        onTriggered: {
+                            var dt = inertiaClock.frameTime * 1000
+                            if (dt <= 0 || dt > 250) dt = 1000 / 60
+                            elapsedMs += dt
+
+                            var posMs = footerBridge.getScratchPositionMs()
+                            if (posMs >= 0) {
+                                root.setLocalPosition(posMs)
+                                footerBridge.positionUpdated(Math.round(posMs))
+                                var total = root.samples.length
+                                if (total >= 2 && root.durationMs > 0) {
+                                    scratchArea.scratchCurrentIndex = (posMs / root.durationMs) * (total - 1)
+                                }
+                            }
+                            waveformCanvas.requestPaint()
+
+                            var rate = footerBridge.getScratchRate()
+                            var settled = rate >= 0 && Math.abs(rate - 1.0) < 0.05
+                            if (settled || elapsedMs >= scratchArea.inertiaMaxMs) {
+                                scratchArea.inertiaActive = false
+                                footerBridge.scratchInertiaChanged(false)
+                                scratchArea.finalizeScratchRelease()
+                            }
                         }
                     }
 
