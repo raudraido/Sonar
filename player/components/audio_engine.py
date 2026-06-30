@@ -331,12 +331,22 @@ class AudioEngine(QObject):
         computed = int((duration_ms / 1000.0) * self._WAVEFORM_DENSITY_PER_SEC)
         return max(self._WAVEFORM_MIN_POINTS, min(computed, self._WAVEFORM_MAX_POINTS))
 
-    def request_waveform(self, path: str, num_points: int = 3000, track_id=None):
+    def request_waveform(self, path: str, num_points: int = 3000, track_id=None, light: bool = False):
         """Generate a waveform array in a background thread. Handles stream
         URLs via a temp file. track_id (if given) enables the on-disk cache
         — self.total_ms is already set by the time this is called (track
         load/playback started first), so a cache hit needs neither the
-        network download nor the native decode at all."""
+        network download nor the native decode at all.
+
+        light=True (bars/minimal-mode calls) skips the duration-based
+        density formula on a cache MISS — decodes at a small fixed point
+        count instead (plenty for paintBars()'s already-downsampled bar
+        path) — and never writes the result to the on-disk cache, so it
+        can't shadow or collide with the full-density cache scratch mode
+        creates. A pre-existing full-density cache is still read and used
+        normally either way; this only changes what happens when there's
+        no cache yet, so bars-only sessions never pay for scratch-density
+        analysis they don't need."""
         self._waveform_token = getattr(self, '_waveform_token', 0) + 1
         token = self._waveform_token
 
@@ -374,7 +384,8 @@ class AudioEngine(QObject):
                     try: os.remove(target_path)
                     except OSError: pass
                 return
-            actual_num_points = self._resolve_waveform_point_count(target_path, num_points)
+            actual_num_points = (self._WAVEFORM_MIN_POINTS if light
+                    else self._resolve_waveform_point_count(target_path, num_points))
             out_array = (ctypes.c_float * actual_num_points)()
             exact_ms  = self.lib.generate_waveform(target_path.encode('utf-8'), out_array, actual_num_points)
             if is_temp:
@@ -388,7 +399,7 @@ class AudioEngine(QObject):
                 self.total_ms = exact_ms
                 self.durationChanged.emit(exact_ms)
                 raw_data   = list(out_array)
-                if track_id:
+                if track_id and not light:
                     _save_waveform_cache(track_id, exact_ms, actual_num_points, overall=raw_data)
                 max_val    = max(raw_data) if max(raw_data) > 0 else 1.0
                 self.waveform_generated.emit([x / max_val for x in raw_data])

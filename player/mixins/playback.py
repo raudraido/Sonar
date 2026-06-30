@@ -463,8 +463,10 @@ class PlaybackMixin:
         target_path = track_data.get('stream_url') or track_data.get('path')
         if target_path and self._footer_panel.display_mode in (0, 2):
             track_id = str(track_data.get('id') or track_data.get('path'))
-            self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
-            if self._footer_panel.display_mode == 0:
+            is_scratch = self._footer_panel.display_mode == 0
+            self._waveform_data_is_light = not is_scratch
+            self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id, light=not is_scratch)
+            if is_scratch:
                 self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
 
         self.sync_playlist_duration()
@@ -549,8 +551,10 @@ class PlaybackMixin:
 
             if needs_waveform:
                 track_id = str(track.get('id') or track.get('path'))
-                self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
-                if self._footer_panel.display_mode == 0:
+                is_scratch = self._footer_panel.display_mode == 0
+                self._waveform_data_is_light = not is_scratch
+                self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id, light=not is_scratch)
+                if is_scratch:
                     self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
 
             self.visual_update_timer.start(350)
@@ -728,18 +732,26 @@ class PlaybackMixin:
 
     def on_waveform_toggled(self, mode_int):
         """If user turns waveform back on mid-song, fetch the data on-demand."""
-        # Modes 0 and 2 BOTH require audio waveform data!
+        # Modes 0 and 2 BOTH require audio waveform data! Scratch mode (0)
+        # additionally needs full-density data, not the light fixed-size
+        # decode bars/minimal use — see request_waveform's light= param. So
+        # a light fetch already sitting in has_real_data from a prior
+        # bars-mode visit must NOT count as satisfying scratch mode here,
+        # or scratch would be stuck rendering off ~2000 points forever.
         needs_waveform = (mode_int in (0, 2))
+        needs_upgrade_to_full = mode_int == 0 and getattr(self, '_waveform_data_is_light', False)
 
-        if needs_waveform and not self._footer_panel.has_real_data:
+        if needs_waveform and (not self._footer_panel.has_real_data or needs_upgrade_to_full):
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 target_path = track.get('stream_url') or track.get('path')
                 if target_path:
                     self._footer_panel.reset_waveform()
                     track_id = str(track.get('id') or track.get('path'))
-                    self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id)
-                    if mode_int == 0:
+                    is_scratch = mode_int == 0
+                    self._waveform_data_is_light = not is_scratch
+                    self.audio_engine.request_waveform(target_path, num_points=10000, track_id=track_id, light=not is_scratch)
+                    if is_scratch:
                         self.audio_engine.request_waveform_bands(target_path, num_points=10000, track_id=track_id)
                     return
 
