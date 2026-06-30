@@ -505,6 +505,8 @@ class SonarPlayer(
         self.navidrome_client = client
         self.bpm_cache = self.load_bpm_cache()
         self.beatgrid_cache = self.load_beatgrid_cache()
+        self.bpm_detection_disabled = bool(int(self.settings.value('bpm_detection_disabled', 0) or 0))
+        self.scratch_waveform_disabled = bool(int(self.settings.value('scratch_waveform_disabled', 0) or 0))
         self.metronome_downbeat_cache = self.load_metronome_downbeat_cache()
         self.setAcceptDrops(True)
         self.last_gapless_time = 0

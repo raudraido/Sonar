@@ -573,6 +573,32 @@ class SettingsWindow(QDialog):
         nudge_row.addStretch()
         layout.addLayout(nudge_row)
 
+        from player.components.shared_widgets import ToggleSwitch
+
+        bpm_row = QHBoxLayout()
+        bpm_row.setContentsMargins(0, 2, 0, 2)
+        bpm_label = QLabel("Disable BPM detection")
+        bpm_label.setStyleSheet(f"color: {fc1}; background: transparent;")
+        self._bpm_disable_check = ToggleSwitch(acc)
+        self._bpm_disable_check.setChecked(bool(int(_s.value('bpm_detection_disabled', 0) or 0)))
+        self._bpm_disable_check.stateChanged.connect(self._save_bpm_detection_debug)
+        bpm_row.addWidget(bpm_label)
+        bpm_row.addStretch()
+        bpm_row.addWidget(self._bpm_disable_check)
+        layout.addLayout(bpm_row)
+
+        scratch_row = QHBoxLayout()
+        scratch_row.setContentsMargins(0, 2, 0, 2)
+        scratch_label = QLabel("Disable Scratch waveform (number 0)")
+        scratch_label.setStyleSheet(f"color: {fc1}; background: transparent;")
+        self._scratch_disable_check = ToggleSwitch(acc)
+        self._scratch_disable_check.setChecked(bool(int(_s.value('scratch_waveform_disabled', 0) or 0)))
+        self._scratch_disable_check.stateChanged.connect(self._save_scratch_waveform_debug)
+        scratch_row.addWidget(scratch_label)
+        scratch_row.addStretch()
+        scratch_row.addWidget(self._scratch_disable_check)
+        layout.addLayout(scratch_row)
+
         layout.addStretch()
 
         # ── Right column: hotkeys + logout ────────────────────────────────
@@ -804,6 +830,18 @@ class SettingsWindow(QDialog):
         engine = getattr(self.parent, 'audio_engine', None)
         if engine:
             engine.set_metronome_enabled(enabled)
+
+    def _save_bpm_detection_debug(self):
+        disabled = self._bpm_disable_check.isChecked()
+        QSettings('Icosahedron', 'Icosahedron').setValue('bpm_detection_disabled', int(disabled))
+        self.parent.bpm_detection_disabled = disabled
+
+    def _save_scratch_waveform_debug(self):
+        disabled = self._scratch_disable_check.isChecked()
+        QSettings('Icosahedron', 'Icosahedron').setValue('scratch_waveform_disabled', int(disabled))
+        self.parent.scratch_waveform_disabled = disabled
+        if disabled and hasattr(self.parent, '_footer_panel'):
+            self.parent._footer_panel.disable_scratch_mode()
 
     def _shift_metronome_downbeat(self):
         if not hasattr(self.parent, 'shift_current_track_downbeat'):

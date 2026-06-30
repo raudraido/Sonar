@@ -347,7 +347,10 @@ class FooterPanel(QWidget):
             engine.set_metronome_downbeat_offset(offset)
 
     def _on_mode_toggled(self, mode):
-        self._display_mode = int(mode)
+        mode = int(mode)
+        if mode == 0 and getattr(self._window, 'scratch_waveform_disabled', False):
+            mode = 1  # scratch disabled in Settings — cycling button skips straight past it
+        self._display_mode = mode
         self._bridge.displayModeChanged.emit(self._display_mode)
         self.mode_toggled.emit(self._display_mode)
         # Mirrors the restore-on-launch read in __init__ — only minimal/bars
@@ -356,6 +359,17 @@ class FooterPanel(QWidget):
         # whichever minimal/bars mode was last active.
         if self._display_mode in (1, 2):
             self._window.settings.setValue('waveform_mode', self._display_mode)
+
+    def disable_scratch_mode(self):
+        """Force out of scratch view and stop any in-flight scratch gesture —
+        called when the user flips the Settings debug toggle off while
+        scratch mode is the active view."""
+        engine = getattr(self._window, 'audio_engine', None)
+        if engine:
+            engine.set_scratch_mode(False)
+        self._is_scratching = False
+        if self._display_mode == 0:
+            self._on_mode_toggled(1)
 
     @property
     def show_remaining(self):

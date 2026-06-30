@@ -738,10 +738,17 @@ class PlaybackMixin:
         # a light fetch already sitting in has_real_data from a prior
         # bars-mode visit must NOT count as satisfying scratch mode here,
         # or scratch would be stuck rendering off ~2000 points forever.
+        # The reverse direction matters too: bars mode's per-bar bucket
+        # average dilutes toward the bucket's mean loudness as the bucket
+        # gets bigger, so re-using scratch's much denser array (more raw
+        # points per bucket) makes bars render visibly smaller than the
+        # original light fetch — bars must downgrade back to light data
+        # rather than silently keeping whatever density scratch left behind.
         needs_waveform = (mode_int in (0, 2))
         needs_upgrade_to_full = mode_int == 0 and getattr(self, '_waveform_data_is_light', False)
+        needs_downgrade_to_light = mode_int == 2 and not getattr(self, '_waveform_data_is_light', True)
 
-        if needs_waveform and (not self._footer_panel.has_real_data or needs_upgrade_to_full):
+        if needs_waveform and (not self._footer_panel.has_real_data or needs_upgrade_to_full or needs_downgrade_to_light):
             if 0 <= self.current_index < len(self.playlist_data):
                 track = self.playlist_data[self.current_index]
                 target_path = track.get('stream_url') or track.get('path')

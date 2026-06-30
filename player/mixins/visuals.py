@@ -556,7 +556,8 @@ class VisualsMixin:
         # existed, since bpm_cache persists across restarts on its own
         # (see load_bpm_cache) and was never going to retroactively gain an
         # anchor otherwise.
-        if not (hasattr(self, 'bpm_cache') and track_id in self.bpm_cache
+        if not getattr(self, 'bpm_detection_disabled', False) and not (
+                hasattr(self, 'bpm_cache') and track_id in self.bpm_cache
                 and hasattr(self, 'beatgrid_cache') and track_id in self.beatgrid_cache):
             if hasattr(self, 'bpm_worker') and self.bpm_worker.isRunning():
                 try: self.bpm_worker.bpm_ready.disconnect()
@@ -1192,6 +1193,13 @@ class VisualsMixin:
                         # before this consistency check existed — silently
                         # regenerate it to match the cached (correct) BPM.
                         self._regenerate_beatgrid_for_bpm(track_id, bpm)
+            elif getattr(self, 'bpm_detection_disabled', False) and track.get('bpm'):
+                # Detection is off and nothing's cached — fall back to the
+                # raw ID3/tag BPM instead of leaving "BPM..." forever, since
+                # no worker will ever run to fill bpm_cache in.
+                bpm = float(track['bpm'])
+                self.file_type_label.setText(f"{self.current_file_type_text}   •   {bpm:.1f} BPM")
+                self._footer_panel.set_bpm(bpm)
             else:
                 self.file_type_label.setText(f"{self.current_file_type_text}   •   BPM...")
                 self._footer_panel.set_bpm(None)

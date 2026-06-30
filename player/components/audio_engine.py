@@ -311,6 +311,7 @@ class AudioEngine(QObject):
     _WAVEFORM_DENSITY_PER_SEC = 441
     _WAVEFORM_MIN_POINTS = 2000
     _WAVEFORM_MAX_POINTS = 400000  # ~15 min of audio at full 441/sec density
+    _WAVEFORM_LIGHT_POINTS = 3000  # bars/minimal-mode fixed point count — see request_waveform's light= param
 
     def _resolve_waveform_point_count(self, target_path: str, fallback: int) -> int:
         # Prefer the already-known duration of the currently loaded/playing
@@ -384,7 +385,7 @@ class AudioEngine(QObject):
                     try: os.remove(target_path)
                     except OSError: pass
                 return
-            actual_num_points = (self._WAVEFORM_MIN_POINTS if light
+            actual_num_points = (self._WAVEFORM_LIGHT_POINTS if light
                     else self._resolve_waveform_point_count(target_path, num_points))
             out_array = (ctypes.c_float * actual_num_points)()
             exact_ms  = self.lib.generate_waveform(target_path.encode('utf-8'), out_array, actual_num_points)

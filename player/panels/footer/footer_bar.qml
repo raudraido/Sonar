@@ -224,7 +224,12 @@ Rectangle {
         anchors.leftMargin: 16
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: Math.max(220, root.width * 0.26)
+        // Narrower reserved width than before (was 0.26/220) — frees up
+        // ~30% more centerBlock width for the waveform without moving
+        // artWrap (left-anchored, unaffected) or the title/artist/album
+        // text's start position; only its max width (before ElideRight
+        // kicks in) shrinks, which is the same trade rightBlock makes below.
+        width: Math.max(160, root.width * 0.19)
 
         Item {
             id: artWrap
@@ -295,7 +300,20 @@ Rectangle {
 
             Text {
                 id: titleLbl
-                width: parent.width
+                // Same band as before (parent.width) by default, but long
+                // titles spill rightward into centerBlock's mostly-empty
+                // space above the transport buttons instead of eliding
+                // immediately — bounded by controlsRow's actual left edge
+                // (10 = half of the Column's own `width: centerBlock.width
+                // - 20` inset above), so it can never run into Stop/
+                // Shuffle/etc regardless of window width. Nothing else
+                // about the layout changes — artist/album/bpm below keep
+                // their original widths.
+                readonly property real controlsRowLeftX:
+                    centerBlock.x + 10 + ((centerBlock.width - 20 - controlsRow.width) / 2)
+                readonly property real titleAbsX:
+                    leftBlock.x + artWrap.width + (artWrap.width > 0 ? 12 : 0)
+                width: Math.min(implicitWidth, Math.max(parent.width, controlsRowLeftX - titleAbsX - 16))
                 text: root.trackTitle
                 elide: Text.ElideRight
                 font.family: root.fontFamily
@@ -413,6 +431,7 @@ Rectangle {
             width: centerBlock.width - 20
 
             Row {
+                id: controlsRow
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 20
 
@@ -665,7 +684,7 @@ Rectangle {
                         Component.onCompleted: requestPaint()
 
                         function rebuildBarPath() {
-                            var BAR_W = 3, BAR_GAP = 2
+                            var BAR_W = 1.8, BAR_GAP = 2  // thinner bar + tighter gap than before — more bars per pixel
                             var totalBar = BAR_W + BAR_GAP
                             var numBars = Math.floor(width / totalBar)
                             var bars = []
@@ -676,14 +695,42 @@ Rectangle {
                                 for (var i = 0; i < numBars; i++) {
                                     var startIdx = Math.floor(i * perBar)
                                     var endIdx = Math.min(Math.floor((i + 1) * perBar), total)
-                                    var sum = 0, cnt = 0
-                                    for (var j = startIdx; j < endIdx; j++) { sum += root.samples[j]; cnt++ }
-                                    var avg = cnt > 0 ? sum / cnt : 0
-                                    var expanded = Math.pow(avg, 1.5)
-                                    var val = Math.min(1.0, expanded * 1.8)
+                                    // Blend mean + peak per bucket (mirrors psysonic's
+                                    // truewave binsToHeights: 0.7*mean + 0.3*max). Pure
+                                    // mean washes out once perBar gets large (e.g. after
+                                    // switching to scratch mode and back, which upgrades
+                                    // root.samples to a much denser array that bars mode
+                                    // never downgrades from — see on_waveform_toggled in
+                                    // player/mixins/playback.py); pure peak maxes out
+                                    // near-flat for typical dance/pop tracks since almost
+                                    // every bucket contains at least one loud transient.
+                                    // The blend tracks the track's actual loudness contour
+                                    // while still letting real peaks read taller, and stays
+                                    // visually consistent regardless of sample density.
+                                    var sum = 0, peak = 0, cnt = 0
+                                    for (var j = startIdx; j < endIdx; j++) {
+                                        var s = root.samples[j]
+                                        sum += s
+                                        if (s > peak) peak = s
+                                        cnt++
+                                    }
+                                    var mean = cnt > 0 ? sum / cnt : 0
+                                    var blended = 0.7 * mean + 0.3 * peak
+                                    // No exaggeration curve (psysonic's truewave maps its
+                                    // blended value straight to height too) — the previous
+                                    // pow(x,1.5)*1.8 boost saturated to 1.0 once blended
+                                    // crossed ~0.7, so most of a typical track's louder
+                                    // sections all rendered at the same near-max bar height
+                                    // ("constant blob"). A small floor keeps near-silent
+                                    // buckets faintly visible instead of vanishing to 0.
+                                    var val = Math.max(0.04, Math.min(1.0, blended))
                                     var barH = Math.max(4.0, val * (height * 0.85))
                                     var x = i * totalBar + (BAR_W / 2.0)
-                                    bars.push({ x: x, top: centerY - barH / 2, bottom: centerY + barH / 2 })
+                                    // 3px clearance at the bottom only (top unchanged) so
+                                    // tall bars never touch the footer's bottom edge.
+                                    var top = centerY - barH / 2
+                                    var bottom = Math.min(centerY + barH / 2, height - 3)
+                                    bars.push({ x: x, top: top, bottom: bottom })
                                 }
                             }
                             barPath = bars
@@ -1240,7 +1287,13 @@ Rectangle {
         anchors.rightMargin: 16
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: Math.max(220, root.width * 0.26)
+        // Matches leftBlock's narrower reserved width above — the icon/
+        // slider Row below is right-anchored, so its screen position is
+        // unaffected; only the empty space to its left shrinks. Floor is
+        // higher than leftBlock's (260 vs 160) since this Row's actual
+        // content (settings + mute + 100px slider + cast, ~244px wide)
+        // needs more room than leftBlock's compact art+text does.
+        width: Math.max(260, root.width * 0.19)
 
         Row {
             anchors.right: parent.right
